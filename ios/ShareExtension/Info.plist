@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDisplayName</key>
-    <string>Ask Conduit</string>
+    <string>Ask 众小智AI</string>
     <key>AppGroupId</key>
     <string>group.app.cogwheel.conduit</string>
 

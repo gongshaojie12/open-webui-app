@@ -9,6 +9,7 @@ import '../services/api_service.dart';
 import '../auth/auth_state_manager.dart';
 import '../../features/auth/providers/unified_auth_providers.dart';
 import '../services/attachment_upload_queue.dart';
+import '../config/app_config.dart';
 import '../models/server_config.dart';
 import '../models/user.dart';
 import '../models/model.dart';
@@ -174,15 +175,27 @@ Future<ServerConfig?> activeServer(Ref ref) async {
   final configs = await ref.watch(serverConfigsProvider.future);
   final activeId = await storage.getActiveServerId();
 
-  if (activeId == null || configs.isEmpty) return null;
-
-  for (final config in configs) {
-    if (config.id == activeId) {
-      return config;
+  if (activeId != null && configs.isNotEmpty) {
+    for (final config in configs) {
+      if (config.id == activeId) {
+        return config;
+      }
     }
   }
 
-  return null;
+  // Auto-provision from AppConfig when no server is configured.
+  // This removes the need for users to manually enter a server URL.
+  final defaultConfig = ServerConfig(
+    id: 'default',
+    name: 'Default Server',
+    url: AppConfig.serverUrl,
+    isActive: true,
+    allowSelfSignedCertificates: AppConfig.allowSelfSignedCertificates,
+  );
+  await storage.saveServerConfigs([defaultConfig]);
+  await storage.setActiveServerId(defaultConfig.id);
+  ref.invalidate(serverConfigsProvider);
+  return defaultConfig;
 }
 
 final serverConnectionStateProvider = Provider<bool>((ref) {
@@ -1223,7 +1236,7 @@ class Conversations extends _$Conversations {
   List<Conversation> _demoConversations() => [
     Conversation(
       id: 'demo-conv-1',
-      title: 'Welcome to Conduit (Demo)',
+      title: 'Welcome to 众小智AI (Demo)',
       createdAt: DateTime.now().subtract(const Duration(minutes: 15)),
       updatedAt: DateTime.now().subtract(const Duration(minutes: 10)),
       messages: [
@@ -1231,7 +1244,7 @@ class Conversations extends _$Conversations {
           id: 'demo-msg-1',
           role: 'assistant',
           content:
-              '**Welcome to Conduit Demo Mode**\n\nThis is a demo for app review - responses are pre-written, not from real AI.\n\nTry these features:\n• Send messages\n• Attach images\n• Use voice input\n• Switch models (tap header)\n• Create new chats (menu)\n\nAll features work offline. No server needed.',
+              '**Welcome to 众小智AI Demo Mode**\n\nThis is a demo for app review - responses are pre-written, not from real AI.\n\nTry these features:\n• Send messages\n• Attach images\n• Use voice input\n• Switch models (tap header)\n• Create new chats (menu)\n\nAll features work offline. No server needed.',
           timestamp: DateTime.now().subtract(const Duration(minutes: 10)),
           model: 'Gemma 2 Mini (Demo)',
           isStreaming: false,

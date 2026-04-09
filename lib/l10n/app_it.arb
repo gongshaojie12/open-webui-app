@@ -1,6 +1,6 @@
 {
   "@@locale": "it",
-  "appTitle": "Conduit",
+  "appTitle": "众小智AI",
   "retry": "Riprova",
   "back": "Indietro",
   "you": "Tu",
@@ -15,8 +15,8 @@
     "description": "Sottotitolo che spiega le azioni disponibili quando il server non è raggiungibile"
   },
   "account": "Account",
-  "supportConduit": "Sostieni Conduit",
-  "supportConduitSubtitle": "Mantieni Conduit indipendente finanziando lo sviluppo continuo.",
+  "supportConduit": "Sostieni 众小智AI",
+  "supportConduitSubtitle": "Mantieni 众小智AI indipendente finanziando lo sviluppo continuo.",
   "githubSponsorsTitle": "GitHub Sponsors",
   "githubSponsorsSubtitle": "Diventa sponsor ricorrente per supportare la roadmap.",
   "buyMeACoffeeTitle": "Buy Me a Coffee",
@@ -43,7 +43,7 @@
   "connectedToServer": "Connesso al server",
   "signIn": "Accedi",
   "enterCredentials": "Inserisci le credenziali per accedere alle conversazioni IA",
-  "credentials": "Credenziali",
+  "credentials": "Email",
   "apiKey": "Chiave API",
   "token": "Token",
   "usernameOrEmail": "Username o e‑mail",
@@ -97,7 +97,7 @@
   "voicePromptTapStart": "Tocca \"Avvia\" per iniziare",
   "voiceActionStop": "Stop",
   "voiceActionStart": "Avvia",
-  "messageHintText": "Chiedi a Conduit",
+  "messageHintText": "Chiedi a 众小智AI",
   "stopGenerating": "Interrompi generazione",
   "codeCopiedToClipboard": "Codice copiato negli appunti.",
   "send": "Invia",
@@ -185,7 +185,7 @@
   "deleteFolderMessage": "Questa cartella e le sue associazioni verranno rimosse.",
   "failedToDeleteFolder": "Impossibile eliminare la cartella",
   "aboutApp": "Informazioni",
-  "aboutAppSubtitle": "Informazioni e link di Conduit",
+  "aboutAppSubtitle": "Informazioni e link di 众小智AI",
   "web": "Web",
   "imageGen": "Gen. immagini",
   "pinned": "Fissati",
@@ -261,7 +261,7 @@
   "themeLight": "Chiaro",
   "currentlyUsingDarkTheme": "Attualmente tema scuro",
   "currentlyUsingLightTheme": "Attualmente tema chiaro",
-  "aboutConduit": "Informazioni su Conduit",
+  "aboutConduit": "Informazioni su 众小智AI",
   "versionLabel": "Versione: {version} ({build})",
   "@versionLabel": {
     "placeholders": {
@@ -300,7 +300,7 @@
   "androidAssistantTitle": "Android digital assistant",
   "androidAssistantDescription": "Choose what happens when you trigger the Android digital assistant.",
   "androidAssistantOverlayOption": "Show quick overlay (default)",
-  "androidAssistantNewChatOption": "Open Conduit with a new chat",
+  "androidAssistantNewChatOption": "Open 众小智AI with a new chat",
   "androidAssistantVoiceCallOption": "Start a voice call",
   "sttSettings": "Voce in testo",
   "sttEngineLabel": "Motore di riconoscimento",
@@ -633,13 +633,13 @@
   "@nextLabel": {
     "description": "Label for navigating to the next item."
   },
-  "themePaletteConduitLabel": "Conduit",
+  "themePaletteConduitLabel": "众小智AI",
   "@themePaletteConduitLabel": {
-    "description": "Palette name for the default Conduit theme."
+    "description": "Palette name for the default 众小智AI theme."
   },
-  "themePaletteConduitDescription": "Tema neutro e pulito progettato per Conduit.",
+  "themePaletteConduitDescription": "Tema neutro e pulito progettato per 众小智AI.",
   "@themePaletteConduitDescription": {
-    "description": "Description of the Conduit palette."
+    "description": "Description of the 众小智AI palette."
   },
   "themePaletteClaudeLabel": "Claude",
   "@themePaletteClaudeLabel": {

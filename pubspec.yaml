@@ -103,6 +103,7 @@ dev_dependencies:
   custom_lint: 0.8.1
   mocktail: ^1.0.4
   checks: ^0.3.1
+  flutter_launcher_icons: ^0.14.4
 
 dependency_overrides:
   riverpod_lint: 3.0.3
@@ -141,4 +142,24 @@ flutter_native_splash:
   
   # Web specific settings
   web: false
-    
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons/app_icon.png"
+  # Adaptive icon for Android 8.0+ (API 26+)
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icons/app_icon.png"
+  # Windows desktop icon
+  windows:
+    generate: true
+    image_path: "assets/icons/app_icon.png"
+  # macOS desktop icon
+  macos:
+    generate: true
+    image_path: "assets/icons/app_icon.png"
+  # Web favicon
+  web:
+    generate: true
+    image_path: "assets/icons/app_icon.png"
+

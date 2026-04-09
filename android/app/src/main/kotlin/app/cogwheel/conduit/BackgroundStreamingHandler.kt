@@ -94,7 +94,7 @@ class BackgroundStreamingService : Service() {
                 // Otherwise startForeground throws "Bad notification" error
                 ensureNotificationChannel()
                 val fallbackNotification = NotificationCompat.Builder(this, CHANNEL_ID)
-                    .setContentTitle("Conduit")
+                    .setContentTitle("众小智AI")
                     .setSmallIcon(R.mipmap.ic_launcher)
                     .setSilent(true)
                     .setOngoing(true)  // Prevent user from dismissing foreground service notification
@@ -264,7 +264,7 @@ class BackgroundStreamingService : Service() {
 
         // Create a minimal, silent notification (required for foreground service)
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Conduit")
+            .setContentTitle("众小智AI")
             .setContentText("Background service active")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
@@ -289,7 +289,7 @@ class BackgroundStreamingService : Service() {
             "Background Service",
             NotificationManager.IMPORTANCE_MIN,
         ).apply {
-            description = "Background service for Conduit"
+            description = "Background service for 众小智AI"
             setShowBadge(false)
             enableLights(false)
             enableVibration(false)
@@ -728,7 +728,7 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val name = "Background Service"
-            val descriptionText = "Background service for Conduit"
+            val descriptionText = "Background service for 众小智AI"
             val importance = NotificationManager.IMPORTANCE_MIN
             val channel = NotificationChannel(BackgroundStreamingService.CHANNEL_ID, name, importance).apply {
                 description = descriptionText

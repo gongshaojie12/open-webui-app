@@ -88,7 +88,7 @@ class AppIntentCoordinator extends _$AppIntentCoordinator {
       await _prepareChat(prompt: prompt);
       final summary = prompt != null && prompt.isNotEmpty
           ? 'Opening chat for "$prompt"'
-          : 'Opening Conduit chat';
+          : 'Opening 众小智AI chat';
 
       return {'success': true, 'value': summary};
     } catch (error, stackTrace) {
@@ -132,7 +132,7 @@ class AppIntentCoordinator extends _$AppIntentCoordinator {
     try {
       await _startVoiceCall();
       DebugLogger.log('Voice call launched from Siri/Shortcuts', scope: 'siri');
-      return {'success': true, 'value': 'Starting Conduit voice call'};
+      return {'success': true, 'value': 'Starting 众小智AI voice call'};
     } catch (error, stackTrace) {
       DebugLogger.error(
         'app-intents-voice',
@@ -158,7 +158,7 @@ class AppIntentCoordinator extends _$AppIntentCoordinator {
         focusComposer: true,
         resetChat: true,
       );
-      return {'success': true, 'value': 'Sent to Conduit'};
+      return {'success': true, 'value': 'Sent to 众小智AI'};
     } catch (error, stackTrace) {
       DebugLogger.error(
         'app-intents-text',
@@ -240,13 +240,13 @@ class AppIntentCoordinator extends _$AppIntentCoordinator {
         return {
           'success': true,
           'value': isYoutube
-              ? 'YouTube video attached in Conduit'
-              : 'Webpage attached in Conduit',
+              ? 'YouTube video attached in 众小智AI'
+              : 'Webpage attached in 众小智AI',
         };
       } else {
         return {
           'success': true,
-          'value': 'Opening Conduit with URL (content could not be fetched)',
+          'value': 'Opening 众小智AI with URL (content could not be fetched)',
         };
       }
     } catch (error, stackTrace) {
@@ -276,7 +276,7 @@ class AppIntentCoordinator extends _$AppIntentCoordinator {
       );
       await _attachFiles([file]);
       await _prepareChatWithOptions(focusComposer: true, resetChat: true);
-      return {'success': true, 'value': 'Image attached in Conduit'};
+      return {'success': true, 'value': 'Image attached in 众小智AI'};
     } catch (error, stackTrace) {
       DebugLogger.error(
         'app-intents-image',

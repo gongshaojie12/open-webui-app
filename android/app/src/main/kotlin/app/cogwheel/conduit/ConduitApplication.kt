@@ -35,7 +35,7 @@ class ConduitApplication : Application() {
             notificationManager,
             channelId = BackgroundStreamingService.CHANNEL_ID,
             channelName = "Background Service",
-            description = "Background service for Conduit",
+            description = "Background service for 众小智AI",
             importance = NotificationManager.IMPORTANCE_MIN,
         )
 

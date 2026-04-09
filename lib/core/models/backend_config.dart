@@ -9,6 +9,7 @@ class OAuthProviders {
     this.github,
     this.oidc,
     this.feishu,
+    this.focusmedia,
   });
 
   /// Google OAuth provider name (if enabled).
@@ -26,13 +27,17 @@ class OAuthProviders {
   /// Feishu OAuth provider name (if enabled).
   final String? feishu;
 
+  /// FocusMedia IAM OAuth provider name (if enabled).
+  final String? focusmedia;
+
   /// Whether any OAuth provider is enabled.
   bool get hasAnyProvider =>
       google != null ||
       microsoft != null ||
       github != null ||
       oidc != null ||
-      feishu != null;
+      feishu != null ||
+      focusmedia != null;
 
   /// Returns the list of enabled provider keys.
   List<String> get enabledProviders => [
@@ -41,6 +46,7 @@ class OAuthProviders {
     if (github != null) 'github',
     if (oidc != null) 'oidc',
     if (feishu != null) 'feishu',
+    if (focusmedia != null) 'focusmedia',
   ];
 
   /// Returns the display name for a provider.
@@ -51,6 +57,7 @@ class OAuthProviders {
       'github' => github ?? 'GitHub',
       'oidc' => oidc ?? 'SSO',
       'feishu' => feishu ?? 'Feishu',
+      'focusmedia' => focusmedia ?? '竹云登录',
       _ => key,
     };
   }
@@ -63,6 +70,7 @@ class OAuthProviders {
       github: json['github'] as String?,
       oidc: json['oidc'] as String?,
       feishu: json['feishu'] as String?,
+      focusmedia: json['focusmedia'] as String?,
     );
   }
 
@@ -72,6 +80,7 @@ class OAuthProviders {
     if (github != null) 'github': github,
     if (oidc != null) 'oidc': oidc,
     if (feishu != null) 'feishu': feishu,
+    if (focusmedia != null) 'focusmedia': focusmedia,
   };
 }
 

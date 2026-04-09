@@ -1,6 +1,6 @@
 {
   "@@locale": "nl",
-  "appTitle": "Conduit",
+  "appTitle": "众小智AI",
   "retry": "Opnieuw proberen",
   "back": "Terug",
   "you": "Jij",
@@ -15,8 +15,8 @@
     "description": "Ondertitel die beschikbare acties uitlegt wanneer de server niet bereikbaar is"
   },
   "account": "Account",
-  "supportConduit": "Ondersteun Conduit",
-  "supportConduitSubtitle": "Houd Conduit onafhankelijk door doorlopende ontwikkeling te financieren.",
+  "supportConduit": "Ondersteun 众小智AI",
+  "supportConduitSubtitle": "Houd 众小智AI onafhankelijk door doorlopende ontwikkeling te financieren.",
   "githubSponsorsTitle": "GitHub Sponsors",
   "githubSponsorsSubtitle": "Word een terugkerende sponsor om roadmap-items te financieren.",
   "buyMeACoffeeTitle": "Buy Me a Coffee",
@@ -43,7 +43,7 @@
   "connectedToServer": "Verbonden met server",
   "signIn": "Inloggen",
   "enterCredentials": "Voer je inloggegevens in om toegang te krijgen tot je AI-gesprekken",
-  "credentials": "Inloggegevens",
+  "credentials": "E-mail",
   "apiKey": "API-sleutel",
   "token": "Token",
   "usernameOrEmail": "Gebruikersnaam of e-mail",
@@ -97,7 +97,7 @@
   "voicePromptTapStart": "Tik op Start om te beginnen",
   "voiceActionStop": "Stop",
   "voiceActionStart": "Start",
-  "messageHintText": "Vraag Conduit",
+  "messageHintText": "Vraag 众小智AI",
   "stopGenerating": "Stop met genereren",
   "codeCopiedToClipboard": "Code gekopieerd naar klembord.",
   "send": "Verzenden",
@@ -185,7 +185,7 @@
   "deleteFolderMessage": "Deze map en zijn toewijzingen worden verwijderd.",
   "failedToDeleteFolder": "Kan map niet verwijderen",
   "aboutApp": "Over",
-  "aboutAppSubtitle": "Conduit informatie en links",
+  "aboutAppSubtitle": "众小智AI informatie en links",
   "web": "Web",
   "imageGen": "Afbeeldingsgeneratie",
   "pinned": "Vastgepind",
@@ -261,7 +261,7 @@
   "themeLight": "Licht",
   "currentlyUsingDarkTheme": "Momenteel donker thema in gebruik",
   "currentlyUsingLightTheme": "Momenteel licht thema in gebruik",
-  "aboutConduit": "Over Conduit",
+  "aboutConduit": "Over 众小智AI",
   "versionLabel": "Versie: {version} ({build})",
   "@versionLabel": {
     "placeholders": {
@@ -300,7 +300,7 @@
   "androidAssistantTitle": "Android digital assistant",
   "androidAssistantDescription": "Choose what happens when you trigger the Android digital assistant.",
   "androidAssistantOverlayOption": "Show quick overlay (default)",
-  "androidAssistantNewChatOption": "Open Conduit with a new chat",
+  "androidAssistantNewChatOption": "Open 众小智AI with a new chat",
   "androidAssistantVoiceCallOption": "Start a voice call",
   "sttSettings": "Spraak naar tekst",
   "sttEngineLabel": "Herkenningsengine",
@@ -633,13 +633,13 @@
   "@nextLabel": {
     "description": "Label for navigating to the next item."
   },
-  "themePaletteConduitLabel": "Conduit",
+  "themePaletteConduitLabel": "众小智AI",
   "@themePaletteConduitLabel": {
-    "description": "Palette name for the default Conduit theme."
+    "description": "Palette name for the default 众小智AI theme."
   },
-  "themePaletteConduitDescription": "Strak neutraal thema ontworpen voor Conduit.",
+  "themePaletteConduitDescription": "Strak neutraal thema ontworpen voor 众小智AI.",
   "@themePaletteConduitDescription": {
-    "description": "Description of the Conduit palette."
+    "description": "Description of the 众小智AI palette."
   },
   "themePaletteClaudeLabel": "Claude",
   "@themePaletteClaudeLabel": {

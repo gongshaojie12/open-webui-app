@@ -1,4 +1,33 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(flutter pub:*)",
+      "Bash(find /d/APP/open-webui-app/web -type f -name *icon*)",
+      "Bash(find /d/APP/open-webui-app/linux -name *.png -o -name *.svg)",
+      "Bash(grep -r \"ic_launcher\\\\|app_icon\\\\|favicon\\\\|logo\" /d/APP/open-webui-app --include=*.dart --include=*.xml --include=*.json --include=*.yaml)",
+      "Bash(find /d/APP/open-webui-app/build -name *app_icon* -o -name *Icon-*)",
+      "Bash(ls -la /d/APP/open-webui-app/android/app/src/main/res/drawable-*)",
+      "Bash(xargs grep:*)",
+      "Bash(dart run:*)",
+      "Bash(flutter create:*)",
+      "Bash(ls android/app/src/main/res/mipmap-*/ic_launcher.png)",
+      "Bash(ls android/app/src/main/res/drawable-*/ic_launcher_foreground.png)",
+      "Bash(ls ios/Runner/Assets.xcassets/AppIcon.appiconset/*.png)",
+      "Bash(find /d/APP/open-webui-app/lib -type f -name *provider*)",
+      "Bash(find /d/APP/open-webui-app/lib -type f -name *route* -o -name *Routes*)",
+      "Bash(find /d/APP/open-webui-app -name .env* -o -name *.env*)",
+      "Bash(flutter analyze:*)",
+      "Bash(dart analyze:*)",
+      "Bash(for f:*)",
+      "Bash(do sed:*)",
+      "Bash(done)",
+      "Bash(grep -r \"CFBundleDisplayName\" ios/Runner/*/InfoPlist.strings)",
+      "Bash(grep -rn \"Conduit\" lib/l10n/app_*.arb)",
+      "Bash(flutter gen-l10n:*)",
+      "Bash(curl -sk https://1.94.62.87/api/config)",
+      "Bash(xargs cat:*)"
+    ]
+  },
   "hooks": {
     "Notification": [
       {

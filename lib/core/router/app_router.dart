@@ -97,30 +97,25 @@ class RouterNotifier extends ChangeNotifier {
     final activeServer = activeServerAsync.asData?.value;
     final hasActiveServer = activeServer != null;
     if (!hasActiveServer) {
-      // No server configured - redirect to server connection
-      // Exception: allow staying on server connection, authentication,
-      // proxy auth, and SSO pages during the connection/auth flow.
-      // But always redirect away from connection issue page (user logged out)
-      if (location == Routes.serverConnection ||
-          location == Routes.authentication ||
+      // No server configured - server is auto-provisioned from AppConfig,
+      // so redirect to authentication instead of server connection.
+      if (location == Routes.authentication ||
           location == Routes.proxyAuth ||
           location == Routes.ssoAuth ||
           location == Routes.login) {
         return null;
       }
-      return Routes.serverConnection;
+      return Routes.authentication;
     }
 
     final authState = ref.read(authNavigationStateProvider);
     final connectivityService = ref.read(connectivityServiceProvider);
 
-    // Allow staying on server connection page
+    // Server connection page is no longer used - redirect away
     if (location == Routes.serverConnection) {
-      // If authenticated but on server connection page, go to chat
-      // Otherwise stay on server connection page (for back navigation)
       return authState == AuthNavigationState.authenticated
           ? Routes.chat
-          : null;
+          : Routes.authentication;
     }
 
     // Check connectivity status to determine if we should show connection issue
@@ -285,9 +280,16 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       path: Routes.ssoAuth,
       name: RouteNames.ssoAuth,
       builder: (context, state) {
-        final config = state.extra;
+        final extra = state.extra;
+        if (extra is Map<String, dynamic>) {
+          return SsoAuthPage(
+            serverConfig: extra['serverConfig'] as ServerConfig?,
+            oauthLoginPath: extra['oauthLoginPath'] as String?,
+            title: extra['title'] as String?,
+          );
+        }
         return SsoAuthPage(
-          serverConfig: config is ServerConfig ? config : null,
+          serverConfig: extra is ServerConfig ? extra : null,
         );
       },
     ),

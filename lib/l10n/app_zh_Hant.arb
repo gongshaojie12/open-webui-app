@@ -1,6 +1,6 @@
 {
   "@@locale": "zh_Hant",
-  "appTitle": "Conduit",
+  "appTitle": "众小智AI",
   "retry": "重試",
   "back": "返回",
   "you": "你",
@@ -15,8 +15,8 @@
     "description": "当无法访问服务器时解释可用操作的副标题"
   },
   "account": "賬戶",
-  "supportConduit": "支持 Conduit",
-  "supportConduitSubtitle": "通過資助持續開發來保持 Conduit 的獨立性。",
+  "supportConduit": "支持 众小智AI",
+  "supportConduitSubtitle": "通過資助持續開發來保持 众小智AI 的獨立性。",
   "githubSponsorsTitle": "GitHub 贊助",
   "githubSponsorsSubtitle": "成爲定期贊助者以資助路線圖項目。",
   "buyMeACoffeeTitle": "Buy Me a Coffee",
@@ -43,7 +43,7 @@
   "connectedToServer": "已連接到服務器",
   "signIn": "登錄",
   "enterCredentials": "輸入您的憑據以訪問您的 AI 對話",
-  "credentials": "憑據",
+  "credentials": "郵箱",
   "apiKey": "API 密鑰",
   "token": "令牌",
   "usernameOrEmail": "用戶名或電子郵件",
@@ -97,7 +97,7 @@
   "voicePromptTapStart": "點擊開始以開始",
   "voiceActionStop": "停止",
   "voiceActionStart": "開始",
-  "messageHintText": "問 Conduit",
+  "messageHintText": "問 众小智AI",
   "stopGenerating": "停止生成",
   "codeCopiedToClipboard": "代碼已複製到剪貼板。",
   "send": "發送",
@@ -185,7 +185,7 @@
   "deleteFolderMessage": "此文件夾及其分配引用將被刪除。",
   "failedToDeleteFolder": "無法刪除文件夾",
   "aboutApp": "關於",
-  "aboutAppSubtitle": "Conduit 信息和鏈接",
+  "aboutAppSubtitle": "众小智AI 信息和鏈接",
   "web": "網頁",
   "imageGen": "圖像生成",
   "pinned": "已置頂",
@@ -261,7 +261,7 @@
   "themeLight": "淺色",
   "currentlyUsingDarkTheme": "當前使用深色主題",
   "currentlyUsingLightTheme": "當前使用淺色主題",
-  "aboutConduit": "關於 Conduit",
+  "aboutConduit": "關於 众小智AI",
   "versionLabel": "版本：{version}（{build}）",
   "@versionLabel": {
     "placeholders": {
@@ -300,7 +300,7 @@
   "androidAssistantTitle": "Android digital assistant",
   "androidAssistantDescription": "Choose what happens when you trigger the Android digital assistant.",
   "androidAssistantOverlayOption": "Show quick overlay (default)",
-  "androidAssistantNewChatOption": "Open Conduit with a new chat",
+  "androidAssistantNewChatOption": "Open 众小智AI with a new chat",
   "androidAssistantVoiceCallOption": "Start a voice call",
   "sttSettings": "語音轉文字",
   "sttEngineLabel": "識別引擎",
@@ -633,13 +633,13 @@
   "@nextLabel": {
     "description": "Label for navigating to the next item."
   },
-  "themePaletteConduitLabel": "Conduit",
+  "themePaletteConduitLabel": "众小智AI",
   "@themePaletteConduitLabel": {
-    "description": "Palette name for the default Conduit theme."
+    "description": "Palette name for the default 众小智AI theme."
   },
-  "themePaletteConduitDescription": "爲 Conduit 設計的簡潔中性色主題。",
+  "themePaletteConduitDescription": "爲 众小智AI 設計的簡潔中性色主題。",
   "@themePaletteConduitDescription": {
-    "description": "Description of the Conduit palette."
+    "description": "Description of the 众小智AI palette."
   },
   "themePaletteClaudeLabel": "Claude",
   "@themePaletteClaudeLabel": {

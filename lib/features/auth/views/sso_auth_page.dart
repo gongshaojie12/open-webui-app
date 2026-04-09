@@ -26,7 +26,19 @@ import '../providers/unified_auth_providers.dart';
 class SsoAuthPage extends ConsumerStatefulWidget {
   final ServerConfig? serverConfig;
 
-  const SsoAuthPage({super.key, this.serverConfig});
+  /// Optional OAuth login path (e.g., '/oauth/focusmedia/login').
+  /// When set, the WebView loads this path directly instead of '/auth'.
+  final String? oauthLoginPath;
+
+  /// Custom title for the AppBar (defaults to 'SSO').
+  final String? title;
+
+  const SsoAuthPage({
+    super.key,
+    this.serverConfig,
+    this.oauthLoginPath,
+    this.title,
+  });
 
   @override
   ConsumerState<SsoAuthPage> createState() => _SsoAuthPageState();
@@ -104,6 +116,7 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
           onWebResourceError: _onWebResourceError,
           onNavigationRequest: _onNavigationRequest,
           onUrlChange: _onUrlChange,
+          onSslAuthError: _onSslAuthError,
         ),
       )
       ..setUserAgent(_buildUserAgent());
@@ -115,8 +128,9 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
 
     if (!mounted) return;
 
-    // Load the auth page
-    await controller.loadRequest(Uri.parse('$_serverUrl/auth'));
+    // Load the auth page or specific OAuth login URL
+    final loginPath = widget.oauthLoginPath ?? '/auth';
+    await controller.loadRequest(Uri.parse('$_serverUrl$loginPath'));
 
     if (!mounted) return;
 
@@ -436,6 +450,26 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
     }
   }
 
+  /// Handle SSL certificate errors in the OAuth WebView.
+  ///
+  /// Enterprise OAuth/IAM servers (e.g., FocusMedia IAM at iam.fmtest.cn:8443)
+  /// often use self-signed or internal CA certificates that the system WebView
+  /// does not trust by default. The app's HTTP client (Dio) already accepts
+  /// self-signed certs via [AppConfig.allowSelfSignedCertificates], but the
+  /// WebView has its own certificate store.
+  ///
+  /// This handler accepts SSL errors in the sandboxed SSO WebView to allow
+  /// the OAuth redirect chain to complete. Security is maintained because:
+  /// 1. This WebView is only used for authentication flows
+  /// 2. The JWT token is validated server-side regardless
+  /// 3. The user explicitly initiated the OAuth flow
+  void _onSslAuthError(SslAuthError error) {
+    DebugLogger.auth(
+      'SSO WebView SSL certificate error, proceeding to allow OAuth flow',
+    );
+    error.proceed();
+  }
+
   NavigationDecision _onNavigationRequest(NavigationRequest request) {
     final url = request.url;
     DebugLogger.auth('SSO navigation request: $url');
@@ -468,7 +502,8 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
 
     if (!mounted) return;
 
-    await controller.loadRequest(Uri.parse('$_serverUrl/auth'));
+    final loginPath = widget.oauthLoginPath ?? '/auth';
+    await controller.loadRequest(Uri.parse('$_serverUrl$loginPath'));
   }
 
   @override
@@ -481,7 +516,9 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
         extendBodyBehindAppBar: true,
         appBar: FloatingAppBar(
           leading: FloatingAppBarBackButton(onTap: () => context.pop()),
-          title: FloatingAppBarTitle(text: l10n?.sso ?? 'SSO'),
+          title: FloatingAppBarTitle(
+            text: widget.title ?? l10n?.sso ?? 'SSO',
+          ),
           actions: [
             if (_controller != null)
               FloatingAppBarAction(

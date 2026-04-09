@@ -1,6 +1,6 @@
 {
   "@@locale": "ru",
-  "appTitle": "Conduit",
+  "appTitle": "众小智AI",
   "retry": "Повторить",
   "back": "Назад",
   "you": "Вы",
@@ -15,8 +15,8 @@
     "description": "Подзаголовок с доступными действиями при недоступности сервера"
   },
   "account": "Аккаунт",
-  "supportConduit": "Поддержать Conduit",
-  "supportConduitSubtitle": "Сохраните независимость Conduit, финансируя разработку.",
+  "supportConduit": "Поддержать 众小智AI",
+  "supportConduitSubtitle": "Сохраните независимость 众小智AI, финансируя разработку.",
   "githubSponsorsTitle": "GitHub Sponsors",
   "githubSponsorsSubtitle": "Станьте регулярным спонсором для финансирования дорожной карты.",
   "buyMeACoffeeTitle": "Buy Me a Coffee",
@@ -43,7 +43,7 @@
   "connectedToServer": "Подключено к серверу",
   "signIn": "Войти",
   "enterCredentials": "Введите свои учетные данные для доступа к вашим разговорам с ИИ",
-  "credentials": "Учетные данные",
+  "credentials": "Эл. почта",
   "apiKey": "API-ключ",
   "token": "Токен",
   "usernameOrEmail": "Имя пользователя или email",
@@ -97,7 +97,7 @@
   "voicePromptTapStart": "Нажмите «Начать» для запуска",
   "voiceActionStop": "Стоп",
   "voiceActionStart": "Начать",
-  "messageHintText": "Спросите Conduit",
+  "messageHintText": "Спросите 众小智AI",
   "stopGenerating": "Остановить генерацию",
   "codeCopiedToClipboard": "Код скопирован в буфер обмена.",
   "send": "Отправить",
@@ -185,7 +185,7 @@
   "deleteFolderMessage": "Эта папка и ее ссылки будут удалены.",
   "failedToDeleteFolder": "Не удалось удалить папку",
   "aboutApp": "О",
-  "aboutAppSubtitle": "Информация и ссылки Conduit",
+  "aboutAppSubtitle": "Информация и ссылки 众小智AI",
   "web": "Веб",
   "imageGen": "Генерация изображений",
   "pinned": "Закреплено",
@@ -261,7 +261,7 @@
   "themeLight": "Светлая",
   "currentlyUsingDarkTheme": "Используется темная тема",
   "currentlyUsingLightTheme": "Используется светлая тема",
-  "aboutConduit": "О Conduit",
+  "aboutConduit": "О 众小智AI",
   "versionLabel": "Версия: {version} ({build})",
   "@versionLabel": {
     "placeholders": {
@@ -300,7 +300,7 @@
   "androidAssistantTitle": "Android digital assistant",
   "androidAssistantDescription": "Choose what happens when you trigger the Android digital assistant.",
   "androidAssistantOverlayOption": "Show quick overlay (default)",
-  "androidAssistantNewChatOption": "Open Conduit with a new chat",
+  "androidAssistantNewChatOption": "Open 众小智AI with a new chat",
   "androidAssistantVoiceCallOption": "Start a voice call",
   "sttSettings": "Речь в текст",
   "sttEngineLabel": "Движок распознавания",
@@ -633,13 +633,13 @@
   "@nextLabel": {
     "description": "Label for navigating to the next item."
   },
-  "themePaletteConduitLabel": "Conduit",
+  "themePaletteConduitLabel": "众小智AI",
   "@themePaletteConduitLabel": {
-    "description": "Palette name for the default Conduit theme."
+    "description": "Palette name for the default 众小智AI theme."
   },
-  "themePaletteConduitDescription": "Нейтральная чистая тема, созданная для Conduit.",
+  "themePaletteConduitDescription": "Нейтральная чистая тема, созданная для 众小智AI.",
   "@themePaletteConduitDescription": {
-    "description": "Description of the Conduit palette."
+    "description": "Description of the 众小智AI palette."
   },
   "themePaletteClaudeLabel": "Claude",
   "@themePaletteClaudeLabel": {

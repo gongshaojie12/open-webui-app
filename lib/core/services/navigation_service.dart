@@ -84,16 +84,16 @@ class NavigationService {
   }
 
   static Future<void> navigateToChat() => navigateTo(Routes.chat);
-  static Future<void> navigateToLogin() => navigateTo(Routes.serverConnection);
+  static Future<void> navigateToLogin() => navigateTo(Routes.authentication);
   static Future<void> navigateToProfile() => navigateTo(Routes.profile);
   static Future<void> navigateToServerConnection() =>
-      navigateTo(Routes.serverConnection);
+      navigateTo(Routes.authentication);
 
   /// Clear navigation history. With GoRouter this becomes a simple go call.
   static void clearNavigationStack() {
     final router = _router;
     if (router == null) return;
-    router.go(Routes.serverConnection);
+    router.go(Routes.authentication);
   }
 }
 
