@@ -25,7 +25,10 @@
       "Bash(grep -rn \"Conduit\" lib/l10n/app_*.arb)",
       "Bash(flutter gen-l10n:*)",
       "Bash(curl -sk https://1.94.62.87/api/config)",
-      "Bash(xargs cat:*)"
+      "Bash(xargs cat:*)",
+      "Bash(git merge:*)",
+      "Bash(git stash:*)",
+      "Bash(git push:*)"
     ]
   },
   "hooks": {
