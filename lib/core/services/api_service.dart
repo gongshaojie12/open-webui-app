@@ -3698,6 +3698,10 @@ class ApiService {
       data: data,
       options: Options(
         responseType: ResponseType.stream,
+        // Disable receive timeout for streaming: on iOS, request.close()
+        // may not resolve until body data arrives (not just headers),
+        // causing the default 30s timeout to fire prematurely.
+        receiveTimeout: Duration.zero,
         // Accept all non-5xx so we can inspect error bodies ourselves.
         validateStatus: (status) => status != null && status < 600,
       ),
