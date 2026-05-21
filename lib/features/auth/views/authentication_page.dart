@@ -291,14 +291,6 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            // Back button row
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: _buildBackButton(),
-                            ),
-
-                            const SizedBox(height: Spacing.xl),
-
                             // Brand icon + title header
                             _buildHeader(),
 

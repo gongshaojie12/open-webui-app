@@ -516,11 +516,8 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
       child: AdaptiveRouteShell(
         backgroundColor: context.conduitTheme.surfaceBackground,
         extendBodyBehindAppBar: true,
-        appBar: FloatingAppBar(
-          leading: FloatingAppBarBackButton(onTap: () => context.pop()),
-          title: FloatingAppBarTitle(
-            text: widget.title ?? l10n?.sso ?? 'SSO',
-          ),
+        appBar: AdaptiveAppBar(
+          title: widget.title ?? l10n?.sso ?? 'SSO',
           actions: [
             if (_controller != null)
               AdaptiveAppBarAction(
