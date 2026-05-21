@@ -87,22 +87,26 @@ class DetailsBlockSyntax extends md.BlockSyntax {
 
     var decodedContent = _decode(innerContent).trim();
     final detailType = _detailType(attributes);
+    if (detailType == 'tool_calls' &&
+        (attributes['result'] == null ||
+            attributes['result']!.trim().isEmpty) &&
+        decodedContent.isNotEmpty) {
+      // OpenWebUI serializes tool results in the <details> body. Normalize that
+      // into the result attribute so the tool call renderer can treat it the
+      // same way as older attribute-based payloads.
+      attributes['result'] = decodedContent;
+      decodedContent = '';
+    }
     if (detailType == 'reasoning') {
       decodedContent = _normalizeReasoningLineBreaks(decodedContent);
     } else if (detailType == 'code_interpreter') {
       decodedContent = _normalizeCodeInterpreterLineBreaks(decodedContent);
     }
-    final childNodes = decodedContent.isEmpty
-        ? const <md.Node>[]
-        : md.BlockParser(
-            decodedContent.split('\n').map(md.Line.new).toList(growable: false),
-            parser.document,
-          ).parseLines();
+    attributes['body_markdown'] = decodedContent;
 
     final detailsElement = md.Element('details', [
       if (summaryText != null && summaryText.isNotEmpty)
         md.Element('summary', [md.Text(summaryText)]),
-      ...childNodes,
     ]);
     detailsElement.attributes.addAll(attributes);
 

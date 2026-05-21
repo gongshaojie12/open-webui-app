@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:uuid/uuid.dart';
 
 import '../utils/embed_utils.dart';
+import '../utils/message_tree_utils.dart' as message_tree;
 import '../utils/openwebui_source_parser.dart';
 
 /// Utilities for converting OpenWebUI conversation payloads into JSON maps
@@ -372,6 +373,46 @@ Map<String, dynamic>? _extractErrorData(
   return null;
 }
 
+Map<String, dynamic>? _extractOpenWebUiMessageMetadata(
+  Map<String, dynamic> msgData, {
+  Map<String, dynamic>? historyMsg,
+  required String role,
+}) {
+  final metadata = <String, dynamic>{
+    ..._coerceJsonMap(msgData['metadata']),
+    ..._coerceJsonMap(historyMsg?['metadata']),
+  };
+
+  final rawParentId = historyMsg?['parentId'] ?? msgData['parentId'];
+  if (rawParentId != null) {
+    final parentId = rawParentId.toString().trim();
+    if (parentId.isNotEmpty) {
+      metadata['parentId'] = parentId;
+    }
+  }
+
+  final rawChildrenIds = historyMsg?['childrenIds'] ?? msgData['childrenIds'];
+  if (rawChildrenIds is List) {
+    metadata['childrenIds'] = rawChildrenIds
+        .map((child) => child?.toString().trim() ?? '')
+        .where((child) => child.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  final rawModels = historyMsg?['models'] ?? msgData['models'];
+  if (role == 'user' && rawModels is List) {
+    final models = rawModels
+        .map((model) => model?.toString().trim() ?? '')
+        .where((model) => model.isNotEmpty)
+        .toList(growable: false);
+    if (models.isNotEmpty) {
+      metadata['models'] = models;
+    }
+  }
+
+  return metadata.isEmpty ? null : metadata;
+}
+
 Map<String, dynamic> _parseOpenWebUIMessageToJson(
   Map<String, dynamic> msgData, {
   Map<String, dynamic>? historyMsg,
@@ -438,6 +479,11 @@ Map<String, dynamic> _parseOpenWebUIMessageToJson(
   final errorData = _extractErrorData(msgData, historyMsg);
 
   final role = _resolveRole(msgData);
+  final metadata = _extractOpenWebUiMessageMetadata(
+    msgData,
+    historyMsg: historyMsg,
+    role: role,
+  );
 
   final effectiveFiles = msgData['files'] ?? historyMsg?['files'];
   List<String>? attachmentIds;
@@ -517,7 +563,7 @@ Map<String, dynamic> _parseOpenWebUIMessageToJson(
     'attachmentIds': ?attachmentIds,
     'files': ?files,
     if (embeds.isNotEmpty) 'embeds': embeds,
-    'metadata': _coerceJsonMap(msgData['metadata']),
+    'metadata': metadata ?? const <String, dynamic>{},
     'statusHistory': _parseStatusHistoryField(statusHistoryRaw),
     'followUps': _coerceStringList(followUpsRaw),
     'codeExecutions': _parseCodeExecutionsField(codeExecRaw),
@@ -543,62 +589,41 @@ String _resolveRole(Map<String, dynamic> msgData) {
 List<Map<String, dynamic>> _buildMessagesListFromHistory(
   Map<String, dynamic> history,
 ) {
-  final messagesMap = history['messages'];
+  final rawMessagesMap = history['messages'];
   final currentId = history['currentId']?.toString();
-  if (messagesMap is! Map<String, dynamic> || currentId == null) {
+  if (rawMessagesMap is! Map || currentId == null) {
     return const [];
   }
 
-  // Build the main chain from currentId back to root
-  List<Map<String, dynamic>> buildChain(String? id) {
-    if (id == null) return const [];
-    final raw = messagesMap[id];
-    if (raw is! Map) return const [];
-    final msg = _coerceJsonMap(raw);
-    msg['id'] = id;
-    final parentId = msg['parentId']?.toString();
-    if (parentId != null && parentId.isNotEmpty) {
-      return [...buildChain(parentId), msg];
+  final messagesMap = <String, Map<String, dynamic>>{};
+  rawMessagesMap.forEach((key, value) {
+    final id = message_tree.normalizeMessageId(key);
+    if (id == null || value is! Map) {
+      return;
     }
-    return [msg];
-  }
+    messagesMap[id] = _coerceJsonMap(value)..['id'] = id;
+  });
 
-  final chain = buildChain(currentId);
+  final chain = message_tree.chainToRoot<Map<String, dynamic>>(
+    currentId,
+    messagesById: messagesMap,
+    parentIdOf: message_tree.rawMessageParentId,
+  );
 
   // For each message in the chain, find sibling versions
   // Siblings are other children of the same parent
   for (final msg in chain) {
-    final parentId = msg['parentId']?.toString();
-    if (parentId == null || parentId.isEmpty) continue;
+    final msgId = message_tree.normalizeMessageId(msg['id']);
+    if (msgId == null) continue;
 
-    final parent = messagesMap[parentId];
-    if (parent is! Map) continue;
-
-    final childrenIds = parent['childrenIds'];
-    if (childrenIds is! List || childrenIds.length <= 1) continue;
-
-    // Collect sibling messages (same role, different id)
-    final msgId = msg['id']?.toString();
-    final msgRole = msg['role']?.toString();
-    final siblings = <Map<String, dynamic>>[];
-
-    for (final siblingId in childrenIds) {
-      final sibId = siblingId?.toString();
-      if (sibId == null || sibId == msgId) continue;
-
-      final siblingRaw = messagesMap[sibId];
-      if (siblingRaw is! Map) continue;
-
-      final sibling = _coerceJsonMap(siblingRaw);
-      final siblingRole = sibling['role']?.toString();
-
-      // Only include siblings with the same role (e.g., alternative assistant responses)
-      if (siblingRole == msgRole) {
-        sibling['id'] = sibId;
-        siblings.add(sibling);
-      }
-    }
-
+    final siblings = message_tree.sameRoleSiblings<Map<String, dynamic>>(
+      messageId: msgId,
+      message: msg,
+      messagesById: messagesMap,
+      parentIdOf: message_tree.rawMessageParentId,
+      childrenIdsOf: message_tree.rawMessageChildrenIds,
+      roleOf: message_tree.rawMessageRole,
+    );
     if (siblings.isNotEmpty) {
       msg['_siblings'] = siblings;
     }

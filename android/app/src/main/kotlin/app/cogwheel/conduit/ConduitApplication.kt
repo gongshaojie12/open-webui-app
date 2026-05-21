@@ -37,6 +37,7 @@ class ConduitApplication : Application() {
             channelName = "Background Service",
             description = "Background service for 众小智AI",
             importance = NotificationManager.IMPORTANCE_MIN,
+            recreateIfImportanceChanged = true,
         )
 
         // Voice call notification channel (used by VoiceCallNotificationService)
@@ -55,9 +56,28 @@ class ConduitApplication : Application() {
         channelName: String,
         description: String,
         importance: Int,
+        recreateIfImportanceChanged: Boolean = false,
     ) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        if (manager.getNotificationChannel(channelId) != null) return
+        val existingChannel = manager.getNotificationChannel(channelId)
+        if (existingChannel != null) {
+            if (existingChannel.importance == importance) {
+                return
+            }
+            if (!recreateIfImportanceChanged) {
+                return
+            }
+
+            val canSafelyRecreate =
+                existingChannel.importance == NotificationManager.IMPORTANCE_MIN &&
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                    !existingChannel.hasUserSetImportance()
+            if (!canSafelyRecreate) {
+                return
+            }
+
+            manager.deleteNotificationChannel(channelId)
+        }
 
         val channel = NotificationChannel(channelId, channelName, importance).apply {
             this.description = description
@@ -71,5 +91,3 @@ class ConduitApplication : Application() {
         manager.createNotificationChannel(channel)
     }
 }
-
-

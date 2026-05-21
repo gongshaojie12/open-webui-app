@@ -27,9 +27,11 @@
   "autoSelect": "Serverstandaard",
   "loadingModels": "Modellen laden...",
   "failedToLoadModels": "Kan modellen niet laden",
+  "failedToLoadFiles": "Kan bestanden niet laden",
   "availableModels": "Beschikbare modellen",
   "noResults": "Geen resultaten",
   "searchModels": "Modellen zoeken...",
+  "searchFiles": "Bestanden zoeken...",
   "errorMessage": "Er is iets misgegaan. Probeer het opnieuw.",
   "closeButtonSemantic": "Sluiten",
   "loadingContent": "Inhoud laden",
@@ -37,13 +39,14 @@
   "noItemsToDisplay": "Geen items om weer te geven",
   "knowledgeBase": "Kennisbank",
   "attachments": "Bijlagen",
+  "files": "Bestanden",
   "takePhoto": "Foto maken",
   "document": "Document",
   "backToServerSetup": "Terug naar serverinstelling",
   "connectedToServer": "Verbonden met server",
   "signIn": "Inloggen",
   "enterCredentials": "Voer je inloggegevens in om toegang te krijgen tot je AI-gesprekken",
-  "credentials": "E-mail",
+  "credentials": "Inloggegevens",
   "apiKey": "API-sleutel",
   "token": "Token",
   "usernameOrEmail": "Gebruikersnaam of e-mail",
@@ -85,6 +88,9 @@
   "genericSignInFailed": "We konden je niet inloggen. Controleer je inloggegevens en serverinstellingen.",
   "attachmentLabel": "Bijlage",
   "tools": "Hulpmiddelen",
+  "toolServer": "Toolserver",
+  "toolServers": "Toolservers",
+  "terminal": "Terminal",
   "filters": "Filters",
   "voiceInput": "Spraakinvoer",
   "voice": "Stem",
@@ -162,6 +168,7 @@
   "chineseSimplified": "Chinees (vereenvoudigd)",
   "chineseTraditional": "Chinees (traditioneel)",
   "korean": "한국어",
+  "japanese": "日本語",
   "deleteMessagesTitle": "Berichten verwijderen",
   "deleteMessagesMessage": "{count} berichten verwijderen?",
   "@deleteMessagesMessage": {
@@ -310,11 +317,11 @@
   "sendOnEnterDescription": "Enter verzendt (softtoetsenbord). Cmd/Ctrl+Enter ook beschikbaar",
   "disableHapticsWhileStreaming": "Haptiek uitschakelen tijdens streamen",
   "disableHapticsWhileStreamingDescription": "Dempt haptiek voor live reacties zonder de rest van de app te beïnvloeden",
-  "androidAssistantTitle": "Android digital assistant",
-  "androidAssistantDescription": "Choose what happens when you trigger the Android digital assistant.",
-  "androidAssistantOverlayOption": "Show quick overlay (default)",
-  "androidAssistantNewChatOption": "Open 众小智AI with a new chat",
-  "androidAssistantVoiceCallOption": "Start a voice call",
+  "androidAssistantTitle": "Digitale Android-assistent",
+  "androidAssistantDescription": "Kies wat er gebeurt wanneer je de digitale Android-assistent activeert.",
+  "androidAssistantOverlayOption": "Snelle overlay tonen (standaard)",
+  "androidAssistantNewChatOption": "众小智AI openen met een nieuwe chat",
+  "androidAssistantVoiceCallOption": "Spraakoproep starten",
   "sttSettings": "Spraak naar tekst",
   "sttEngineLabel": "Herkenningsengine",
   "sttEngineDevice": "Op het apparaat",
@@ -762,7 +769,8 @@
   "@deleteNoteMessage": {
     "placeholders": {
       "title": {
-        "type": "String"
+        "type": "String",
+        "example": "My Note"
       }
     }
   },
@@ -795,7 +803,8 @@
   "@wordCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "150"
       }
     }
   },
@@ -803,7 +812,8 @@
   "@charCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "500"
       }
     }
   },
@@ -813,7 +823,8 @@
   "@promptVariableNumberMin": {
     "placeholders": {
       "min": {
-        "type": "double"
+        "type": "double",
+        "example": "0"
       }
     }
   },
@@ -821,7 +832,8 @@
   "@promptVariableNumberMax": {
     "placeholders": {
       "max": {
-        "type": "double"
+        "type": "double",
+        "example": "100"
       }
     }
   },
@@ -850,7 +862,8 @@
   "@usageTokensPerSecond": {
     "placeholders": {
       "speed": {
-        "type": "String"
+        "type": "String",
+        "example": "45.2"
       }
     }
   },
@@ -858,7 +871,8 @@
   "@usageTokenCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "128"
       }
     }
   },
@@ -866,7 +880,8 @@
   "@usageSecondsFormat": {
     "placeholders": {
       "seconds": {
-        "type": "String"
+        "type": "String",
+        "example": "2.34"
       }
     }
   },
@@ -917,9 +932,113 @@
   "chatSaved": "Chat opgeslagen in geschiedenis",
   "chatSaveFailed": "Chat opslaan mislukt",
   "sidebarChatsTab": "Chats",
+  "sidebarTerminalTab": "Terminal",
+  "@sidebarTerminalTab": {
+    "description": "Label for the Terminal tab in the sidebar"
+  },
   "sidebarNotesTab": "Notities",
   "sidebarChannelsTab": "Kanalen",
   "closeSidebar": "Zijbalk sluiten",
+  "terminalSelectServer": "Selecteer een terminalserver",
+  "@terminalSelectServer": {
+    "description": "Prompt shown when the user needs to choose a terminal server."
+  },
+  "terminalNoServersConfigured": "Geen terminalservers beschikbaar.",
+  "@terminalNoServersConfigured": {
+    "description": "Empty state shown when there are no terminal servers configured."
+  },
+  "terminalConnectAction": "Verbinden",
+  "@terminalConnectAction": {
+    "description": "Button label used to connect to a terminal session."
+  },
+  "terminalDisconnectAction": "Verbinding verbreken",
+  "@terminalDisconnectAction": {
+    "description": "Button label used to disconnect from a terminal session."
+  },
+  "terminalConnectedStatus": "Verbonden",
+  "@terminalConnectedStatus": {
+    "description": "Status label shown when the terminal is connected."
+  },
+  "terminalDisconnectedStatus": "Verbinding verbroken",
+  "@terminalDisconnectedStatus": {
+    "description": "Status label shown when the terminal is disconnected."
+  },
+  "terminalConnectingStatus": "Verbinden...",
+  "@terminalConnectingStatus": {
+    "description": "Status label shown while the terminal connection is being established."
+  },
+  "terminalUploadAction": "Uploaden",
+  "@terminalUploadAction": {
+    "description": "Action label for uploading a file into the terminal workspace."
+  },
+  "terminalOpenInBrowserAction": "Openen in browser",
+  "@terminalOpenInBrowserAction": {
+    "description": "Action label for opening a forwarded port in the browser."
+  },
+  "terminalHomeAction": "Thuismap",
+  "@terminalHomeAction": {
+    "description": "Tooltip for navigating back to the terminal home directory."
+  },
+  "terminalCurrentPathLabel": "Huidig pad",
+  "@terminalCurrentPathLabel": {
+    "description": "Label displayed above the current terminal working directory."
+  },
+  "terminalPortsSectionLabel": "Luisterende poorten",
+  "@terminalPortsSectionLabel": {
+    "description": "Section title for ports discovered in the terminal environment."
+  },
+  "terminalNoFiles": "Geen bestanden in deze map.",
+  "@terminalNoFiles": {
+    "description": "Empty state shown when the current terminal directory has no files."
+  },
+  "terminalNoPorts": "Geen luisterende poorten gedetecteerd.",
+  "@terminalNoPorts": {
+    "description": "Empty state shown when the terminal server reports no listening ports."
+  },
+  "terminalPreviewUnavailable": "Voorvertoning niet beschikbaar. Gebruik Downloaden.",
+  "@terminalPreviewUnavailable": {
+    "description": "Message shown when a terminal file cannot be previewed inline."
+  },
+  "terminalFeatureDisabled": "Deze terminalserver biedt geen interactieve shell.",
+  "@terminalFeatureDisabled": {
+    "description": "Message shown when the selected terminal server disables interactive terminal sessions."
+  },
+  "terminalFolderNameHint": "Mapnaam",
+  "@terminalFolderNameHint": {
+    "description": "Hint text used when creating a new folder in the terminal workspace."
+  },
+  "terminalFailedToLoadFiles": "Kan terminalbestanden niet laden.",
+  "@terminalFailedToLoadFiles": {
+    "description": "Error message shown when the terminal file list cannot be loaded."
+  },
+  "terminalFailedToLoadPorts": "Kan luisterende poorten niet laden.",
+  "@terminalFailedToLoadPorts": {
+    "description": "Error message shown when terminal port discovery fails."
+  },
+  "terminalFailedToConnect": "Kan geen verbinding maken met de terminal.",
+  "@terminalFailedToConnect": {
+    "description": "Error message shown when the terminal websocket session cannot be opened."
+  },
+  "terminalDownloadFailed": "Kan het geselecteerde bestand niet downloaden.",
+  "@terminalDownloadFailed": {
+    "description": "Error message shown when downloading a terminal file fails."
+  },
+  "terminalUploadFailed": "Kan het geselecteerde bestand niet uploaden.",
+  "@terminalUploadFailed": {
+    "description": "Error message shown when uploading a terminal file fails."
+  },
+  "terminalRenameFailed": "Kan het geselecteerde item niet hernoemen.",
+  "@terminalRenameFailed": {
+    "description": "Error message shown when renaming a file or folder in the terminal workspace fails."
+  },
+  "terminalDeleteFailed": "Kan het geselecteerde item niet verwijderen.",
+  "@terminalDeleteFailed": {
+    "description": "Error message shown when deleting a file or folder in the terminal workspace fails."
+  },
+  "terminalFolderCreateFailed": "Kan de map niet aanmaken.",
+  "@terminalFolderCreateFailed": {
+    "description": "Error message shown when creating a new terminal folder fails."
+  },
   "channelCreateTitle": "Kanaal aanmaken",
   "channelName": "Kanaalnaam",
   "channelDescription": "Beschrijving",
@@ -943,5 +1062,718 @@
   "searchChannels": "Kanalen zoeken...",
   "channelCreateError": "Kanaal kon niet worden aangemaakt",
   "channelMessageHint": "Bericht...",
-  "audioUploadError": "Audio uploaden mislukt: {error}"
+  "audioUploadError": "Audio uploaden mislukt: {error}",
+  "shareChat": "Chat delen",
+  "@shareChat": {
+    "description": "Dialog title and action label for sharing a chat."
+  },
+  "shareChatDescription": "Berichten die je na het maken van je link verstuurt, worden niet gedeeld. Gebruikers met de URL kunnen de gedeelde chat bekijken.",
+  "@shareChatDescription": {
+    "description": "Explains that a shared chat link is a snapshot."
+  },
+  "shareChatExisting": "Je hebt deze chat al eerder gedeeld.",
+  "@shareChatExisting": {
+    "description": "Explains that the chat already has an existing shared link."
+  },
+  "shareChatDeleteLink": "Deze link verwijderen",
+  "@shareChatDeleteLink": {
+    "description": "Action label to delete the current shared chat link."
+  },
+  "shareChatDeleteAndCreate": "en een nieuwe gedeelde link maken.",
+  "@shareChatDeleteAndCreate": {
+    "description": "Continuation text after the delete shared link action."
+  },
+  "copyLink": "Link kopiëren",
+  "@copyLink": {
+    "description": "Button label to copy a newly created shared chat URL."
+  },
+  "updateAndCopyLink": "Bijwerken en link kopiëren",
+  "@updateAndCopyLink": {
+    "description": "Button label to refresh a shared chat snapshot and copy the URL."
+  },
+  "sharedChatCopied": "URL van gedeelde chat gekopieerd naar klembord.",
+  "@sharedChatCopied": {
+    "description": "Snackbar shown after copying a shared chat URL."
+  },
+  "shareSystemSheet": "Delen...",
+  "@shareSystemSheet": {
+    "description": "Button label to open the platform share sheet."
+  },
+  "chatShareFailed": "Chat delen mislukt",
+  "@chatShareFailed": {
+    "description": "Snackbar shown when chat sharing fails."
+  },
+  "sharedLinkDeleted": "Link naar gedeelde chat verwijderd",
+  "@sharedLinkDeleted": {
+    "description": "Snackbar shown after deleting a shared chat link."
+  },
+  "deleteSharedLinkFailed": "Gedeelde link verwijderen mislukt",
+  "@deleteSharedLinkFailed": {
+    "description": "Snackbar shown when deleting a shared chat link fails."
+  },
+  "systemPrompts": "Systeemprompts",
+  "globalSystemPrompt": "Globale systeemprompt",
+  "modelSystemPrompts": "Systeemprompts voor modellen",
+  "folderSystemPrompts": "Systeemprompts voor mappen",
+  "openWebuiModelSettings": "OpenWebUI-modelinstellingen",
+  "openWebuiFolderSettings": "OpenWebUI-mapinstellingen",
+  "accessibleModelsCount": "{count} toegankelijke modellen",
+  "accessibleFoldersCount": "{count} toegankelijke mappen",
+  "unableToLoadOpenWebuiSettings": "Kan OpenWebUI-instellingen niet laden.",
+  "unableToLoadModels": "Kan modellen niet laden.",
+  "unableToLoadFolders": "Kan mappen niet laden.",
+  "noAccessibleModelsFound": "Geen toegankelijke modellen gevonden.",
+  "noAccessibleFoldersFound": "Geen toegankelijke mappen gevonden.",
+  "tapToLoadServerPromptSettings": "Tik om serverpromptinstellingen te laden.",
+  "loadingFromOpenWebui": "Laden vanuit OpenWebUI...",
+  "globalSystemPromptEditorDescription": "Opgeslagen in je OpenWebUI-gebruikersinstellingen en gebruikt als standaard systeemprompt voor chats.",
+  "modelNoEditableServerRecord": "Dit model heeft geen bewerkbare serverrecord.",
+  "modelSystemPromptTitle": "Systeemprompt voor {modelName}",
+  "modelSystemPromptEditorDescription": "Opgeslagen in OpenWebUI-model params.system.",
+  "modelNoWriteAccessDescription": "Je hebt geen schrijftoegang tot dit model.",
+  "unableToLoadFolder": "Kan deze map niet laden.",
+  "folderSystemPromptTitle": "Systeemprompt voor {folderName}",
+  "folderSystemPromptEditorDescription": "Opgeslagen in OpenWebUI-map data.system_prompt.",
+  "notSet": "Niet ingesteld",
+  "enterSystemPrompt": "Voer systeemprompt in",
+  "close": "Sluiten",
+  "connectionHealth": "Verbindingsstatus",
+  "personalization": "Personalisatie",
+  "personalizationSubtitle": "Standaardmodel, persoonlijke prompt en herinneringen",
+  "yourSystemPrompt": "Je systeemprompt",
+  "yourSystemPromptDescription": "Stel een persoonlijke systeemprompt in die OpenWebUI op je chats toepast.",
+  "memoryTitle": "Geheugen",
+  "memoryEnabledDescription": "Sta de server toe je opgeslagen herinneringen in toekomstige chats te gebruiken.",
+  "memoryDisabledDescription": "Opgeslagen herinneringen blijven op de server, maar worden niet in chats ingevoegd.",
+  "manageMemories": "Herinneringen beheren",
+  "manageMemoriesDescription": "Voeg feiten toe, bewerk en verwijder ze die de server over jou onthoudt.",
+  "savedMemoriesCount": "{count} opgeslagen herinneringen",
+  "memoryEditorDescription": "Houd herinneringen kort en specifiek zodat de server ze consistent kan toepassen.",
+  "memoryHint": "Voorbeeld: ik geef de voorkeur aan beknopte antwoorden met codevoorbeelden.",
+  "addMemory": "Herinnering toevoegen",
+  "editMemory": "Herinnering bewerken",
+  "deleteMemory": "Herinnering verwijderen",
+  "deleteMemoryConfirm": "Deze opgeslagen herinnering van de server verwijderen?",
+  "clearAllMemories": "Alle herinneringen wissen",
+  "clearAllMemoriesDescription": "Dit verwijdert permanent alle opgeslagen herinneringen voor je account.",
+  "noMemoriesSaved": "Nog geen herinneringen opgeslagen.",
+  "memoryUpdatedAt": "Bijgewerkt {formattedTime}",
+  "advancedPromptOverrides": "Geavanceerde promptoverschrijvingen",
+  "advancedPromptOverridesDescription": "Modelniveau promptoverschrijvingen staan in App en chat.",
+  "audioSettingsTitle": "Audio",
+  "audioSettingsSubtitle": "Spraak naar tekst en tekst naar spraak",
+  "appAndChat": "App en chat",
+  "appAndChatSubtitle": "Thema, taal, chatgedrag en geavanceerde overschrijvingen",
+  "accountSettingsTitle": "Account",
+  "accountSettingsSubtitle": "Profielgegevens en wachtwoordbeheer",
+  "accountDetails": "Accountgegevens",
+  "signInToManageAccount": "Log in om accountgegevens te beheren.",
+  "emailLabel": "E-mail",
+  "roleLabel": "Rol",
+  "accountStatus": "Status",
+  "profileDetails": "Profielgegevens",
+  "name": "Naam",
+  "avatarUrl": "Avatar-URL",
+  "avatarUrlHint": "https://example.com/avatar.png",
+  "bioLabel": "Bio",
+  "bioHint": "Een korte beschrijving over jou.",
+  "genderLabel": "Gender",
+  "genderPreferNotToSay": "Zeg ik liever niet",
+  "genderMale": "Man",
+  "genderFemale": "Vrouw",
+  "genderCustom": "Aangepast",
+  "customGenderLabel": "Aangepast gender",
+  "customGenderHint": "Voer je gender in",
+  "customGenderRequired": "Voer een aangepast gender in of kies een andere optie.",
+  "birthDateLabel": "Geboortedatum",
+  "selectBirthDate": "Selecteer een datum",
+  "birthDateHint": "JJJJ-MM-DD",
+  "currentAvatar": "Huidige avatar",
+  "uploadFromDevice": "Uploaden vanaf apparaat",
+  "useInitials": "Initialen",
+  "removeAvatar": "Verwijderen",
+  "avatarUploadFailed": "Kan de avatar niet bijwerken.",
+  "timezoneLabel": "Tijdzone",
+  "timezoneHint": "Europe/Amsterdam",
+  "saveProfile": "Profiel opslaan",
+  "changePasswordTitle": "Wachtwoord wijzigen",
+  "passwordChangeUnavailable": "Wachtwoordwijzigingen zijn uitgeschakeld op deze server.",
+  "currentPassword": "Huidig wachtwoord",
+  "newPassword": "Nieuw wachtwoord",
+  "confirmNewPassword": "Nieuw wachtwoord bevestigen",
+  "nameRequired": "Voer een naam in voordat je opslaat.",
+  "profileUpdated": "Profiel bijgewerkt.",
+  "passwordFieldsRequired": "Voer je huidige en nieuwe wachtwoord in.",
+  "passwordsDoNotMatch": "De nieuwe wachtwoorden komen niet overeen.",
+  "passwordUpdated": "Wachtwoord bijgewerkt.",
+  "activeStatus": "Actief",
+  "inactiveStatus": "Inactief",
+  "appInformation": "众小智AI-app",
+  "appVersion": "Versie",
+  "serverInformation": "Serverinformatie",
+  "serverInfoUnavailable": "Serverinformatie is nu niet beschikbaar.",
+  "serverNameLabel": "Servernaam",
+  "serverVersionLabel": "Serverversie",
+  "latestVersionLabel": "Nieuwste versie",
+  "deploymentIdLabel": "Implementatie-ID",
+  "defaultLocaleLabel": "Standaardtaal",
+  "userCountLabel": "Aantal gebruikers",
+  "serverDefaultModelsLabel": "Standaardmodellen",
+  "loginFormLabel": "Inlogformulier",
+  "passwordChangesLabel": "Wachtwoordwijzigingen",
+  "apiKeysLabel": "API-sleutels",
+  "audioInputLabel": "Audio-invoer",
+  "audioOutputLabel": "Audio-uitvoer",
+  "speechToTextEngineLabel": "Spraak-naar-tekst-engine",
+  "textToSpeechEngineLabel": "Tekst-naar-spraak-engine",
+  "licenseMetadataLabel": "Licentiemetadata",
+  "enabledLabel": "Ingeschakeld",
+  "disabledLabel": "Uitgeschakeld",
+  "noEmailLabel": "Geen e-mail",
+  "userFallbackName": "Gebruiker",
+  "unknownLabel": "Onbekend",
+  "socketNotConnected": "Niet verbonden",
+  "socketConnected": "Verbonden",
+  "socketDisconnected": "Verbinding verbroken",
+  "socketLatencyLabel": "Latentie",
+  "socketReconnectsLabel": "Herverbindingen",
+  "socketLastHeartbeat": "Laatste heartbeat: {time}",
+  "socketTransportWebSocket": "WebSocket-transport",
+  "socketTransportPolling": "HTTP-pollingtransport",
+  "socketTransportUnknown": "Onbekend transport",
+  "socketQualityExcellent": "Uitstekend",
+  "socketQualityGood": "Goed",
+  "socketQualityFair": "Redelijk",
+  "socketQualityPoor": "Slecht",
+  "timeJustNow": "zojuist",
+  "timeSecondsAgo": "{count}s geleden",
+  "timeMinutesAgo": "{count}m geleden",
+  "timeHoursAgo": "{count}u geleden",
+  "attach": "Bijvoegen",
+  "@attach": {
+    "description": "Button label to attach content to the current chat or folder chat."
+  },
+  "attachWebpageDescription": "Plak een URL om de inhoud in de chat op te nemen.",
+  "@attachWebpageDescription": {
+    "description": "Description shown in the web page attachment dialog."
+  },
+  "webpageUrlLabel": "Webpagina-URL",
+  "@webpageUrlLabel": {
+    "description": "Label for the URL field in the web page attachment dialog."
+  },
+  "invalidHttpUrl": "Voer een geldige http(s)-URL in.",
+  "@invalidHttpUrl": {
+    "description": "Validation message when a URL is missing or not HTTP/HTTPS."
+  },
+  "youtubeTranscriptFetchFailed": "Kan YouTube-transcript niet ophalen.",
+  "@youtubeTranscriptFetchFailed": {
+    "description": "Error shown when a YouTube transcript cannot be fetched."
+  },
+  "webpageNoReadableContent": "De pagina had geen leesbare inhoud.",
+  "@webpageNoReadableContent": {
+    "description": "Error shown when a fetched webpage has no readable text content."
+  },
+  "failedToAttachContent": "Kan inhoud niet bijvoegen.",
+  "@failedToAttachContent": {
+    "description": "Generic error shown when attaching web content fails."
+  },
+  "scrollToBottom": "Naar beneden scrollen",
+  "@scrollToBottom": {
+    "description": "Tooltip for the button that scrolls a chat to the newest message."
+  },
+  "editFolder": "Map bewerken",
+  "@editFolder": {
+    "description": "Title and menu label for editing a folder."
+  },
+  "editFolderDescription": "Werk de mapnaam en het pictogram op de server bij.",
+  "@editFolderDescription": {
+    "description": "Description shown in the folder edit sheet."
+  },
+  "icon": "Pictogram",
+  "@icon": {
+    "description": "Label for selecting an icon."
+  },
+  "folderIconDescription": "Kies het mappictogram.",
+  "@folderIconDescription": {
+    "description": "Subtitle for the folder icon picker."
+  },
+  "defaultLabel": "Standaard",
+  "@defaultLabel": {
+    "description": "Generic label for the default option."
+  },
+  "systemPrompt": "Systeemprompt",
+  "@systemPrompt": {
+    "description": "Singular label for a system prompt field or menu item."
+  },
+  "move": "Verplaatsen",
+  "@move": {
+    "description": "Context action to move an item."
+  },
+  "moveToFolder": "Naar map verplaatsen",
+  "@moveToFolder": {
+    "description": "Title for choosing a destination folder for a chat."
+  },
+  "moveFolder": "Map verplaatsen",
+  "@moveFolder": {
+    "description": "Title for choosing a destination parent for a folder."
+  },
+  "noFolder": "Geen map",
+  "@noFolder": {
+    "description": "Option to remove a chat from any folder."
+  },
+  "topLevel": "Bovenste niveau",
+  "@topLevel": {
+    "description": "Option to move a folder to the top level."
+  },
+  "failedToMoveFolder": "Kan map niet verplaatsen",
+  "@failedToMoveFolder": {
+    "description": "Error shown when moving a folder fails."
+  },
+  "failedToRenameFolder": "Kan map niet hernoemen",
+  "@failedToRenameFolder": {
+    "description": "Error shown when renaming a folder fails."
+  },
+  "browseKnowledgeBase": "Kennisbank bekijken",
+  "@browseKnowledgeBase": {
+    "description": "Title for opening the knowledge base picker."
+  },
+  "knowledgePickerHint": "Druk op Enter om een document te kiezen",
+  "@knowledgePickerHint": {
+    "description": "Hint shown for keyboard selection in the knowledge base picker."
+  },
+  "execution": "Uitvoering",
+  "@execution": {
+    "description": "Fallback label for an unnamed code execution."
+  },
+  "codeExecutionTitle": "Code-uitvoering",
+  "@codeExecutionTitle": {
+    "description": "Fallback title for a code execution details sheet."
+  },
+  "codeExecutionFailed": "{label} mislukt",
+  "@codeExecutionFailed": {
+    "description": "Title shown when a named code execution fails.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Execution"
+      }
+    }
+  },
+  "codeExecutionRunning": "{label}…",
+  "@codeExecutionRunning": {
+    "description": "Title shown while a named code execution is still running.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Execution"
+      }
+    }
+  },
+  "language": "Taal",
+  "@language": {
+    "description": "Label for a programming language field."
+  },
+  "code": "Code",
+  "@code": {
+    "description": "Label for source code content."
+  },
+  "output": "Uitvoer",
+  "@output": {
+    "description": "Label for execution output."
+  },
+  "download": "Downloaden",
+  "@download": {
+    "description": "Fallback label for a downloadable file."
+  },
+  "languageWithValue": "Taal: {language}",
+  "@languageWithValue": {
+    "description": "Label and value for a programming language.",
+    "placeholders": {
+      "language": {
+        "type": "String",
+        "example": "Python"
+      }
+    }
+  },
+  "previewDeferredLargeContent": "Voorvertoning uitgesteld voor grote inhoud.",
+  "@previewDeferredLargeContent": {
+    "description": "Message shown when an inline preview is delayed because content is large."
+  },
+  "openPreview": "Voorvertoning openen",
+  "@openPreview": {
+    "description": "Button to open a deferred preview."
+  },
+  "copiedToClipboard": "Gekopieerd naar klembord",
+  "@copiedToClipboard": {
+    "description": "Snackbar message after copying content to the clipboard."
+  },
+  "preview": "Voorvertoning",
+  "@preview": {
+    "description": "Button label for opening a preview."
+  },
+  "alertTip": "Tip",
+  "@alertTip": {
+    "description": "Fallback label for a tip markdown alert."
+  },
+  "alertImportant": "Belangrijk",
+  "@alertImportant": {
+    "description": "Fallback label for an important markdown alert."
+  },
+  "alertWarning": "Waarschuwing",
+  "@alertWarning": {
+    "description": "Fallback label for a warning markdown alert."
+  },
+  "alertCaution": "Let op",
+  "@alertCaution": {
+    "description": "Fallback label for a caution markdown alert."
+  },
+  "alertNote": "Notitie",
+  "@alertNote": {
+    "description": "Fallback label for a note markdown alert."
+  },
+  "markdownDetailsGroupPendingTitle": "Verkennen {summary}",
+  "@markdownDetailsGroupPendingTitle": {
+    "description": "Title shown for a pending grouped tool-call details block.",
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "markdownDetailsGroupCompleteTitle": "Verkend {summary}",
+  "@markdownDetailsGroupCompleteTitle": {
+    "description": "Title shown for a completed grouped tool-call details block.",
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "markdownDetailsGroupUnnamedTool": "tool",
+  "@markdownDetailsGroupUnnamedTool": {
+    "description": "Fallback label used when a grouped tool call has no tool name."
+  },
+  "folderIconFolder": "Map",
+  "@folderIconFolder": {
+    "description": "Accessibility label for the folder icon option."
+  },
+  "folderIconOpenFolder": "Geopende map",
+  "@folderIconOpenFolder": {
+    "description": "Accessibility label for the open folder icon option."
+  },
+  "folderIconBriefcase": "Aktetas",
+  "@folderIconBriefcase": {
+    "description": "Accessibility label for the briefcase folder icon option."
+  },
+  "folderIconBooks": "Boeken",
+  "@folderIconBooks": {
+    "description": "Accessibility label for the books folder icon option."
+  },
+  "folderIconMemo": "Memo",
+  "@folderIconMemo": {
+    "description": "Accessibility label for the memo folder icon option."
+  },
+  "folderIconDividers": "Verdelers",
+  "@folderIconDividers": {
+    "description": "Accessibility label for the dividers folder icon option."
+  },
+  "folderIconTools": "Gereedschap",
+  "@folderIconTools": {
+    "description": "Accessibility label for the tools folder icon option."
+  },
+  "folderIconToolbox": "Gereedschapskist",
+  "@folderIconToolbox": {
+    "description": "Accessibility label for the toolbox folder icon option."
+  },
+  "folderIconSparkles": "Sprankels",
+  "@folderIconSparkles": {
+    "description": "Accessibility label for the sparkles folder icon option."
+  },
+  "folderIconBrain": "Brein",
+  "@folderIconBrain": {
+    "description": "Accessibility label for the brain folder icon option."
+  },
+  "folderIconRocket": "Raket",
+  "@folderIconRocket": {
+    "description": "Accessibility label for the rocket folder icon option."
+  },
+  "folderIconTarget": "Doel",
+  "@folderIconTarget": {
+    "description": "Accessibility label for the target folder icon option."
+  },
+  "folderIconGeneric": "Mappictogram",
+  "@folderIconGeneric": {
+    "description": "Generic accessibility label for a custom folder icon."
+  },
+  "thread": "Thread",
+  "@thread": {
+    "description": "Title and context action for a message thread."
+  },
+  "threadWithCount": "Thread ({count})",
+  "@threadWithCount": {
+    "description": "Thread action label with reply count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "channelMembersTitle": "Leden ({count})",
+  "@channelMembersTitle": {
+    "description": "Title for the channel members sheet.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "channelInputPlaceholder": "Typ hier...",
+  "@channelInputPlaceholder": {
+    "description": "Placeholder for the channel message composer."
+  },
+  "channelUnknownMember": "Onbekend",
+  "@channelUnknownMember": {
+    "description": "Fallback name for a channel member with no display name."
+  },
+  "replyInputPlaceholder": "Reageren...",
+  "@replyInputPlaceholder": {
+    "description": "Placeholder for the thread reply composer."
+  },
+  "editPhoto": "Foto bewerken",
+  "@editPhoto": {
+    "description": "Action to edit the profile photo."
+  },
+  "replyingToUser": "Antwoorden op {name}",
+  "@replyingToUser": {
+    "description": "Label shown above the channel composer when replying to a user.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Alex"
+      }
+    }
+  },
+  "voiceCallWithModel": "Spraakoproep met {modelName}",
+  "@voiceCallWithModel": {
+    "description": "Notification title for an ongoing voice call with a model.",
+    "placeholders": {
+      "modelName": {
+        "type": "String",
+        "example": "GPT-4"
+      }
+    }
+  },
+  "notificationPermissionTitle": "Meldingstoestemming",
+  "@notificationPermissionTitle": {
+    "description": "Title for the system notification permission prompt."
+  },
+  "callNotificationPermissionRationale": "Oproepmeldingen hebben meldingstoestemming nodig.",
+  "@callNotificationPermissionRationale": {
+    "description": "Rationale shown when requesting notification permission for call alerts."
+  },
+  "callNotificationPermissionPost": "Sta meldingen toe om inkomende oproepen te tonen.",
+  "@callNotificationPermissionPost": {
+    "description": "Instruction shown when requesting notification permission for incoming calls."
+  },
+  "acceptCall": "Accepteren",
+  "@acceptCall": {
+    "description": "Call action to accept an incoming call."
+  },
+  "declineCall": "Weigeren",
+  "@declineCall": {
+    "description": "Call action to decline an incoming call."
+  },
+  "missedCall": "Gemiste oproep",
+  "@missedCall": {
+    "description": "Notification subtitle for a missed call."
+  },
+  "callBack": "Terugbellen",
+  "@callBack": {
+    "description": "Notification action to call back after a missed call."
+  },
+  "calling": "Bellen...",
+  "@calling": {
+    "description": "Notification subtitle while starting a call."
+  },
+  "hangUp": "Ophangen",
+  "@hangUp": {
+    "description": "Notification action to hang up a call."
+  },
+  "incomingCallChannelName": "Inkomende oproep",
+  "@incomingCallChannelName": {
+    "description": "Android notification channel name for incoming calls."
+  },
+  "missedCallChannelName": "Gemiste oproep",
+  "@missedCallChannelName": {
+    "description": "Android notification channel name for missed calls."
+  },
+  "mute": "Dempen",
+  "@mute": {
+    "description": "Notification action to mute a call."
+  },
+  "unmute": "Dempen opheffen",
+  "@unmute": {
+    "description": "Notification action to unmute a call."
+  },
+  "voiceCallMuted": "Gedempt",
+  "@voiceCallMuted": {
+    "description": "Status label when a voice call is muted."
+  },
+  "voiceCallChannelDescription": "Meldingen voor lopende spraakoproepen",
+  "@voiceCallChannelDescription": {
+    "description": "Android notification channel description for ongoing voice calls."
+  },
+  "@greetingTitle": {
+    "description": "Greeting shown on the empty chat page.",
+    "placeholders": {
+      "username": {
+        "type": "String",
+        "example": "Alex"
+      }
+    }
+  },
+  "@continueWithProvider": {
+    "description": "Button text for OAuth provider sign-in.",
+    "placeholders": {
+      "provider": {
+        "type": "String",
+        "example": "Google"
+      }
+    }
+  },
+  "@channelMembers": {
+    "description": "Member count display in channel header",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@audioUploadError": {
+    "description": "Error message when audio upload fails",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "description": "The error message"
+      }
+    }
+  },
+  "@accessibleModelsCount": {
+    "description": "Subtitle showing how many accessible models are listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "@accessibleFoldersCount": {
+    "description": "Subtitle showing how many accessible folders are listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "@modelSystemPromptTitle": {
+    "description": "Title for a model system prompt editor.",
+    "placeholders": {
+      "modelName": {
+        "type": "String",
+        "example": "GPT-4"
+      }
+    }
+  },
+  "@folderSystemPromptTitle": {
+    "description": "Title for a folder system prompt editor.",
+    "placeholders": {
+      "folderName": {
+        "type": "String",
+        "example": "Work"
+      }
+    }
+  },
+  "@savedMemoriesCount": {
+    "description": "Shows how many memories are saved.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@memoryUpdatedAt": {
+    "description": "Shows when a memory was last updated.",
+    "placeholders": {
+      "formattedTime": {}
+    }
+  },
+  "@socketLastHeartbeat": {
+    "description": "Shows when the socket last received a heartbeat.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "just now"
+      }
+    }
+  },
+  "@timeSecondsAgo": {
+    "description": "Compact relative time label for seconds ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "@timeMinutesAgo": {
+    "description": "Compact relative time label for minutes ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "@timeHoursAgo": {
+    "description": "Compact relative time label for hours ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "rateLimitExceeded": "Te veel verzoeken. Wacht voordat je het opnieuw probeert.",
+  "@rateLimitExceeded": {
+    "description": "Error shown when the server rejects a request due to rate limiting."
+  },
+  "rateLimitRetryAfter": "Wacht {duration} voordat je het opnieuw probeert.",
+  "@rateLimitRetryAfter": {
+    "description": "Advice shown when a rate limit response includes a retry delay.",
+    "placeholders": {
+      "duration": {
+        "type": "String",
+        "example": "1m 30s"
+      }
+    }
+  },
+  "rateLimitRetrySoon": "Wacht even voordat je het opnieuw probeert.",
+  "@rateLimitRetrySoon": {
+    "description": "Advice shown when a rate limit response does not include an exact retry delay."
+  },
+  "securityCertificateError": "Beveiligingscertificaatfout. Kan de serveridentiteit niet verifiëren.",
+  "@securityCertificateError": {
+    "description": "Error shown when the server TLS certificate cannot be trusted or verified."
+  },
+  "noToolsAvailable": "Geen tools beschikbaar",
+  "@noToolsAvailable": {
+    "description": "Empty state shown when no tools are available in the composer overflow menu."
+  },
+  "failedToLoadTools": "Kan tools niet laden",
+  "@failedToLoadTools": {
+    "description": "Error shown when the composer overflow menu cannot load tools."
+  }
 }

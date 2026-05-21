@@ -31,7 +31,10 @@ class WidgetActions {
 }
 
 /// App group identifier for iOS widget data sharing.
-const String _appGroupId = 'group.app.cogwheel.conduit';
+const String _releaseAppGroupId = 'group.app.cogwheel.conduit';
+const String _debugAppGroupId = 'group.app.cogwheel.conduit.x2662v5dt2.debug';
+
+String get _appGroupId => kReleaseMode ? _releaseAppGroupId : _debugAppGroupId;
 
 /// Android widget provider class name.
 const String _androidWidgetName = 'ConduitWidgetProvider';
@@ -449,4 +452,3 @@ final homeWidgetInitializerProvider = Provider<void>((ref) {
   // Initialize the coordinator which sets up widget click handling
   ref.watch(homeWidgetCoordinatorProvider);
 });
-

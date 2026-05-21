@@ -63,24 +63,6 @@ class PlatformService {
     }
   }
 
-  /// Create platform-appropriate navigation transition
-  static Route<T> createPlatformRoute<T>({
-    required Widget page,
-    RouteSettings? settings,
-  }) {
-    if (isIOS) {
-      return CupertinoPageRoute<T>(
-        builder: (context) => page,
-        settings: settings,
-      );
-    } else {
-      return MaterialPageRoute<T>(
-        builder: (context) => page,
-        settings: settings,
-      );
-    }
-  }
-
   /// Show platform-appropriate action sheet
   static Future<T?> showPlatformActionSheet<T>({
     required BuildContext context,
@@ -124,7 +106,7 @@ class PlatformService {
                   (action) => AdaptiveListTile(
                     title: Text(
                       action.title,
-                      style: TextStyle(
+                      style: AppTypography.bodyMediumStyle.copyWith(
                         color: action.isDestructive
                             ? Theme.of(context).colorScheme.error
                             : null,
@@ -288,36 +270,6 @@ class PlatformService {
       return cupertinoTextSelectionControls;
     } else {
       return materialTextSelectionControls;
-    }
-  }
-
-  /// Create platform-specific app bar
-  static PreferredSizeWidget createPlatformAppBar({
-    required String title,
-    List<Widget>? actions,
-    Widget? leading,
-    bool centerTitle = false,
-    Color? backgroundColor,
-    Color? foregroundColor,
-  }) {
-    if (isIOS) {
-      return CupertinoNavigationBar(
-        middle: Text(title),
-        trailing: actions != null && actions.isNotEmpty
-            ? Row(mainAxisSize: MainAxisSize.min, children: actions)
-            : null,
-        leading: leading,
-        backgroundColor: backgroundColor,
-      );
-    } else {
-      return AppBar(
-        title: Text(title),
-        actions: actions,
-        leading: leading,
-        centerTitle: centerTitle,
-        backgroundColor: backgroundColor,
-        foregroundColor: foregroundColor,
-      );
     }
   }
 }

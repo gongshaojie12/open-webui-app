@@ -27,9 +27,11 @@
   "autoSelect": "По умолчанию сервера",
   "loadingModels": "Загрузка моделей...",
   "failedToLoadModels": "Не удалось загрузить модели",
+  "failedToLoadFiles": "Не удалось загрузить файлы",
   "availableModels": "Доступные модели",
   "noResults": "Нет результатов",
   "searchModels": "Поиск моделей...",
+  "searchFiles": "Поиск файлов...",
   "errorMessage": "Что-то пошло не так. Пожалуйста, попробуйте еще раз.",
   "closeButtonSemantic": "Закрыть",
   "loadingContent": "Загрузка содержимого",
@@ -37,13 +39,14 @@
   "noItemsToDisplay": "Нет элементов для отображения",
   "knowledgeBase": "База знаний",
   "attachments": "Вложения",
+  "files": "Файлы",
   "takePhoto": "Сделать фото",
   "document": "Документ",
   "backToServerSetup": "Вернуться к настройке сервера",
   "connectedToServer": "Подключено к серверу",
   "signIn": "Войти",
   "enterCredentials": "Введите свои учетные данные для доступа к вашим разговорам с ИИ",
-  "credentials": "Эл. почта",
+  "credentials": "Учетные данные",
   "apiKey": "API-ключ",
   "token": "Токен",
   "usernameOrEmail": "Имя пользователя или email",
@@ -85,6 +88,9 @@
   "genericSignInFailed": "Не удалось войти. Проверьте учетные данные и настройки сервера.",
   "attachmentLabel": "Вложение",
   "tools": "Инструменты",
+  "toolServer": "Сервер инструментов",
+  "toolServers": "Серверы инструментов",
+  "terminal": "Терминал",
   "filters": "Фильтры",
   "voiceInput": "Голосовой ввод",
   "voice": "Голос",
@@ -162,6 +168,7 @@
   "chineseSimplified": "Китайский (упрощённый)",
   "chineseTraditional": "Китайский (традиционный)",
   "korean": "한국어",
+  "japanese": "日本語",
   "deleteMessagesTitle": "Удалить сообщения",
   "deleteMessagesMessage": "Удалить {count, plural, one{{count} сообщение} few{{count} сообщения} other{{count} сообщений}}?",
   "@deleteMessagesMessage": {
@@ -296,7 +303,7 @@
     "placeholders": {
       "duration": {
         "type": "String",
-        "example": "3с"
+        "example": "3s"
       }
     }
   },
@@ -310,11 +317,11 @@
   "sendOnEnterDescription": "Enter отправляет (программная клавиатура). Также доступно Cmd/Ctrl+Enter",
   "disableHapticsWhileStreaming": "Отключать тактильный отклик во время стриминга",
   "disableHapticsWhileStreamingDescription": "Отключает отклик для ответов в реальном времени, не затрагивая остальную часть приложения",
-  "androidAssistantTitle": "Android digital assistant",
-  "androidAssistantDescription": "Choose what happens when you trigger the Android digital assistant.",
-  "androidAssistantOverlayOption": "Show quick overlay (default)",
-  "androidAssistantNewChatOption": "Open 众小智AI with a new chat",
-  "androidAssistantVoiceCallOption": "Start a voice call",
+  "androidAssistantTitle": "Цифровой ассистент Android",
+  "androidAssistantDescription": "Выберите, что произойдёт при запуске цифрового ассистента Android.",
+  "androidAssistantOverlayOption": "Показать быстрое наложение (по умолчанию)",
+  "androidAssistantNewChatOption": "Открыть 众小智AI с новым чатом",
+  "androidAssistantVoiceCallOption": "Начать голосовой вызов",
   "sttSettings": "Речь в текст",
   "sttEngineLabel": "Движок распознавания",
   "sttEngineDevice": "На устройстве",
@@ -762,7 +769,8 @@
   "@deleteNoteMessage": {
     "placeholders": {
       "title": {
-        "type": "String"
+        "type": "String",
+        "example": "My Note"
       }
     }
   },
@@ -795,7 +803,8 @@
   "@wordCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "150"
       }
     }
   },
@@ -803,7 +812,8 @@
   "@charCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "500"
       }
     }
   },
@@ -813,7 +823,8 @@
   "@promptVariableNumberMin": {
     "placeholders": {
       "min": {
-        "type": "double"
+        "type": "double",
+        "example": "0"
       }
     }
   },
@@ -821,7 +832,8 @@
   "@promptVariableNumberMax": {
     "placeholders": {
       "max": {
-        "type": "double"
+        "type": "double",
+        "example": "100"
       }
     }
   },
@@ -850,7 +862,8 @@
   "@usageTokensPerSecond": {
     "placeholders": {
       "speed": {
-        "type": "String"
+        "type": "String",
+        "example": "45.2"
       }
     }
   },
@@ -858,7 +871,8 @@
   "@usageTokenCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "128"
       }
     }
   },
@@ -866,7 +880,8 @@
   "@usageSecondsFormat": {
     "placeholders": {
       "seconds": {
-        "type": "String"
+        "type": "String",
+        "example": "2.34"
       }
     }
   },
@@ -917,9 +932,113 @@
   "chatSaved": "Чат сохранён в истории",
   "chatSaveFailed": "Не удалось сохранить чат",
   "sidebarChatsTab": "Чаты",
+  "sidebarTerminalTab": "Терминал",
+  "@sidebarTerminalTab": {
+    "description": "Label for the Terminal tab in the sidebar"
+  },
   "sidebarNotesTab": "Заметки",
   "sidebarChannelsTab": "Каналы",
   "closeSidebar": "Закрыть боковую панель",
+  "terminalSelectServer": "Выберите сервер терминала",
+  "@terminalSelectServer": {
+    "description": "Prompt shown when the user needs to choose a terminal server."
+  },
+  "terminalNoServersConfigured": "Нет доступных серверов терминала.",
+  "@terminalNoServersConfigured": {
+    "description": "Empty state shown when there are no terminal servers configured."
+  },
+  "terminalConnectAction": "Подключиться",
+  "@terminalConnectAction": {
+    "description": "Button label used to connect to a terminal session."
+  },
+  "terminalDisconnectAction": "Отключиться",
+  "@terminalDisconnectAction": {
+    "description": "Button label used to disconnect from a terminal session."
+  },
+  "terminalConnectedStatus": "Подключено",
+  "@terminalConnectedStatus": {
+    "description": "Status label shown when the terminal is connected."
+  },
+  "terminalDisconnectedStatus": "Отключено",
+  "@terminalDisconnectedStatus": {
+    "description": "Status label shown when the terminal is disconnected."
+  },
+  "terminalConnectingStatus": "Подключение...",
+  "@terminalConnectingStatus": {
+    "description": "Status label shown while the terminal connection is being established."
+  },
+  "terminalUploadAction": "Загрузить",
+  "@terminalUploadAction": {
+    "description": "Action label for uploading a file into the terminal workspace."
+  },
+  "terminalOpenInBrowserAction": "Открыть в браузере",
+  "@terminalOpenInBrowserAction": {
+    "description": "Action label for opening a forwarded port in the browser."
+  },
+  "terminalHomeAction": "Домашний каталог",
+  "@terminalHomeAction": {
+    "description": "Tooltip for navigating back to the terminal home directory."
+  },
+  "terminalCurrentPathLabel": "Текущий путь",
+  "@terminalCurrentPathLabel": {
+    "description": "Label displayed above the current terminal working directory."
+  },
+  "terminalPortsSectionLabel": "Прослушиваемые порты",
+  "@terminalPortsSectionLabel": {
+    "description": "Section title for ports discovered in the terminal environment."
+  },
+  "terminalNoFiles": "В этом каталоге нет файлов.",
+  "@terminalNoFiles": {
+    "description": "Empty state shown when the current terminal directory has no files."
+  },
+  "terminalNoPorts": "Прослушиваемые порты не обнаружены.",
+  "@terminalNoPorts": {
+    "description": "Empty state shown when the terminal server reports no listening ports."
+  },
+  "terminalPreviewUnavailable": "Предпросмотр недоступен. Используйте скачивание.",
+  "@terminalPreviewUnavailable": {
+    "description": "Message shown when a terminal file cannot be previewed inline."
+  },
+  "terminalFeatureDisabled": "Этот сервер терминала не предоставляет интерактивную оболочку.",
+  "@terminalFeatureDisabled": {
+    "description": "Message shown when the selected terminal server disables interactive terminal sessions."
+  },
+  "terminalFolderNameHint": "Имя папки",
+  "@terminalFolderNameHint": {
+    "description": "Hint text used when creating a new folder in the terminal workspace."
+  },
+  "terminalFailedToLoadFiles": "Не удалось загрузить файлы терминала.",
+  "@terminalFailedToLoadFiles": {
+    "description": "Error message shown when the terminal file list cannot be loaded."
+  },
+  "terminalFailedToLoadPorts": "Не удалось загрузить прослушиваемые порты.",
+  "@terminalFailedToLoadPorts": {
+    "description": "Error message shown when terminal port discovery fails."
+  },
+  "terminalFailedToConnect": "Не удалось подключиться к терминалу.",
+  "@terminalFailedToConnect": {
+    "description": "Error message shown when the terminal websocket session cannot be opened."
+  },
+  "terminalDownloadFailed": "Не удалось скачать выбранный файл.",
+  "@terminalDownloadFailed": {
+    "description": "Error message shown when downloading a terminal file fails."
+  },
+  "terminalUploadFailed": "Не удалось загрузить выбранный файл.",
+  "@terminalUploadFailed": {
+    "description": "Error message shown when uploading a terminal file fails."
+  },
+  "terminalRenameFailed": "Не удалось переименовать выбранный элемент.",
+  "@terminalRenameFailed": {
+    "description": "Error message shown when renaming a file or folder in the terminal workspace fails."
+  },
+  "terminalDeleteFailed": "Не удалось удалить выбранный элемент.",
+  "@terminalDeleteFailed": {
+    "description": "Error message shown when deleting a file or folder in the terminal workspace fails."
+  },
+  "terminalFolderCreateFailed": "Не удалось создать папку.",
+  "@terminalFolderCreateFailed": {
+    "description": "Error message shown when creating a new terminal folder fails."
+  },
   "channelCreateTitle": "Создать канал",
   "channelName": "Название канала",
   "channelDescription": "Описание",
@@ -943,5 +1062,718 @@
   "searchChannels": "Поиск каналов...",
   "channelCreateError": "Не удалось создать канал",
   "channelMessageHint": "Сообщение...",
-  "audioUploadError": "Не удалось загрузить аудио: {error}"
+  "audioUploadError": "Не удалось загрузить аудио: {error}",
+  "shareChat": "Поделиться чатом",
+  "@shareChat": {
+    "description": "Dialog title and action label for sharing a chat."
+  },
+  "shareChatDescription": "Сообщения, отправленные после создания ссылки, не будут доступны по ней. Пользователи с URL смогут просматривать опубликованный чат.",
+  "@shareChatDescription": {
+    "description": "Explains that a shared chat link is a snapshot."
+  },
+  "shareChatExisting": "Вы уже делились этим чатом.",
+  "@shareChatExisting": {
+    "description": "Explains that the chat already has an existing shared link."
+  },
+  "shareChatDeleteLink": "Удалить эту ссылку",
+  "@shareChatDeleteLink": {
+    "description": "Action label to delete the current shared chat link."
+  },
+  "shareChatDeleteAndCreate": "и создать новую ссылку для доступа.",
+  "@shareChatDeleteAndCreate": {
+    "description": "Continuation text after the delete shared link action."
+  },
+  "copyLink": "Копировать ссылку",
+  "@copyLink": {
+    "description": "Button label to copy a newly created shared chat URL."
+  },
+  "updateAndCopyLink": "Обновить и копировать ссылку",
+  "@updateAndCopyLink": {
+    "description": "Button label to refresh a shared chat snapshot and copy the URL."
+  },
+  "sharedChatCopied": "URL опубликованного чата скопирован в буфер обмена.",
+  "@sharedChatCopied": {
+    "description": "Snackbar shown after copying a shared chat URL."
+  },
+  "shareSystemSheet": "Поделиться...",
+  "@shareSystemSheet": {
+    "description": "Button label to open the platform share sheet."
+  },
+  "chatShareFailed": "Не удалось поделиться чатом",
+  "@chatShareFailed": {
+    "description": "Snackbar shown when chat sharing fails."
+  },
+  "sharedLinkDeleted": "Ссылка на опубликованный чат удалена",
+  "@sharedLinkDeleted": {
+    "description": "Snackbar shown after deleting a shared chat link."
+  },
+  "deleteSharedLinkFailed": "Не удалось удалить ссылку",
+  "@deleteSharedLinkFailed": {
+    "description": "Snackbar shown when deleting a shared chat link fails."
+  },
+  "systemPrompts": "Системные промпты",
+  "globalSystemPrompt": "Глобальный системный промпт",
+  "modelSystemPrompts": "Системные промпты моделей",
+  "folderSystemPrompts": "Системные промпты папок",
+  "openWebuiModelSettings": "Настройки моделей OpenWebUI",
+  "openWebuiFolderSettings": "Настройки папок OpenWebUI",
+  "accessibleModelsCount": "Доступные модели: {count}",
+  "accessibleFoldersCount": "Доступные папки: {count}",
+  "unableToLoadOpenWebuiSettings": "Не удалось загрузить настройки OpenWebUI.",
+  "unableToLoadModels": "Не удалось загрузить модели.",
+  "unableToLoadFolders": "Не удалось загрузить папки.",
+  "noAccessibleModelsFound": "Доступные модели не найдены.",
+  "noAccessibleFoldersFound": "Доступные папки не найдены.",
+  "tapToLoadServerPromptSettings": "Нажмите, чтобы загрузить настройки промпта с сервера.",
+  "loadingFromOpenWebui": "Загрузка из OpenWebUI...",
+  "globalSystemPromptEditorDescription": "Сохраняется в настройках пользователя OpenWebUI и используется как системный промпт чата по умолчанию.",
+  "modelNoEditableServerRecord": "У этой модели нет редактируемой записи на сервере.",
+  "modelSystemPromptTitle": "Системный промпт {modelName}",
+  "modelSystemPromptEditorDescription": "Сохраняется в OpenWebUI в params.system модели.",
+  "modelNoWriteAccessDescription": "У вас нет доступа на запись к этой модели.",
+  "unableToLoadFolder": "Не удалось загрузить эту папку.",
+  "folderSystemPromptTitle": "Системный промпт {folderName}",
+  "folderSystemPromptEditorDescription": "Сохраняется в OpenWebUI в data.system_prompt папки.",
+  "notSet": "Не задано",
+  "enterSystemPrompt": "Введите системный промпт",
+  "close": "Закрыть",
+  "connectionHealth": "Состояние подключения",
+  "personalization": "Персонализация",
+  "personalizationSubtitle": "Модель по умолчанию, личный промпт и память",
+  "yourSystemPrompt": "Ваш системный промпт",
+  "yourSystemPromptDescription": "Задайте личный системный промпт, который OpenWebUI будет применять к вашим чатам.",
+  "memoryTitle": "Память",
+  "memoryEnabledDescription": "Разрешить серверу использовать сохраненные воспоминания в будущих чатах.",
+  "memoryDisabledDescription": "Сохраненные воспоминания останутся на сервере, но не будут добавляться в чаты.",
+  "manageMemories": "Управление памятью",
+  "manageMemoriesDescription": "Добавляйте, редактируйте и удаляйте факты, которые сервер помнит о вас.",
+  "savedMemoriesCount": "Сохраненных воспоминаний: {count}",
+  "memoryEditorDescription": "Делайте воспоминания короткими и конкретными, чтобы сервер применял их стабильно.",
+  "memoryHint": "Пример: я предпочитаю краткие ответы с примерами кода.",
+  "addMemory": "Добавить воспоминание",
+  "editMemory": "Редактировать воспоминание",
+  "deleteMemory": "Удалить воспоминание",
+  "deleteMemoryConfirm": "Удалить это сохраненное воспоминание с сервера?",
+  "clearAllMemories": "Очистить всю память",
+  "clearAllMemoriesDescription": "Это навсегда удалит все сохраненные воспоминания для вашей учетной записи.",
+  "noMemoriesSaved": "Сохраненных воспоминаний пока нет.",
+  "memoryUpdatedAt": "Обновлено {formattedTime}",
+  "advancedPromptOverrides": "Расширенные переопределения промптов",
+  "advancedPromptOverridesDescription": "Переопределения промптов моделей находятся в разделе App & Chat.",
+  "audioSettingsTitle": "Аудио",
+  "audioSettingsSubtitle": "Речь в текст и текст в речь",
+  "appAndChat": "Приложение и чат",
+  "appAndChatSubtitle": "Тема, язык, поведение чата и расширенные переопределения",
+  "accountSettingsTitle": "Учетная запись",
+  "accountSettingsSubtitle": "Данные профиля и управление паролем",
+  "accountDetails": "Данные учетной записи",
+  "signInToManageAccount": "Войдите, чтобы управлять данными учетной записи.",
+  "emailLabel": "Эл. почта",
+  "roleLabel": "Роль",
+  "accountStatus": "Статус",
+  "profileDetails": "Данные профиля",
+  "name": "Имя",
+  "avatarUrl": "URL аватара",
+  "avatarUrlHint": "https://example.com/avatar.png",
+  "bioLabel": "О себе",
+  "bioHint": "Краткое описание о вас.",
+  "genderLabel": "Пол",
+  "genderPreferNotToSay": "Предпочитаю не указывать",
+  "genderMale": "Мужской",
+  "genderFemale": "Женский",
+  "genderCustom": "Другое",
+  "customGenderLabel": "Свой вариант пола",
+  "customGenderHint": "Введите ваш пол",
+  "customGenderRequired": "Введите свой вариант пола или выберите другую опцию.",
+  "birthDateLabel": "Дата рождения",
+  "selectBirthDate": "Выберите дату",
+  "birthDateHint": "ГГГГ-ММ-ДД",
+  "currentAvatar": "Текущий аватар",
+  "uploadFromDevice": "Загрузить с устройства",
+  "useInitials": "Инициалы",
+  "removeAvatar": "Удалить",
+  "avatarUploadFailed": "Не удалось обновить аватар.",
+  "timezoneLabel": "Часовой пояс",
+  "timezoneHint": "Europe/Moscow",
+  "saveProfile": "Сохранить профиль",
+  "changePasswordTitle": "Изменить пароль",
+  "passwordChangeUnavailable": "Смена пароля отключена на этом сервере.",
+  "currentPassword": "Текущий пароль",
+  "newPassword": "Новый пароль",
+  "confirmNewPassword": "Подтвердите новый пароль",
+  "nameRequired": "Введите имя перед сохранением.",
+  "profileUpdated": "Профиль обновлен.",
+  "passwordFieldsRequired": "Введите текущий и новый пароль.",
+  "passwordsDoNotMatch": "Новые пароли не совпадают.",
+  "passwordUpdated": "Пароль обновлен.",
+  "activeStatus": "Активен",
+  "inactiveStatus": "Неактивен",
+  "appInformation": "Приложение 众小智AI",
+  "appVersion": "Версия",
+  "serverInformation": "Информация о сервере",
+  "serverInfoUnavailable": "Информация о сервере сейчас недоступна.",
+  "serverNameLabel": "Имя сервера",
+  "serverVersionLabel": "Версия сервера",
+  "latestVersionLabel": "Последняя версия",
+  "deploymentIdLabel": "ID развертывания",
+  "defaultLocaleLabel": "Язык по умолчанию",
+  "userCountLabel": "Количество пользователей",
+  "serverDefaultModelsLabel": "Модели по умолчанию",
+  "loginFormLabel": "Форма входа",
+  "passwordChangesLabel": "Смена пароля",
+  "apiKeysLabel": "API-ключи",
+  "audioInputLabel": "Аудиоввод",
+  "audioOutputLabel": "Аудиовывод",
+  "speechToTextEngineLabel": "Движок речи в текст",
+  "textToSpeechEngineLabel": "Движок текста в речь",
+  "licenseMetadataLabel": "Метаданные лицензии",
+  "enabledLabel": "Включено",
+  "disabledLabel": "Отключено",
+  "noEmailLabel": "Нет эл. почты",
+  "userFallbackName": "Пользователь",
+  "unknownLabel": "Неизвестно",
+  "socketNotConnected": "Не подключено",
+  "socketConnected": "Подключено",
+  "socketDisconnected": "Отключено",
+  "socketLatencyLabel": "Задержка",
+  "socketReconnectsLabel": "Переподключения",
+  "socketLastHeartbeat": "Последний heartbeat: {time}",
+  "socketTransportWebSocket": "Транспорт WebSocket",
+  "socketTransportPolling": "Транспорт HTTP polling",
+  "socketTransportUnknown": "Неизвестный транспорт",
+  "socketQualityExcellent": "Отличное",
+  "socketQualityGood": "Хорошее",
+  "socketQualityFair": "Среднее",
+  "socketQualityPoor": "Плохое",
+  "timeJustNow": "только что",
+  "timeSecondsAgo": "{count} с назад",
+  "timeMinutesAgo": "{count} мин назад",
+  "timeHoursAgo": "{count} ч назад",
+  "attach": "Прикрепить",
+  "@attach": {
+    "description": "Button label to attach content to the current chat or folder chat."
+  },
+  "attachWebpageDescription": "Вставьте URL, чтобы добавить содержимое в чат.",
+  "@attachWebpageDescription": {
+    "description": "Description shown in the web page attachment dialog."
+  },
+  "webpageUrlLabel": "URL веб-страницы",
+  "@webpageUrlLabel": {
+    "description": "Label for the URL field in the web page attachment dialog."
+  },
+  "invalidHttpUrl": "Введите корректный URL http(s).",
+  "@invalidHttpUrl": {
+    "description": "Validation message when a URL is missing or not HTTP/HTTPS."
+  },
+  "youtubeTranscriptFetchFailed": "Не удалось получить расшифровку YouTube.",
+  "@youtubeTranscriptFetchFailed": {
+    "description": "Error shown when a YouTube transcript cannot be fetched."
+  },
+  "webpageNoReadableContent": "На странице нет читаемого содержимого.",
+  "@webpageNoReadableContent": {
+    "description": "Error shown when a fetched webpage has no readable text content."
+  },
+  "failedToAttachContent": "Не удалось прикрепить содержимое.",
+  "@failedToAttachContent": {
+    "description": "Generic error shown when attaching web content fails."
+  },
+  "scrollToBottom": "Прокрутить вниз",
+  "@scrollToBottom": {
+    "description": "Tooltip for the button that scrolls a chat to the newest message."
+  },
+  "editFolder": "Изменить папку",
+  "@editFolder": {
+    "description": "Title and menu label for editing a folder."
+  },
+  "editFolderDescription": "Обновите имя и значок папки на сервере.",
+  "@editFolderDescription": {
+    "description": "Description shown in the folder edit sheet."
+  },
+  "icon": "Значок",
+  "@icon": {
+    "description": "Label for selecting an icon."
+  },
+  "folderIconDescription": "Выберите значок папки.",
+  "@folderIconDescription": {
+    "description": "Subtitle for the folder icon picker."
+  },
+  "defaultLabel": "По умолчанию",
+  "@defaultLabel": {
+    "description": "Generic label for the default option."
+  },
+  "systemPrompt": "Системный промпт",
+  "@systemPrompt": {
+    "description": "Singular label for a system prompt field or menu item."
+  },
+  "move": "Переместить",
+  "@move": {
+    "description": "Context action to move an item."
+  },
+  "moveToFolder": "Переместить в папку",
+  "@moveToFolder": {
+    "description": "Title for choosing a destination folder for a chat."
+  },
+  "moveFolder": "Переместить папку",
+  "@moveFolder": {
+    "description": "Title for choosing a destination parent for a folder."
+  },
+  "noFolder": "Без папки",
+  "@noFolder": {
+    "description": "Option to remove a chat from any folder."
+  },
+  "topLevel": "Верхний уровень",
+  "@topLevel": {
+    "description": "Option to move a folder to the top level."
+  },
+  "failedToMoveFolder": "Не удалось переместить папку",
+  "@failedToMoveFolder": {
+    "description": "Error shown when moving a folder fails."
+  },
+  "failedToRenameFolder": "Не удалось переименовать папку",
+  "@failedToRenameFolder": {
+    "description": "Error shown when renaming a folder fails."
+  },
+  "browseKnowledgeBase": "Просмотреть базу знаний",
+  "@browseKnowledgeBase": {
+    "description": "Title for opening the knowledge base picker."
+  },
+  "knowledgePickerHint": "Нажмите Enter, чтобы выбрать документ",
+  "@knowledgePickerHint": {
+    "description": "Hint shown for keyboard selection in the knowledge base picker."
+  },
+  "execution": "Выполнение",
+  "@execution": {
+    "description": "Fallback label for an unnamed code execution."
+  },
+  "codeExecutionTitle": "Выполнение кода",
+  "@codeExecutionTitle": {
+    "description": "Fallback title for a code execution details sheet."
+  },
+  "codeExecutionFailed": "{label}: сбой",
+  "@codeExecutionFailed": {
+    "description": "Title shown when a named code execution fails.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Execution"
+      }
+    }
+  },
+  "codeExecutionRunning": "{label}…",
+  "@codeExecutionRunning": {
+    "description": "Title shown while a named code execution is still running.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Execution"
+      }
+    }
+  },
+  "language": "Язык",
+  "@language": {
+    "description": "Label for a programming language field."
+  },
+  "code": "Код",
+  "@code": {
+    "description": "Label for source code content."
+  },
+  "output": "Вывод",
+  "@output": {
+    "description": "Label for execution output."
+  },
+  "download": "Скачать",
+  "@download": {
+    "description": "Fallback label for a downloadable file."
+  },
+  "languageWithValue": "Язык: {language}",
+  "@languageWithValue": {
+    "description": "Label and value for a programming language.",
+    "placeholders": {
+      "language": {
+        "type": "String",
+        "example": "Python"
+      }
+    }
+  },
+  "previewDeferredLargeContent": "Предпросмотр отложен для большого содержимого.",
+  "@previewDeferredLargeContent": {
+    "description": "Message shown when an inline preview is delayed because content is large."
+  },
+  "openPreview": "Открыть предпросмотр",
+  "@openPreview": {
+    "description": "Button to open a deferred preview."
+  },
+  "copiedToClipboard": "Скопировано в буфер обмена",
+  "@copiedToClipboard": {
+    "description": "Snackbar message after copying content to the clipboard."
+  },
+  "preview": "Предпросмотр",
+  "@preview": {
+    "description": "Button label for opening a preview."
+  },
+  "alertTip": "Совет",
+  "@alertTip": {
+    "description": "Fallback label for a tip markdown alert."
+  },
+  "alertImportant": "Важно",
+  "@alertImportant": {
+    "description": "Fallback label for an important markdown alert."
+  },
+  "alertWarning": "Предупреждение",
+  "@alertWarning": {
+    "description": "Fallback label for a warning markdown alert."
+  },
+  "alertCaution": "Осторожно",
+  "@alertCaution": {
+    "description": "Fallback label for a caution markdown alert."
+  },
+  "alertNote": "Примечание",
+  "@alertNote": {
+    "description": "Fallback label for a note markdown alert."
+  },
+  "markdownDetailsGroupPendingTitle": "Изучение: {summary}",
+  "@markdownDetailsGroupPendingTitle": {
+    "description": "Title shown for a pending grouped tool-call details block.",
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "markdownDetailsGroupCompleteTitle": "Изучено: {summary}",
+  "@markdownDetailsGroupCompleteTitle": {
+    "description": "Title shown for a completed grouped tool-call details block.",
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "markdownDetailsGroupUnnamedTool": "инструмент",
+  "@markdownDetailsGroupUnnamedTool": {
+    "description": "Fallback label used when a grouped tool call has no tool name."
+  },
+  "folderIconFolder": "Папка",
+  "@folderIconFolder": {
+    "description": "Accessibility label for the folder icon option."
+  },
+  "folderIconOpenFolder": "Открытая папка",
+  "@folderIconOpenFolder": {
+    "description": "Accessibility label for the open folder icon option."
+  },
+  "folderIconBriefcase": "Портфель",
+  "@folderIconBriefcase": {
+    "description": "Accessibility label for the briefcase folder icon option."
+  },
+  "folderIconBooks": "Книги",
+  "@folderIconBooks": {
+    "description": "Accessibility label for the books folder icon option."
+  },
+  "folderIconMemo": "Заметка",
+  "@folderIconMemo": {
+    "description": "Accessibility label for the memo folder icon option."
+  },
+  "folderIconDividers": "Разделители",
+  "@folderIconDividers": {
+    "description": "Accessibility label for the dividers folder icon option."
+  },
+  "folderIconTools": "Инструменты",
+  "@folderIconTools": {
+    "description": "Accessibility label for the tools folder icon option."
+  },
+  "folderIconToolbox": "Ящик с инструментами",
+  "@folderIconToolbox": {
+    "description": "Accessibility label for the toolbox folder icon option."
+  },
+  "folderIconSparkles": "Искры",
+  "@folderIconSparkles": {
+    "description": "Accessibility label for the sparkles folder icon option."
+  },
+  "folderIconBrain": "Мозг",
+  "@folderIconBrain": {
+    "description": "Accessibility label for the brain folder icon option."
+  },
+  "folderIconRocket": "Ракета",
+  "@folderIconRocket": {
+    "description": "Accessibility label for the rocket folder icon option."
+  },
+  "folderIconTarget": "Цель",
+  "@folderIconTarget": {
+    "description": "Accessibility label for the target folder icon option."
+  },
+  "folderIconGeneric": "Значок папки",
+  "@folderIconGeneric": {
+    "description": "Generic accessibility label for a custom folder icon."
+  },
+  "thread": "Ветка",
+  "@thread": {
+    "description": "Title and context action for a message thread."
+  },
+  "threadWithCount": "Ветка ({count})",
+  "@threadWithCount": {
+    "description": "Thread action label with reply count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "channelMembersTitle": "Участники ({count})",
+  "@channelMembersTitle": {
+    "description": "Title for the channel members sheet.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "channelInputPlaceholder": "Введите здесь...",
+  "@channelInputPlaceholder": {
+    "description": "Placeholder for the channel message composer."
+  },
+  "channelUnknownMember": "Неизвестно",
+  "@channelUnknownMember": {
+    "description": "Fallback name for a channel member with no display name."
+  },
+  "replyInputPlaceholder": "Ответить...",
+  "@replyInputPlaceholder": {
+    "description": "Placeholder for the thread reply composer."
+  },
+  "editPhoto": "Изменить фото",
+  "@editPhoto": {
+    "description": "Action to edit the profile photo."
+  },
+  "replyingToUser": "Ответ пользователю {name}",
+  "@replyingToUser": {
+    "description": "Label shown above the channel composer when replying to a user.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Alex"
+      }
+    }
+  },
+  "voiceCallWithModel": "Голосовой вызов с {modelName}",
+  "@voiceCallWithModel": {
+    "description": "Notification title for an ongoing voice call with a model.",
+    "placeholders": {
+      "modelName": {
+        "type": "String",
+        "example": "GPT-4"
+      }
+    }
+  },
+  "notificationPermissionTitle": "Разрешение на уведомления",
+  "@notificationPermissionTitle": {
+    "description": "Title for the system notification permission prompt."
+  },
+  "callNotificationPermissionRationale": "Для оповещений о вызовах нужно разрешение на уведомления.",
+  "@callNotificationPermissionRationale": {
+    "description": "Rationale shown when requesting notification permission for call alerts."
+  },
+  "callNotificationPermissionPost": "Разрешите уведомления, чтобы показывать входящие вызовы.",
+  "@callNotificationPermissionPost": {
+    "description": "Instruction shown when requesting notification permission for incoming calls."
+  },
+  "acceptCall": "Принять",
+  "@acceptCall": {
+    "description": "Call action to accept an incoming call."
+  },
+  "declineCall": "Отклонить",
+  "@declineCall": {
+    "description": "Call action to decline an incoming call."
+  },
+  "missedCall": "Пропущенный вызов",
+  "@missedCall": {
+    "description": "Notification subtitle for a missed call."
+  },
+  "callBack": "Перезвонить",
+  "@callBack": {
+    "description": "Notification action to call back after a missed call."
+  },
+  "calling": "Вызов...",
+  "@calling": {
+    "description": "Notification subtitle while starting a call."
+  },
+  "hangUp": "Завершить",
+  "@hangUp": {
+    "description": "Notification action to hang up a call."
+  },
+  "incomingCallChannelName": "Входящий вызов",
+  "@incomingCallChannelName": {
+    "description": "Android notification channel name for incoming calls."
+  },
+  "missedCallChannelName": "Пропущенный вызов",
+  "@missedCallChannelName": {
+    "description": "Android notification channel name for missed calls."
+  },
+  "mute": "Отключить звук",
+  "@mute": {
+    "description": "Notification action to mute a call."
+  },
+  "unmute": "Включить звук",
+  "@unmute": {
+    "description": "Notification action to unmute a call."
+  },
+  "voiceCallMuted": "Звук отключён",
+  "@voiceCallMuted": {
+    "description": "Status label when a voice call is muted."
+  },
+  "voiceCallChannelDescription": "Уведомления о текущих голосовых вызовах",
+  "@voiceCallChannelDescription": {
+    "description": "Android notification channel description for ongoing voice calls."
+  },
+  "@greetingTitle": {
+    "description": "Greeting shown on the empty chat page.",
+    "placeholders": {
+      "username": {
+        "type": "String",
+        "example": "Alex"
+      }
+    }
+  },
+  "@continueWithProvider": {
+    "description": "Button text for OAuth provider sign-in.",
+    "placeholders": {
+      "provider": {
+        "type": "String",
+        "example": "Google"
+      }
+    }
+  },
+  "@channelMembers": {
+    "description": "Member count display in channel header",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@audioUploadError": {
+    "description": "Error message when audio upload fails",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "description": "The error message"
+      }
+    }
+  },
+  "@accessibleModelsCount": {
+    "description": "Subtitle showing how many accessible models are listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "@accessibleFoldersCount": {
+    "description": "Subtitle showing how many accessible folders are listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "@modelSystemPromptTitle": {
+    "description": "Title for a model system prompt editor.",
+    "placeholders": {
+      "modelName": {
+        "type": "String",
+        "example": "GPT-4"
+      }
+    }
+  },
+  "@folderSystemPromptTitle": {
+    "description": "Title for a folder system prompt editor.",
+    "placeholders": {
+      "folderName": {
+        "type": "String",
+        "example": "Work"
+      }
+    }
+  },
+  "@savedMemoriesCount": {
+    "description": "Shows how many memories are saved.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@memoryUpdatedAt": {
+    "description": "Shows when a memory was last updated.",
+    "placeholders": {
+      "formattedTime": {}
+    }
+  },
+  "@socketLastHeartbeat": {
+    "description": "Shows when the socket last received a heartbeat.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "just now"
+      }
+    }
+  },
+  "@timeSecondsAgo": {
+    "description": "Compact relative time label for seconds ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "@timeMinutesAgo": {
+    "description": "Compact relative time label for minutes ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "@timeHoursAgo": {
+    "description": "Compact relative time label for hours ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "rateLimitExceeded": "Слишком много запросов. Подождите перед повторной попыткой.",
+  "@rateLimitExceeded": {
+    "description": "Error shown when the server rejects a request due to rate limiting."
+  },
+  "rateLimitRetryAfter": "Подождите {duration} перед повторной попыткой.",
+  "@rateLimitRetryAfter": {
+    "description": "Advice shown when a rate limit response includes a retry delay.",
+    "placeholders": {
+      "duration": {
+        "type": "String",
+        "example": "1m 30s"
+      }
+    }
+  },
+  "rateLimitRetrySoon": "Подождите немного перед повторной попыткой.",
+  "@rateLimitRetrySoon": {
+    "description": "Advice shown when a rate limit response does not include an exact retry delay."
+  },
+  "securityCertificateError": "Ошибка сертификата безопасности. Не удалось проверить подлинность сервера.",
+  "@securityCertificateError": {
+    "description": "Error shown when the server TLS certificate cannot be trusted or verified."
+  },
+  "noToolsAvailable": "Нет доступных инструментов",
+  "@noToolsAvailable": {
+    "description": "Empty state shown when no tools are available in the composer overflow menu."
+  },
+  "failedToLoadTools": "Не удалось загрузить инструменты",
+  "@failedToLoadTools": {
+    "description": "Error shown when the composer overflow menu cannot load tools."
+  }
 }

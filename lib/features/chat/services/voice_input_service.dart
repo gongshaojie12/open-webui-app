@@ -1,14 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:conduit/core/services/haptic_service.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:record/record.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -18,6 +17,7 @@ import '../../../core/providers/app_providers.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/services/background_streaming_handler.dart';
 import '../../../core/services/settings_service.dart';
+import 'voice_transcript_accumulator.dart';
 
 part 'voice_input_service.g.dart';
 
@@ -31,6 +31,12 @@ class LocaleName {
 class VoiceInputService {
   static const int _vadSampleRate = 16000;
   static const int _vadFrameSamples = 512;
+  static const int _minVadRedemptionFrames = 4;
+  static const int _maxVadRedemptionFrames =
+      ((SettingsService.maxVoiceSilenceDurationMs * _vadSampleRate) +
+          (_vadFrameSamples * 1000) -
+          1) ~/
+      (_vadFrameSamples * 1000);
   static const int _vadPreSpeechPadFrames = 16;
   static const int _vadMinSpeechFrames = 8;
   static const int _vadEndSpeechPadFrames = 6;
@@ -39,13 +45,31 @@ class VoiceInputService {
   static const Duration _localeFetchTimeout = Duration(seconds: 2);
   static const String _backgroundSttStreamId = 'voice-input-stt';
   static const Duration _vadDisposeCooldown = Duration(milliseconds: 140);
+  static const Duration _localRecognitionMaxDuration = Duration(minutes: 5);
+  static const String _bundledVadAssetBasePath = 'assets/vad/';
+  static const List<IosAudioCategoryOption> _iosServerVadCategoryOptions = [
+    // A2DP is output-only on iOS and can break duplex mic capture when the
+    // recorder is trying to open a microphone stream.
+    IosAudioCategoryOption.defaultToSpeaker,
+    IosAudioCategoryOption.allowBluetooth,
+  ];
+  static const IosRecordConfig _iosStandaloneServerVadRecordConfig =
+      IosRecordConfig(categoryOptions: _iosServerVadCategoryOptions);
+  static const IosRecordConfig _iosManagedServerVadRecordConfig =
+      IosRecordConfig(
+        categoryOptions: _iosServerVadCategoryOptions,
+        // The voice-call path already coordinates AVAudioSession through
+        // audio_session and the native background manager.
+        // ignore: deprecated_member_use
+        manageAudioSession: false,
+      );
 
   VadHandler? _vadHandler;
   final SpeechToText _speech = SpeechToText();
-  final AudioRecorder _microphonePermissionProbe = AudioRecorder();
   final ApiService? _api;
   final Ref? _ref;
   bool _isInitialized = false;
+  bool _didAttemptLocalInitialization = false;
   bool _isListening = false;
   bool _localSttAvailable = false;
   bool _localSttActive = false;
@@ -58,6 +82,8 @@ class VoiceInputService {
   Future<Stream<String>>? _startListeningInFlight;
   StreamController<String>? _textStreamController;
   String _currentText = '';
+  final VoiceTranscriptAccumulator _transcriptAccumulator =
+      VoiceTranscriptAccumulator();
   bool _receivedFinalResult = false;
   StreamController<int>? _intensityController;
   Stream<int> get intensityStream =>
@@ -92,21 +118,32 @@ class VoiceInputService {
     _preference = preference;
   }
 
-  Future<bool> initialize() async {
-    if (_isInitialized) return true;
+  Future<bool> initialize({bool forceLocalStt = false}) async {
     if (!isSupportedPlatform) return false;
     final deviceTag = WidgetsBinding.instance.platformDispatcher.locale
         .toLanguageTag();
+    _ensureFallbackLocale(deviceTag);
 
     if (_isIosSimulator) {
       _localSttAvailable = false;
-      _ensureFallbackLocale(deviceTag);
+      _didAttemptLocalInitialization = true;
       _isInitialized = true;
       return true;
     }
-    // Prepare local speech recognizer
+
+    final shouldPrepareLocalStt =
+        forceLocalStt || _preference != SttPreference.serverOnly;
+    if (shouldPrepareLocalStt && !_didAttemptLocalInitialization) {
+      await _initializeLocalStt(deviceTag);
+    }
+
+    _isInitialized = true;
+    return true;
+  }
+
+  Future<void> _initializeLocalStt(String deviceTag) async {
+    _didAttemptLocalInitialization = true;
     try {
-      // Initialize speech_to_text and check availability
       _localSttAvailable = await _speech.initialize(
         onStatus: _handleSttStatus,
         onError: _handleSttError,
@@ -117,8 +154,6 @@ class VoiceInputService {
     } catch (_) {
       _localSttAvailable = false;
     }
-    _isInitialized = true;
-    return true;
   }
 
   void _handleSttStatus(String status) {
@@ -263,7 +298,11 @@ class VoiceInputService {
 
   /// Checks if on-device STT is properly supported.
   Future<bool> checkOnDeviceSupport() async {
-    if (!isSupportedPlatform || !_isInitialized) return false;
+    if (!isSupportedPlatform) return false;
+    if (!_isInitialized || !_didAttemptLocalInitialization) {
+      final initialized = await initialize(forceLocalStt: true);
+      if (!initialized) return false;
+    }
     try {
       // speech_to_text isAvailable is set after initialize()
       return _speech.isAvailable;
@@ -277,7 +316,7 @@ class VoiceInputService {
   Future<String> testOnDeviceStt() async {
     try {
       // First ensure we're initialized
-      await initialize();
+      await initialize(forceLocalStt: true);
 
       if (!_localSttAvailable) {
         return 'Local STT not available. Available: $_localSttAvailable';
@@ -441,15 +480,16 @@ class VoiceInputService {
     // Use user's configured silence duration for pause detection
     final settings = _ref?.read(appSettingsProvider);
     final pauseDuration = Duration(
-      milliseconds: settings?.voiceSilenceDuration ?? 2000,
+      milliseconds:
+          settings?.voiceSilenceDuration ??
+          SettingsService.defaultVoiceSilenceDurationMs,
     );
 
     try {
       await _speech.listen(
         onResult: _handleSttResult,
         localeId: _selectedLocaleId,
-        // Extended duration for voice calls - listen up to 60 seconds
-        listenFor: const Duration(seconds: 60),
+        listenFor: _localRecognitionMaxDuration,
         // Use user's silence duration setting for pause detection
         pauseFor: pauseDuration,
         listenOptions: SpeechListenOptions(
@@ -474,7 +514,10 @@ class VoiceInputService {
   void _handleSttResult(SpeechRecognitionResult result) {
     if (!_isListening) return;
     final prevLen = _currentText.length;
-    _currentText = result.recognizedWords;
+    _currentText = _transcriptAccumulator.applyResult(
+      recognizedWords: result.recognizedWords,
+      isFinalResult: result.finalResult,
+    );
     _textStreamController?.add(_currentText);
     if (result.finalResult) {
       _receivedFinalResult = true;
@@ -487,13 +530,17 @@ class VoiceInputService {
     } catch (_) {}
   }
 
-  Future<Stream<String>> startListening() async {
+  Future<Stream<String>> startListening({
+    bool iosAudioSessionManagedExternally = false,
+  }) async {
     final inFlight = _startListeningInFlight;
     if (inFlight != null) {
       return inFlight;
     }
 
-    final startFuture = _startListeningInternal();
+    final startFuture = _startListeningInternal(
+      iosAudioSessionManagedExternally: iosAudioSessionManagedExternally,
+    );
     _startListeningInFlight = startFuture;
     try {
       return await startFuture;
@@ -504,7 +551,9 @@ class VoiceInputService {
     }
   }
 
-  Future<Stream<String>> _startListeningInternal() async {
+  Future<Stream<String>> _startListeningInternal({
+    required bool iosAudioSessionManagedExternally,
+  }) async {
     if (!_isInitialized) {
       throw Exception('Voice input not initialized');
     }
@@ -521,6 +570,7 @@ class VoiceInputService {
 
     _textStreamController = StreamController<String>.broadcast();
     _currentText = '';
+    _transcriptAccumulator.reset();
     _isListening = true;
     _receivedFinalResult = false;
     _intensityController = StreamController<int>.broadcast();
@@ -548,7 +598,7 @@ class VoiceInputService {
 
     if (shouldUseLocal) {
       _autoStopTimer?.cancel();
-      _autoStopTimer = Timer(const Duration(seconds: 60), () {
+      _autoStopTimer = Timer(_localRecognitionMaxDuration, () {
         if (_isListening) {
           unawaited(_stopListening());
         }
@@ -587,7 +637,9 @@ class VoiceInputService {
       });
       Future(() async {
         try {
-          await _startServerRecording();
+          await _startServerRecording(
+            iosAudioSessionManagedExternally: iosAudioSessionManagedExternally,
+          );
         } catch (error) {
           if (!_isListening) return;
           _textStreamController?.addError(error);
@@ -616,7 +668,9 @@ class VoiceInputService {
 
   /// Centralized entry point to begin voice recognition.
   /// Ensures initialization and microphone permission before starting.
-  Future<Stream<String>> beginListening() async {
+  Future<Stream<String>> beginListening({
+    bool iosAudioSessionManagedExternally = false,
+  }) async {
     await initialize();
     // For on-device STT we preflight the microphone permission so we can
     // fail fast with a clear error before starting any recognition.
@@ -631,7 +685,9 @@ class VoiceInputService {
         throw Exception('Microphone permission not granted');
       }
     }
-    return await startListening();
+    return await startListening(
+      iosAudioSessionManagedExternally: iosAudioSessionManagedExternally,
+    );
   }
 
   Future<void> stopListening() async {
@@ -665,6 +721,7 @@ class VoiceInputService {
         }
       }
       _isListening = false;
+      _currentText = _transcriptAccumulator.finalizePending();
       if (_currentText.isNotEmpty) {
         _textStreamController?.add(_currentText);
       }
@@ -713,7 +770,9 @@ class VoiceInputService {
     } catch (_) {}
   }
 
-  Future<void> _startServerRecording() async {
+  Future<void> _startServerRecording({
+    required bool iosAudioSessionManagedExternally,
+  }) async {
     // Make sure any previous recorder session is fully stopped before we
     // dispose/create handlers. This avoids Android VAD races where internal
     // frame callbacks outlive immediate dispose().
@@ -727,8 +786,10 @@ class VoiceInputService {
     _vadHandler = vad;
     await _setupVadStreams(vad);
     final settings = _ref?.read(appSettingsProvider);
-    final silenceMs = settings?.voiceSilenceDuration ?? 2000;
-    final redemptionFrames = _silenceDurationToFrames(
+    final silenceMs =
+        settings?.voiceSilenceDuration ??
+        SettingsService.defaultVoiceSilenceDurationMs;
+    final redemptionFrames = silenceDurationToVadFrames(
       silenceMs,
       frameSamples: _vadFrameSamples,
     );
@@ -737,6 +798,7 @@ class VoiceInputService {
       await vad.startListening(
         frameSamples: _vadFrameSamples,
         model: 'v5',
+        baseAssetPath: _bundledVadAssetBasePath,
         minSpeechFrames: _vadMinSpeechFrames,
         preSpeechPadFrames: _vadPreSpeechPadFrames,
         redemptionFrames: redemptionFrames,
@@ -744,7 +806,7 @@ class VoiceInputService {
         positiveSpeechThreshold: _vadPositiveSpeechThreshold,
         negativeSpeechThreshold: _vadNegativeSpeechThreshold,
         submitUserSpeechOnPause: true,
-        recordConfig: const RecordConfig(
+        recordConfig: RecordConfig(
           encoder: AudioEncoder.pcm16bits,
           sampleRate: _vadSampleRate,
           numChannels: 1,
@@ -761,6 +823,9 @@ class VoiceInputService {
             manageBluetooth: true,
             useLegacy: false,
           ),
+          iosConfig: iosAudioSessionManagedExternally
+              ? _iosManagedServerVadRecordConfig
+              : _iosStandaloneServerVadRecordConfig,
         ),
       );
     } catch (error) {
@@ -893,11 +958,15 @@ class VoiceInputService {
     }
   }
 
-  int _silenceDurationToFrames(int milliseconds, {int? frameSamples}) {
-    final samples = frameSamples ?? _vadFrameSamples;
-    final frameDurationMs = (samples / _vadSampleRate) * 1000;
-    final frames = (milliseconds / frameDurationMs).round();
-    return frames.clamp(4, 50);
+  /// Converts a silence timeout into VAD frames without shortening the pause.
+  @visibleForTesting
+  static int silenceDurationToVadFrames(
+    int milliseconds, {
+    int frameSamples = _vadFrameSamples,
+  }) {
+    final frameDurationMs = (frameSamples / _vadSampleRate) * 1000;
+    final frames = (milliseconds / frameDurationMs).ceil();
+    return frames.clamp(_minVadRedemptionFrames, _maxVadRedemptionFrames);
   }
 
   int _intensityFromVadFrame(List<double> frame) {
@@ -1091,7 +1160,6 @@ class VoiceInputService {
   Future<void> dispose() async {
     await stopListening();
     await _disposeVadHandler();
-    await _microphonePermissionProbe.dispose();
     try {
       await _speech.stop();
     } catch (_) {}
@@ -1155,7 +1223,7 @@ final localVoiceRecognitionAvailableProvider = FutureProvider<bool>((
   ref,
 ) async {
   final service = ref.watch(voiceInputServiceProvider);
-  final initialized = await service.initialize();
+  final initialized = await service.initialize(forceLocalStt: true);
   if (!initialized) return false;
   if (service.hasLocalStt) return true;
   return service.checkOnDeviceSupport();

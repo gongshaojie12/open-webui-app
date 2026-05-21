@@ -243,6 +243,8 @@ Future<void> dispatchChatTransport({
     filterIds: filterIds,
     appendToLastMessage: (c) =>
         ref.read(chatMessagesProvider.notifier).appendToLastMessage(c),
+    bufferLastMessageContent: (c) =>
+        ref.read(chatMessagesProvider.notifier).bufferLastMessageContent(c),
     replaceLastMessageContent: (c) =>
         ref.read(chatMessagesProvider.notifier).replaceLastMessageContent(c),
     updateLastMessageWith: (updater) => ref
@@ -273,7 +275,7 @@ Future<void> dispatchChatTransport({
           .set(active.copyWith(title: newTitle));
       ref
           .read(conversationsProvider.notifier)
-          .updateConversation(
+          .updateConversationFromRemote(
             active.id,
             (conversation) => conversation.copyWith(
               title: newTitle,
@@ -294,7 +296,12 @@ Future<void> dispatchChatTransport({
             ref.read(activeConversationProvider.notifier).set(refreshed);
             ref
                 .read(conversationsProvider.notifier)
-                .upsertConversation(refreshed.copyWith(messages: const []));
+                .upsertConversation(
+                  refreshed.copyWith(messages: const []),
+                  trustFolderConversation:
+                      refreshed.folderId != null &&
+                      refreshed.folderId!.isNotEmpty,
+                );
           } catch (_) {}
         });
       }
@@ -312,6 +319,7 @@ Future<void> dispatchChatTransport({
     finishStreaming: () =>
         ref.read(chatMessagesProvider.notifier).finishStreaming(),
     getMessages: () => ref.read(chatMessagesProvider),
+    getVisibleStreamingContent: () => ref.read(streamingContentProvider),
     flushStreamingBuffer: () =>
         ref.read(chatMessagesProvider.notifier).syncStreamingBuffer(),
     onObsoleteStreamRetired: () {

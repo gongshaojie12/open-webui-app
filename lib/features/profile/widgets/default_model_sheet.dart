@@ -102,7 +102,7 @@ class DefaultModelBottomSheetState
           builder: (context, scrollController) {
             return Container(
               decoration: BoxDecoration(
-                color: context.sidebarTheme.background,
+                color: context.conduitTheme.surfaceBackground,
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(AppBorderRadius.bottomSheet),
                 ),
@@ -146,12 +146,14 @@ class DefaultModelBottomSheetState
                                             AppLocalizations.of(
                                               context,
                                             )!.noResults,
-                                            style: TextStyle(
-                                              color: context
-                                                  .conduitTheme
-                                                  .textSecondary,
-                                              fontSize: AppTypography.bodyLarge,
-                                            ),
+                                            style: context
+                                                .conduitTheme
+                                                .bodyMedium
+                                                ?.copyWith(
+                                                  color: context
+                                                      .conduitTheme
+                                                      .textSecondary,
+                                                ),
                                           ),
                                         ],
                                       ),
@@ -169,8 +171,9 @@ class DefaultModelBottomSheetState
                                                   _selectedModelId ==
                                                       'auto-select'
                                             : _selectedModelId == model.id;
-                                        final api =
-                                            ref.watch(apiServiceProvider);
+                                        final api = ref.watch(
+                                          apiServiceProvider,
+                                        );
                                         final iconUrl = isAutoSelect
                                             ? null
                                             : resolveModelIconUrlForModel(
@@ -206,10 +209,12 @@ class DefaultModelBottomSheetState
                                   stops: const [0.0, 0.65, 1.0],
                                   colors: [
                                     context.sidebarTheme.background,
-                                    context.sidebarTheme.background
-                                        .withValues(alpha: 0.9),
-                                    context.sidebarTheme.background
-                                        .withValues(alpha: 0.0),
+                                    context.sidebarTheme.background.withValues(
+                                      alpha: 0.9,
+                                    ),
+                                    context.sidebarTheme.background.withValues(
+                                      alpha: 0.0,
+                                    ),
                                   ],
                                 ),
                               ),
@@ -236,8 +241,8 @@ class DefaultModelBottomSheetState
                                         AppLocalizations.of(
                                           context,
                                         )!.availableModels,
-                                        style: AppTypography.bodySmallStyle
-                                            .copyWith(
+                                        style: context.conduitTheme.bodySmall
+                                            ?.copyWith(
                                               fontWeight: FontWeight.w600,
                                               color: context
                                                   .conduitTheme
@@ -266,8 +271,8 @@ class DefaultModelBottomSheetState
                                         ),
                                         child: Text(
                                           '${_filteredModels.length}',
-                                          style: AppTypography.bodySmallStyle
-                                              .copyWith(
+                                          style: context.conduitTheme.bodySmall
+                                              ?.copyWith(
                                                 color: context
                                                     .conduitTheme
                                                     .textSecondary,

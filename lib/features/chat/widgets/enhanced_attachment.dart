@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:conduit/core/services/haptic_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/theme/theme_extensions.dart';
+import '../../../shared/widgets/skeleton_loader.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/services/api_service.dart';
 import 'enhanced_image_attachment.dart';
@@ -66,7 +67,9 @@ class _EnhancedAttachmentState extends ConsumerState<EnhancedAttachment> {
         return;
       }
 
-      final info = await api.getFileInfo(widget.attachmentId);
+      final info = Map<String, dynamic>.from(
+        await api.getFileInfo(widget.attachmentId),
+      );
       if (!mounted) return;
       setState(() {
         _fileInfo = info;
@@ -161,21 +164,57 @@ class _EnhancedAttachmentState extends ConsumerState<EnhancedAttachment> {
     return '📎';
   }
 
+  Widget _buildLoadingState(BuildContext context) {
+    final maxWidth = widget.constraints?.maxWidth;
+    final maxHeight = widget.constraints?.maxHeight;
+    final hasPreviewSizedConstraints =
+        widget.isUserMessage &&
+        maxWidth != null &&
+        maxWidth.isFinite &&
+        maxHeight != null &&
+        maxHeight.isFinite &&
+        maxHeight > 80;
+    final resolvedWidth = maxWidth != null && maxWidth.isFinite
+        ? maxWidth
+        : 160.0;
+    final resolvedHeight = hasPreviewSizedConstraints
+        ? maxHeight.clamp(90.0, 220.0).toDouble()
+        : 84.0;
+    final theme = context.conduitTheme;
+    final borderRadius = BorderRadius.circular(AppBorderRadius.md);
+
+    return Container(
+      key: const ValueKey('attachment-loading'),
+      width: resolvedWidth,
+      height: resolvedHeight,
+      constraints: widget.constraints,
+      decoration: BoxDecoration(
+        color: theme.cardBackground,
+        borderRadius: borderRadius,
+        border: Border.all(
+          color: theme.textPrimary.withValues(alpha: 0.1),
+          width: BorderWidth.regular,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: SkeletonLoader(
+          borderRadius: borderRadius,
+          baseColor: theme.shimmerBase.withValues(
+            alpha: hasPreviewSizedConstraints ? 0.9 : 0.75,
+          ),
+          highlightColor: theme.shimmerHighlight.withValues(
+            alpha: hasPreviewSizedConstraints ? 1.0 : 0.85,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return Container(
-        width: widget.constraints?.maxWidth ?? 160,
-        height: 84,
-        decoration: BoxDecoration(
-          color: context.conduitTheme.cardBackground,
-          borderRadius: BorderRadius.circular(AppBorderRadius.md),
-          border: Border.all(
-            color: context.conduitTheme.textPrimary.withValues(alpha: 0.1),
-            width: BorderWidth.regular,
-          ),
-        ),
-      );
+      return _buildLoadingState(context);
     }
 
     if (_error != null) {
@@ -191,9 +230,8 @@ class _EnhancedAttachmentState extends ConsumerState<EnhancedAttachment> {
         ),
         child: Text(
           _error!,
-          style: TextStyle(
+          style: AppTypography.labelMediumStyle.copyWith(
             color: context.conduitTheme.error,
-            fontSize: AppTypography.labelMedium,
           ),
         ),
       );
@@ -241,10 +279,7 @@ class _EnhancedAttachmentState extends ConsumerState<EnhancedAttachment> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            _fileIconFor(filename),
-            style: const TextStyle(fontSize: AppTypography.headlineLarge),
-          ),
+          Text(_fileIconFor(filename), style: AppTypography.headlineLargeStyle),
           const SizedBox(width: Spacing.sm),
           Flexible(
             child: Column(
@@ -255,20 +290,18 @@ class _EnhancedAttachmentState extends ConsumerState<EnhancedAttachment> {
                   filename,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
+                  style: AppTypography.labelStyle.copyWith(
                     color: context.conduitTheme.textPrimary,
-                    fontSize: AppTypography.labelLarge,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
                 if (metaLabel.isNotEmpty)
                   Text(
                     metaLabel,
-                    style: TextStyle(
+                    style: AppTypography.labelMediumStyle.copyWith(
                       color: context.conduitTheme.textSecondary.withValues(
                         alpha: 0.7,
                       ),
-                      fontSize: AppTypography.labelMedium,
                     ),
                   ),
               ],
@@ -278,13 +311,16 @@ class _EnhancedAttachmentState extends ConsumerState<EnhancedAttachment> {
       ),
     );
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(AppBorderRadius.md),
-      onTap: () async {
-        await ConduitHaptics.mediumImpact();
-        await _shareFile();
-      },
-      child: card,
+    return Semantics(
+      button: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () async {
+          await ConduitHaptics.mediumImpact();
+          await _shareFile();
+        },
+        child: card,
+      ),
     );
   }
 

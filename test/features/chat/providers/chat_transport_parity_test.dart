@@ -32,6 +32,46 @@ ApiService _buildFakeApi({Map<String, dynamic>? pollResponse}) {
   return api;
 }
 
+class _TrackingApiService extends ApiService {
+  _TrackingApiService()
+    : super(
+        serverConfig: const ServerConfig(
+          id: 'test',
+          name: 'Test',
+          url: 'http://localhost:0',
+        ),
+        workerManager: WorkerManager(),
+      );
+
+  int chatCompletedCalls = 0;
+  int syncCalls = 0;
+
+  @override
+  Future<Map<String, dynamic>?> sendChatCompleted({
+    required String chatId,
+    required String messageId,
+    required List<Map<String, dynamic>> messages,
+    required String model,
+    Map<String, dynamic>? modelItem,
+    String? sessionId,
+    List<String>? filterIds,
+  }) async {
+    chatCompletedCalls += 1;
+    return const <String, dynamic>{};
+  }
+
+  @override
+  Future<void> syncConversationMessages(
+    String conversationId,
+    List<ChatMessage> messages, {
+    String? title,
+    String? model,
+    String? systemPrompt,
+  }) async {
+    syncCalls += 1;
+  }
+}
+
 /// Adapter that optionally returns a canned poll response.
 class _StubAdapter implements HttpClientAdapter {
   _StubAdapter({this.pollResponse});
@@ -131,6 +171,10 @@ class _CallbackLog {
     }
   }
 
+  void bufferLastMessageContent(String c) {
+    replaceLastMessageContent(c);
+  }
+
   void updateLastMessageWith(ChatMessage Function(ChatMessage) updater) {
     messageUpdaters.add(updater);
     if (messages.isNotEmpty && messages.last.role == 'assistant') {
@@ -219,6 +263,7 @@ ActiveChatStream _attach({
     socketService: socketService,
     workerManager: workerManager ?? WorkerManager(maxConcurrentTasks: 1),
     appendToLastMessage: log.appendToLastMessage,
+    bufferLastMessageContent: log.bufferLastMessageContent,
     replaceLastMessageContent: log.replaceLastMessageContent,
     updateLastMessageWith: log.updateLastMessageWith,
     appendStatusUpdate: (_, _) {},
@@ -229,6 +274,7 @@ ActiveChatStream _attach({
     completeStreamingUi: log.completeStreamingUi,
     finishStreaming: log.finishStreaming,
     getMessages: log.getMessages,
+    getVisibleStreamingContent: () => null,
     flushStreamingBuffer: log.flushStreamingBuffer,
   );
 }
@@ -432,6 +478,43 @@ void main() {
       check(log.appendedChunks).deepEquals(['Hello', ' world']);
       check(log.finishCount).equals(1);
     });
+
+    test(
+      'taskSocket completion does not rewrite persisted chat history after chatCompleted',
+      () async {
+        final api = _TrackingApiService();
+        final log = _CallbackLog();
+        final registrar = FakeSocketInjector();
+        final socket = _MockSocketService(registrar);
+
+        _attach(
+          session: ChatCompletionSession.taskSocket(
+            messageId: 'msg-1',
+            sessionId: 'sess-1',
+            conversationId: 'conv-1',
+            taskId: 'task-1',
+          ),
+          log: log,
+          api: api,
+          socketService: socket,
+        );
+
+        registrar.emitChatEvent(
+          'chat:completion',
+          {'content': 'Hello', 'done': true},
+          conversationId: 'conv-1',
+          sessionId: 'sess-1',
+          messageId: 'msg-1',
+        );
+
+        await pumpMicrotasks();
+        await pumpMicrotasks();
+        await pumpMicrotasks();
+
+        check(api.chatCompletedCalls).equals(1);
+        check(api.syncCalls).equals(0);
+      },
+    );
 
     // -------------------------------------------------------------------
     // 2. JSON completion works without a socket connection

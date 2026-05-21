@@ -17,12 +17,35 @@ import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import kotlinx.coroutines.*
+
+private data class StreamingLease(
+    val id: String,
+    val kind: String,
+    val requiresMicrophone: Boolean,
+) {
+    val isVoice: Boolean get() = kind == KIND_VOICE
+    val isSocket: Boolean get() = id == SOCKET_KEEPALIVE_ID
+
+    fun toPlatformMap(): Map<String, Any> = mapOf(
+        "id" to id,
+        "kind" to kind,
+        "requiresMicrophone" to requiresMicrophone,
+    )
+
+    companion object {
+        const val KIND_CHAT = "chat"
+        const val KIND_VOICE = "voice"
+        const val SOCKET_KEEPALIVE_ID = "socket-keepalive"
+    }
+}
 
 /**
  * Foreground service for keeping the app alive during streaming operations.
@@ -35,7 +58,7 @@ import kotlinx.coroutines.*
  * Key behaviors:
  * - For chat streaming: Runs with dataSync type, acquires wake lock
  * - For voice calls: Runs with microphone type (if permission granted), acquires wake lock
- * - For socket keepalive: Runs with dataSync type, NO wake lock (CPU can sleep between pings)
+ * - Idle sockets: Do not start native background execution
  *
  * Android 14+ (UPSIDE_DOWN_CAKE) limitation:
  * - dataSync foreground services are limited to 6 hours
@@ -43,7 +66,7 @@ import kotlinx.coroutines.*
  */
 class BackgroundStreamingService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
-    private var activeStreamCount = 0
+    private var activeLeases: List<StreamingLease> = emptyList()
     private var isForeground = false
     private var currentForegroundType: Int = 0
     private var foregroundStartTime: Long = 0
@@ -55,6 +78,9 @@ class BackgroundStreamingService : Service() {
         const val ACTION_STOP = "STOP_STREAMING"
         const val EXTRA_REQUIRES_MICROPHONE = "requiresMicrophone"
         const val EXTRA_STREAM_COUNT = "streamCount"
+        const val EXTRA_LEASE_IDS = "leaseIds"
+        const val EXTRA_LEASE_KINDS = "leaseKinds"
+        const val EXTRA_MIC_LEASE_IDS = "micLeaseIds"
         
         const val ACTION_TIME_LIMIT_APPROACHING = "app.cogwheel.conduit.TIME_LIMIT_APPROACHING"
         const val ACTION_MIC_PERMISSION_FALLBACK = "app.cogwheel.conduit.MIC_PERMISSION_FALLBACK"
@@ -124,9 +150,13 @@ class BackgroundStreamingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
-        val incomingStreamCount =
-            intent?.getIntExtra(EXTRA_STREAM_COUNT, 0) ?: 0
-        activeStreamCount = incomingStreamCount
+        activeLeases = readLeases(intent)
+
+        if (activeLeases.isEmpty() && action != ACTION_STOP) {
+            println("BackgroundStreamingService: No leases in start command; stopping")
+            stopStreaming()
+            return START_NOT_STICKY
+        }
 
         val desiredType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             resolveForegroundServiceType(intent)
@@ -145,7 +175,6 @@ class BackgroundStreamingService : Service() {
                 startForegroundInternal(notification, desiredType)
             } else {
                 updateForegroundType(notification, desiredType)
-                true
             }
 
             if (!enteredForeground) {
@@ -156,7 +185,7 @@ class BackgroundStreamingService : Service() {
             // If no streams are active after entering foreground, shut down to
             // avoid lingering foreground instances that could trigger
             // DidNotStopInTime exceptions.
-            if (activeStreamCount <= 0) {
+            if (activeLeases.isEmpty()) {
                 stopStreaming()
                 return START_NOT_STICKY
             }
@@ -172,8 +201,8 @@ class BackgroundStreamingService : Service() {
                 return START_STICKY
             }
             ACTION_START -> {
-                if (activeStreamCount > 0) {
-                    acquireWakeLock()
+                if (activeLeases.isNotEmpty()) {
+                    updateWakeLock()
                     println("BackgroundStreamingService: Started foreground service")
                 } else {
                     println("BackgroundStreamingService: No active streams; skipping wake lock")
@@ -182,6 +211,35 @@ class BackgroundStreamingService : Service() {
         }
 
         return START_STICKY
+    }
+
+    private fun readLeases(intent: Intent?): List<StreamingLease> {
+        val ids = intent?.getStringArrayListExtra(EXTRA_LEASE_IDS)
+        if (!ids.isNullOrEmpty()) {
+            val kinds = intent.getStringArrayListExtra(EXTRA_LEASE_KINDS) ?: arrayListOf()
+            val micIds = intent.getStringArrayListExtra(EXTRA_MIC_LEASE_IDS)?.toSet() ?: emptySet()
+            return ids.mapIndexedNotNull { index, id ->
+                if (id == StreamingLease.SOCKET_KEEPALIVE_ID) {
+                    null
+                } else {
+                    StreamingLease(
+                        id = id,
+                        kind = kinds.getOrNull(index) ?: StreamingLease.KIND_CHAT,
+                        requiresMicrophone = micIds.contains(id),
+                    )
+                }
+            }
+        }
+
+        val count = intent?.getIntExtra(EXTRA_STREAM_COUNT, 0) ?: 0
+        val requiresMic = intent?.getBooleanExtra(EXTRA_REQUIRES_MICROPHONE, false) ?: false
+        return (0 until count).map { index ->
+            StreamingLease(
+                id = "legacy-$index",
+                kind = if (requiresMic) StreamingLease.KIND_VOICE else StreamingLease.KIND_CHAT,
+                requiresMicrophone = requiresMic,
+            )
+        }
     }
 
     private fun startForegroundInternal(notification: Notification, type: Int): Boolean {
@@ -214,20 +272,25 @@ class BackgroundStreamingService : Service() {
         sendBroadcast(intent)
     }
 
-    private fun updateForegroundType(notification: Notification, type: Int) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
-        try {
+    private fun updateForegroundType(notification: Notification, type: Int): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true
+        return try {
             startForeground(NOTIFICATION_ID, notification, type)
             currentForegroundType = type
-        } catch (e: SecurityException) {
+            true
+        } catch (e: Exception) {
             println("BackgroundStreamingService: Unable to update foreground type: ${e.message}")
+            sendFailureNotification(e)
+            false
         }
     }
 
     private fun resolveForegroundServiceType(intent: Intent?): Int {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0
 
-        val requiresMicrophone = intent?.getBooleanExtra(EXTRA_REQUIRES_MICROPHONE, false) ?: false
+        val requiresMicrophone =
+            activeLeases.any { it.requiresMicrophone || it.isVoice } ||
+                (intent?.getBooleanExtra(EXTRA_REQUIRES_MICROPHONE, false) ?: false)
         if (requiresMicrophone) {
             if (hasRecordAudioPermission()) {
                 return ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
@@ -266,9 +329,9 @@ class BackgroundStreamingService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("众小智AI")
             .setContentText("Background service active")
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_hub)
             .setContentIntent(pendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .setOngoing(true)
@@ -287,7 +350,7 @@ class BackgroundStreamingService : Service() {
         val channel = NotificationChannel(
             CHANNEL_ID,
             "Background Service",
-            NotificationManager.IMPORTANCE_MIN,
+            NotificationManager.IMPORTANCE_LOW,
         ).apply {
             description = "Background service for 众小智AI"
             setShowBadge(false)
@@ -303,23 +366,31 @@ class BackgroundStreamingService : Service() {
     private val wakeLockHandler = Handler(Looper.getMainLooper())
     private var wakeLockTimeoutRunnable: Runnable? = null
     
-    /**
-     * Acquires a wake lock to prevent CPU sleep during active streaming.
-     * 
-     * Timeout is set to 7 minutes (420 seconds) to cover the 5-minute keepAlive
-     * interval with a 2-minute buffer. This ensures continuous wake lock coverage
-     * even if the keepAlive timer drifts or is delayed by CPU throttling.
-     * 
-     * Note: Android Play Console may flag wake locks > 1 minute as "excessive",
-     * but continuous CPU availability is required for reliable streaming.
-     * The alternative (60-second timeout with 5-minute refresh) creates 4-minute
-     * gaps where the CPU can sleep, causing streams to stall.
-     * 
-     * Uses setReferenceCounted(false) for deterministic single-holder semantics,
-     * with manual timeout handling via Handler to ensure proper cleanup.
-     */
-    private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
+    private fun updateWakeLock() {
+        if (activeLeases.isEmpty()) {
+            releaseWakeLock()
+            return
+        }
+
+        val timeoutMs = when {
+            activeLeases.any { it.isVoice || it.requiresMicrophone } -> 7 * 60 * 1000L
+            activeLeases.any { !it.isSocket } -> 7 * 60 * 1000L
+            else -> 0L
+        }
+
+        if (timeoutMs <= 0L) {
+            releaseWakeLock()
+            return
+        }
+
+        acquireWakeLock(timeoutMs)
+    }
+
+    private fun acquireWakeLock(timeoutMs: Long) {
+        if (wakeLock?.isHeld == true) {
+            scheduleWakeLockTimeout(timeoutMs)
+            return
+        }
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(
@@ -331,17 +402,18 @@ class BackgroundStreamingService : Service() {
             setReferenceCounted(false)
             acquire()
         }
-        
-        // Schedule manual timeout release (7 minutes)
-        // This replaces the acquire(timeout) approach which conflicts with setReferenceCounted(false)
+
+        scheduleWakeLockTimeout(timeoutMs)
+        println("BackgroundStreamingService: Wake lock acquired (${timeoutMs / 1000}s timeout)")
+    }
+
+    private fun scheduleWakeLockTimeout(timeoutMs: Long) {
         wakeLockTimeoutRunnable?.let { wakeLockHandler.removeCallbacks(it) }
         wakeLockTimeoutRunnable = Runnable {
             println("BackgroundStreamingService: Wake lock timeout reached, releasing")
             releaseWakeLock()
         }
-        wakeLockHandler.postDelayed(wakeLockTimeoutRunnable!!, 7 * 60 * 1000L)
-        
-        println("BackgroundStreamingService: Wake lock acquired (7min manual timeout)")
+        wakeLockHandler.postDelayed(wakeLockTimeoutRunnable!!, timeoutMs)
     }
     
     private fun releaseWakeLock() {
@@ -381,26 +453,21 @@ class BackgroundStreamingService : Service() {
             }
         }
         
-        // activeStreamCount reflects user-visible streams (excludes socket-keepalive)
-        if (activeStreamCount > 0) {
-            // Refresh wake lock to maintain CPU availability for actual streaming.
-            // Wake lock has 7-minute timeout, keepAlive is called every 5 minutes,
-            // ensuring continuous coverage with 2-minute overlap buffer.
-            // Note: Foreground services prevent process termination but NOT CPU sleep.
-            releaseWakeLock()
-            acquireWakeLock()
-            println("BackgroundStreamingService: Keep alive - wake lock refreshed, ${activeStreamCount} active streams")
+        if (activeLeases.isNotEmpty()) {
+            updateWakeLock()
+            println(
+                "BackgroundStreamingService: Keep alive - " +
+                    "${activeLeases.size} active leases",
+            )
         } else {
-            // No active streams - just socket keepalive running.
-            // Foreground service keeps app alive; no wakelock needed.
             releaseWakeLock()
-            println("BackgroundStreamingService: Keep alive (background task, no wakelock)")
+            println("BackgroundStreamingService: Keep alive without active leases")
         }
     }
     
     private fun stopStreaming() {
         println("BackgroundStreamingService: Stopping service...")
-        activeStreamCount = 0
+        activeLeases = emptyList()
         releaseWakeLock()
         
         if (isForeground) {
@@ -442,7 +509,7 @@ class BackgroundStreamingService : Service() {
             }
         }
         releaseWakeLock()
-        activeStreamCount = 0
+        activeLeases = emptyList()
         isForeground = false
         foregroundStartTime = 0
         super.onDestroy()
@@ -456,12 +523,40 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
     private lateinit var channel: MethodChannel
     private lateinit var context: Context
 
-    private val activeStreams = mutableSetOf<String>()
-    private val streamsRequiringMic = mutableSetOf<String>()
+    private val activeLeases = linkedMapOf<String, StreamingLease>()
     private var backgroundJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var broadcastReceiver: android.content.BroadcastReceiver? = null
     private var receiverRegistered = false
+    private var isActivityForeground = true
+    private var isServiceRequested = false
+    private var lifecycleObserverRegistered = false
+    private val activityLifecycleObserver = object : DefaultLifecycleObserver {
+        override fun onResume(owner: LifecycleOwner) {
+            isActivityForeground = true
+
+            // Foreground services are only needed once the activity is leaving
+            // the foreground. Stop the service when the UI returns so active
+            // streams can continue without a persistent notification.
+            if (activeLeases.isNotEmpty()) {
+                stopForegroundService()
+            }
+        }
+
+        override fun onPause(owner: LifecycleOwner) {
+            // Ignore configuration changes to avoid foreground-service churn
+            // during rotations and other activity recreation events.
+            if (activity.isChangingConfigurations) {
+                return
+            }
+
+            isActivityForeground = false
+
+            if (activeLeases.isNotEmpty() && !isServiceRequested) {
+                startForegroundService()
+            }
+        }
+    }
     
     companion object {
         private const val CHANNEL_NAME = "conduit/background_streaming"
@@ -471,9 +566,14 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_NAME)
         channel.setMethodCallHandler(this)
         context = activity.applicationContext
-        
+        isActivityForeground = !activity.isFinishing
+
         createNotificationChannel()
         setupBroadcastReceiver()
+        if (!lifecycleObserverRegistered) {
+            activity.lifecycle.addObserver(activityLifecycleObserver)
+            lifecycleObserverRegistered = true
+        }
     }
     
     private fun hasNotificationPermission(): Boolean {
@@ -500,12 +600,12 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
                         channel.invokeMethod("serviceFailed", mapOf(
                             "error" to error,
                             "errorType" to errorType,
-                            "streamIds" to activeStreams.toList()
+                            "streamIds" to activeLeases.keys.toList()
                         ))
                         
                         // Clear active streams since service failed
-                        activeStreams.clear()
-                        streamsRequiringMic.clear()
+                        activeLeases.clear()
+                        isServiceRequested = false
                     }
                     
                     BackgroundStreamingService.ACTION_TIME_LIMIT_APPROACHING -> {
@@ -550,8 +650,20 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
                 val streamIds = call.argument<List<String>>("streamIds")
                 val requiresMic = call.argument<Boolean>("requiresMicrophone") ?: false
                 if (streamIds != null) {
-                    startBackgroundExecution(streamIds, requiresMic)
-                    result.success(null)
+                    val leases = parseMethodLeases(
+                        call.argument<List<Any>>("leases"),
+                        streamIds,
+                        requiresMic,
+                    )
+                    if (startBackgroundExecution(leases)) {
+                        result.success(null)
+                    } else {
+                        result.error(
+                            "SERVICE_START_FAILED",
+                            "Unable to start Android background streaming service",
+                            null,
+                        )
+                    }
                 } else {
                     result.error("INVALID_ARGS", "Stream IDs required", null)
                 }
@@ -568,8 +680,7 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
             }
             
             "keepAlive" -> {
-                val streamCount = call.argument<Int>("streamCount")
-                keepAlive(streamCount)
+                keepAlive()
                 result.success(null)
             }
             
@@ -579,12 +690,16 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
             
             "getActiveStreamCount" -> {
                 // Return count for Flutter-native state reconciliation
-                result.success(activeStreams.size)
+                result.success(activeLeases.size)
+            }
+
+            "getActiveStreamLeases" -> {
+                result.success(activeLeases.values.map { it.toPlatformMap() })
             }
             
             "stopAllBackgroundExecution" -> {
                 // Stop all streams (used for reconciliation when orphaned service detected)
-                val allStreams = activeStreams.toList()
+                val allStreams = activeLeases.keys.toList()
                 stopBackgroundExecution(allStreams)
                 result.success(null)
             }
@@ -595,40 +710,81 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
         }
     }
 
-    private fun startBackgroundExecution(streamIds: List<String>, requiresMic: Boolean) {
-        activeStreams.addAll(streamIds)
-        streamsRequiringMic.retainAll(activeStreams)
-        if (requiresMic) {
-            streamsRequiringMic.addAll(streamIds)
+    private fun startBackgroundExecution(leases: List<StreamingLease>): Boolean {
+        for (lease in leases) {
+            activeLeases[lease.id] = lease
         }
 
-        if (activeStreams.isNotEmpty()) {
-            startForegroundService()
+        if (activeLeases.isNotEmpty()) {
+            if (isActivityForeground) {
+                if (activeLeases.values.any { it.isVoice || it.requiresMicrophone }) {
+                    if (!startForegroundService()) {
+                        return false
+                    }
+                }
+                startBackgroundMonitoring()
+                return true
+            }
+            if (!startForegroundService()) {
+                return false
+            }
             startBackgroundMonitoring()
         }
+        return true
     }
 
     private fun stopBackgroundExecution(streamIds: List<String>) {
-        activeStreams.removeAll(streamIds.toSet())
-        streamsRequiringMic.removeAll(streamIds.toSet())
+        for (streamId in streamIds) {
+            activeLeases.remove(streamId)
+        }
 
-        if (activeStreams.isEmpty()) {
+        if (activeLeases.isEmpty()) {
             stopForegroundService()
             stopBackgroundMonitoring()
+        } else if (isServiceRequested) {
+            updateForegroundServiceLeases()
         }
     }
 
-    private fun startForegroundService() {
+    private fun parseMethodLeases(
+        rawLeases: List<Any>?,
+        streamIds: List<String>,
+        requiresMic: Boolean,
+    ): List<StreamingLease> {
+        if (!rawLeases.isNullOrEmpty()) {
+            return rawLeases.mapNotNull { raw ->
+                val map = raw as? Map<*, *> ?: return@mapNotNull null
+                val id = map["id"] as? String ?: return@mapNotNull null
+                if (id == StreamingLease.SOCKET_KEEPALIVE_ID) {
+                    return@mapNotNull null
+                }
+                StreamingLease(
+                    id = id,
+                    kind = map["kind"] as? String ?: StreamingLease.KIND_CHAT,
+                    requiresMicrophone = map["requiresMicrophone"] as? Boolean ?: false,
+                )
+            }
+        }
+
+        return streamIds
+            .filter { it != StreamingLease.SOCKET_KEEPALIVE_ID }
+            .map { id ->
+                StreamingLease(
+                    id = id,
+                    kind = if (requiresMic) {
+                        StreamingLease.KIND_VOICE
+                    } else {
+                        StreamingLease.KIND_CHAT
+                    },
+                    requiresMicrophone = requiresMic,
+                )
+            }
+    }
+
+    private fun startForegroundService(): Boolean {
         try {
             val serviceIntent = Intent(context, BackgroundStreamingService::class.java)
-            serviceIntent.putExtra(
-                BackgroundStreamingService.EXTRA_STREAM_COUNT,
-                activeStreams.size,
-            )
-            serviceIntent.putExtra(
-                BackgroundStreamingService.EXTRA_REQUIRES_MICROPHONE,
-                streamsRequiringMic.isNotEmpty(),
-            )
+            putLeases(serviceIntent)
             serviceIntent.action = BackgroundStreamingService.ACTION_START
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -636,11 +792,15 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
             } else {
                 context.startService(serviceIntent)
             }
+            isServiceRequested = true
+            return true
         } catch (e: Exception) {
             println("BackgroundStreamingHandler: Failed to start foreground service: ${e.message}")
-            // Clear active streams as we couldn't start the service
-            activeStreams.clear()
-            streamsRequiringMic.clear()
+            notifyServiceFailure(e)
+            activeLeases.clear()
+            isServiceRequested = false
+            stopBackgroundMonitoring()
+            return false
         }
     }
 
@@ -649,15 +809,59 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
             val serviceIntent = Intent(context, BackgroundStreamingService::class.java)
             serviceIntent.action = BackgroundStreamingService.ACTION_STOP
             context.stopService(serviceIntent)
+            isServiceRequested = false
         } catch (e: Exception) {
             println("BackgroundStreamingHandler: Failed to stop foreground service: ${e.message}")
         }
     }
 
+    private fun updateForegroundServiceLeases() {
+        try {
+            val serviceIntent = Intent(context, BackgroundStreamingService::class.java)
+            serviceIntent.action = "KEEP_ALIVE"
+            putLeases(serviceIntent)
+            context.startService(serviceIntent)
+        } catch (e: Exception) {
+            println("BackgroundStreamingHandler: Failed to update foreground service leases: ${e.message}")
+        }
+    }
+
+    private fun putLeases(intent: Intent) {
+        val leases = activeLeases.values.toList()
+        intent.putStringArrayListExtra(
+            BackgroundStreamingService.EXTRA_LEASE_IDS,
+            ArrayList(leases.map { it.id }),
+        )
+        intent.putStringArrayListExtra(
+            BackgroundStreamingService.EXTRA_LEASE_KINDS,
+            ArrayList(leases.map { it.kind }),
+        )
+        intent.putStringArrayListExtra(
+            BackgroundStreamingService.EXTRA_MIC_LEASE_IDS,
+            ArrayList(leases.filter { it.requiresMicrophone }.map { it.id }),
+        )
+        intent.putExtra(
+            BackgroundStreamingService.EXTRA_STREAM_COUNT,
+            leases.size,
+        )
+        intent.putExtra(
+            BackgroundStreamingService.EXTRA_REQUIRES_MICROPHONE,
+            leases.any { it.requiresMicrophone || it.isVoice },
+        )
+    }
+
+    private fun notifyServiceFailure(e: Exception) {
+        channel.invokeMethod("serviceFailed", mapOf(
+            "error" to (e.message ?: "Unknown error"),
+            "errorType" to e.javaClass.simpleName,
+            "streamIds" to activeLeases.keys.toList(),
+        ))
+    }
+
     private fun startBackgroundMonitoring() {
         backgroundJob?.cancel()
         backgroundJob = scope.launch {
-            while (activeStreams.isNotEmpty()) {
+            while (activeLeases.isNotEmpty()) {
                 // Check every 5 minutes - matches Flutter keepAlive interval.
                 // This is a safety mechanism to clean up if Flutter fails to
                 // call stopBackgroundExecution (e.g., crash recovery).
@@ -669,8 +873,10 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
                         when (result) {
                             is Int -> {
                                 if (result == 0) {
-                                    activeStreams.clear()
+                                    activeLeases.clear()
                                     stopForegroundService()
+                                } else if (!isActivityForeground && isServiceRequested) {
+                                    keepAlive()
                                 }
                             }
                         }
@@ -693,32 +899,31 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
         backgroundJob = null
     }
 
-    private fun keepAlive(userVisibleStreamCount: Int? = null) {
-        // Check local activeStreams to decide if service should run
-        // (includes socket-keepalive and other background tasks)
-        if (activeStreams.isEmpty()) {
+    private fun keepAlive() {
+        if (activeLeases.isEmpty()) {
             stopForegroundService()
             return
         }
+
+        // Keep-alive is only meaningful once the activity has actually moved
+        // to the background. While foregrounded, track streams locally and let
+        // normal in-app execution continue without a foreground service.
+        if (isActivityForeground) {
+            return
+        }
         
-        // Use Flutter's user-visible stream count for logging (excludes socket-keepalive)
-        // Fall back to local count if not provided
-        val streamCount = userVisibleStreamCount ?: activeStreams.size
+        if (!isServiceRequested) {
+            println("BackgroundStreamingHandler: Keep alive ignored; service is not running")
+            return
+        }
         
         try {
             val serviceIntent = Intent(context, BackgroundStreamingService::class.java)
             serviceIntent.action = "KEEP_ALIVE"
-            serviceIntent.putExtra(
-                BackgroundStreamingService.EXTRA_STREAM_COUNT,
-                streamCount,
-            )
-            serviceIntent.putExtra(
-                BackgroundStreamingService.EXTRA_REQUIRES_MICROPHONE,
-                streamsRequiringMic.isNotEmpty(),
-            )
+            putLeases(serviceIntent)
             
-            // Use startService (not startForegroundService) for keep-alive pings
-            // to avoid ForegroundServiceStartNotAllowedException on Android 14+
+            // Only update an already requested service. Starting a new service
+            // from a background keep-alive path can crash on Android O+.
             context.startService(serviceIntent)
         } catch (e: Exception) {
             println("BackgroundStreamingHandler: Failed to keep alive service: ${e.message}")
@@ -730,7 +935,25 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
             val name = "Background Service"
             val descriptionText = "Background service for 众小智AI"
             val importance = NotificationManager.IMPORTANCE_MIN
-            val channel = NotificationChannel(BackgroundStreamingService.CHANNEL_ID, name, importance).apply {
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val existingChannel = notificationManager.getNotificationChannel(
+                BackgroundStreamingService.CHANNEL_ID
+            )
+
+            if (existingChannel != null && existingChannel.importance == importance) {
+                return
+            }
+
+            // Preserve user customizations: don't override an existing channel.
+            if (existingChannel != null) {
+                return
+            }
+
+            val channel = NotificationChannel(
+                BackgroundStreamingService.CHANNEL_ID,
+                name,
+                importance,
+            ).apply {
                 description = descriptionText
                 setShowBadge(false)
                 enableLights(false)
@@ -739,7 +962,6 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
                 lockscreenVisibility = Notification.VISIBILITY_SECRET
             }
 
-            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.createNotificationChannel(channel)
         }
     }
@@ -748,6 +970,10 @@ class BackgroundStreamingHandler(private val activity: MainActivity) : MethodCal
         scope.cancel()
         stopBackgroundMonitoring()
         stopForegroundService()
+        if (lifecycleObserverRegistered) {
+            activity.lifecycle.removeObserver(activityLifecycleObserver)
+            lifecycleObserverRegistered = false
+        }
         
         // Unregister broadcast receiver
         if (receiverRegistered) {

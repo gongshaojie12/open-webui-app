@@ -6,6 +6,7 @@ import 'api_error.dart';
 import 'api_error_handler.dart';
 import 'api_error_interceptor.dart';
 import '../../shared/theme/theme_extensions.dart';
+import '../../shared/widgets/themed_dialogs.dart';
 import 'package:conduit/l10n/app_localizations.dart';
 import '../utils/debug_logger.dart';
 
@@ -102,13 +103,12 @@ class EnhancedErrorService {
     final isRetryableError = isRetryable(error);
     final retryDelay = getRetryDelay(error);
 
-    final String? actionLabel =
-        isRetryableError && onRetry != null
-            ? (retryDelay != null && retryDelay.inSeconds > 5
-                ? '${AppLocalizations.of(context)!.retry}'
+    final String? actionLabel = isRetryableError && onRetry != null
+        ? (retryDelay != null && retryDelay.inSeconds > 5
+              ? '${AppLocalizations.of(context)!.retry}'
                     ' (${retryDelay.inSeconds}s)'
-                : AppLocalizations.of(context)!.retry)
-            : null;
+              : AppLocalizations.of(context)!.retry)
+        : null;
 
     AdaptiveSnackBar.show(
       context,
@@ -133,7 +133,7 @@ class EnhancedErrorService {
     final technicalDetails = getTechnicalDetails(error);
     final isRetryableError = isRetryable(error);
 
-    return showDialog<void>(
+    return ThemedDialogs.showCustom<void>(
       context: context,
       barrierDismissible: true,
       builder: (BuildContext context) {
@@ -150,12 +150,17 @@ class EnhancedErrorService {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(message, style: TextStyle(color: theme.textPrimary)),
+              Text(
+                message,
+                style: AppTypography.bodyMediumStyle.copyWith(
+                  color: theme.textPrimary,
+                ),
+              ),
               if (showTechnicalDetails) ...[
                 const SizedBox(height: Spacing.md),
                 Text(
                   'Technical Details:',
-                  style: TextStyle(
+                  style: AppTypography.labelStyle.copyWith(
                     fontWeight: FontWeight.bold,
                     color: theme.textPrimary,
                   ),
@@ -169,9 +174,8 @@ class EnhancedErrorService {
                   ),
                   child: Text(
                     technicalDetails,
-                    style: TextStyle(
+                    style: AppTypography.labelMediumStyle.copyWith(
                       fontFamily: AppTypography.monospaceFontFamily,
-                      fontSize: AppTypography.labelMedium,
                       color: theme.textSecondary,
                     ),
                   ),
@@ -229,8 +233,7 @@ class EnhancedErrorService {
           const SizedBox(height: Spacing.md),
           Text(
             _getErrorTitle(error),
-            style: const TextStyle(
-              fontSize: AppTypography.headlineSmall,
+            style: AppTypography.headlineSmallStyle.copyWith(
               fontWeight: FontWeight.bold,
             ),
             textAlign: TextAlign.center,
@@ -239,7 +242,9 @@ class EnhancedErrorService {
           Text(
             message,
             textAlign: TextAlign.center,
-            style: TextStyle(color: theme.textSecondary),
+            style: AppTypography.bodyMediumStyle.copyWith(
+              color: theme.textSecondary,
+            ),
           ),
           if (showTechnicalDetails) ...[
             const SizedBox(height: Spacing.md),
@@ -251,9 +256,8 @@ class EnhancedErrorService {
               ),
               child: Text(
                 technicalDetails,
-                style: TextStyle(
+                style: AppTypography.labelMediumStyle.copyWith(
                   fontFamily: AppTypography.monospaceFontFamily,
-                  fontSize: AppTypography.labelMedium,
                   color: theme.textSecondary,
                 ),
               ),

@@ -37,39 +37,32 @@ class AppTheme {
     final tokens = brightness == Brightness.dark
         ? AppColorTokens.dark(theme: theme)
         : AppColorTokens.light(theme: theme);
-    return CupertinoThemeData(
+    return _buildCupertinoThemeData(
       brightness: brightness,
-      primaryColor: variant.primary,
-      scaffoldBackgroundColor: tokens.neutralTone10,
-      barBackgroundColor: tokens.neutralTone10,
+      variant: variant,
+      tokens: tokens,
     );
   }
 
   /// Builds a [CupertinoThemeData] for light mode.
-  static CupertinoThemeData cupertinoLight(
-    TweakcnThemeDefinition theme,
-  ) {
+  static CupertinoThemeData cupertinoLight(TweakcnThemeDefinition theme) {
     final variant = theme.variantFor(Brightness.light);
     final tokens = AppColorTokens.light(theme: theme);
-    return CupertinoThemeData(
+    return _buildCupertinoThemeData(
       brightness: Brightness.light,
-      primaryColor: variant.primary,
-      scaffoldBackgroundColor: tokens.neutralTone10,
-      barBackgroundColor: tokens.neutralTone10,
+      variant: variant,
+      tokens: tokens,
     );
   }
 
   /// Builds a [CupertinoThemeData] for dark mode.
-  static CupertinoThemeData cupertinoDark(
-    TweakcnThemeDefinition theme,
-  ) {
+  static CupertinoThemeData cupertinoDark(TweakcnThemeDefinition theme) {
     final variant = theme.variantFor(Brightness.dark);
     final tokens = AppColorTokens.dark(theme: theme);
-    return CupertinoThemeData(
+    return _buildCupertinoThemeData(
       brightness: Brightness.dark,
-      primaryColor: variant.primary,
-      scaffoldBackgroundColor: tokens.neutralTone10,
-      barBackgroundColor: tokens.neutralTone10,
+      variant: variant,
+      tokens: tokens,
     );
   }
 
@@ -114,17 +107,21 @@ class AppTheme {
       ),
     );
 
-    final TextTheme baseTextTheme = brightness == Brightness.dark
-        ? ThemeData.dark().textTheme
-        : ThemeData.light().textTheme;
-    final TextTheme textTheme = baseTextTheme.apply(
-      fontFamily: typography.primaryFont.isEmpty
-          ? null
-          : typography.primaryFont,
-      fontFamilyFallback: typography.primaryFallback.isEmpty
-          ? null
-          : typography.primaryFallback,
+    final TextTheme textTheme = _buildTextTheme(tokens: tokens, isDark: isDark)
+        .apply(
+          fontFamily: typography.primaryFont.isEmpty
+              ? null
+              : typography.primaryFont,
+          fontFamilyFallback: typography.primaryFallback.isEmpty
+              ? null
+              : typography.primaryFallback,
+        );
+    final cupertinoOverrideTheme = _buildCupertinoThemeData(
+      brightness: brightness,
+      variant: variant,
+      tokens: tokens,
     );
+    final textInputAccentColor = _platformTextInputAccentColor(variant);
 
     return ThemeData(
       useMaterial3: true,
@@ -138,6 +135,7 @@ class AppTheme {
       colorScheme: colorScheme,
       scaffoldBackgroundColor: surfaces.background,
       canvasColor: surfaces.background,
+      cupertinoOverrideTheme: cupertinoOverrideTheme,
       pageTransitionsTheme: _pageTransitionsTheme,
       splashFactory: NoSplash.splashFactory,
       appBarTheme: AppBarTheme(
@@ -189,7 +187,9 @@ class AppTheme {
           shadows.shadowXs.first.color,
           conduitExtension.inputBackground,
         ),
-        hintStyle: TextStyle(color: conduitExtension.inputPlaceholder),
+        hintStyle: textTheme.bodyMedium?.copyWith(
+          color: conduitExtension.inputPlaceholder,
+        ),
         border: baseInputBorder,
         enabledBorder: baseInputBorder,
         focusedBorder: baseInputBorder.copyWith(
@@ -198,16 +198,16 @@ class AppTheme {
         errorBorder: baseInputBorder.copyWith(
           borderSide: BorderSide(color: tokens.statusError60, width: 1),
         ),
-        contentPadding: const EdgeInsets.symmetric(
+        contentPadding: EdgeInsets.symmetric(
           horizontal: Spacing.inputPadding,
-          vertical: Spacing.md,
+          vertical: AppTypography.inputVerticalPadding,
         ),
       ),
       chipTheme: ChipThemeData(
         shape: RoundedRectangleBorder(borderRadius: shapes.medium),
-        padding: const EdgeInsets.symmetric(
-          horizontal: Spacing.sm,
-          vertical: Spacing.xs,
+        padding: EdgeInsets.symmetric(
+          horizontal: AppTypography.chipHorizontalPadding,
+          vertical: AppTypography.chipVerticalPadding,
         ),
         backgroundColor: Color.lerp(surfaces.card, surfaces.muted, 0.4)!,
         disabledColor: Color.alphaBlend(
@@ -230,12 +230,12 @@ class AppTheme {
       badgeTheme: BadgeThemeData(
         backgroundColor: conduitExtension.statusPalette.info.base,
         textColor: conduitExtension.statusPalette.info.onBase,
-        padding: const EdgeInsets.symmetric(
-          horizontal: Spacing.xs,
-          vertical: Spacing.xxs,
+        padding: EdgeInsets.symmetric(
+          horizontal: AppTypography.badgeHorizontalPadding,
+          vertical: AppTypography.badgeVerticalPadding,
         ),
-        largeSize: 24,
-        smallSize: 18,
+        largeSize: AppTypography.badgeLargeSize,
+        smallSize: AppTypography.badgeSmallSize,
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: surfaces.popover,
@@ -286,14 +286,12 @@ class AppTheme {
       textSelectionTheme: TextSelectionThemeData(
         // Use the platform-native selection tint: iOS/macOS use system blue
         // at ~15% opacity; other platforms use the theme primary at 20%.
+        cursorColor: textInputAccentColor,
         selectionColor: switch (defaultTargetPlatform) {
-          TargetPlatform.iOS ||
-          TargetPlatform.macOS =>
-            const Color(0x26007AFF),
+          TargetPlatform.iOS || TargetPlatform.macOS => const Color(0x26007AFF),
           _ => variant.primary.withValues(alpha: 0.2),
         },
-        cursorColor: variant.primary,
-        selectionHandleColor: variant.primary,
+        selectionHandleColor: textInputAccentColor,
       ),
       extensions: <ThemeExtension<dynamic>>[
         tokens,
@@ -316,6 +314,68 @@ class AppTheme {
         : tokens.neutralOnSurface;
   }
 
+  static TextTheme _buildTextTheme({
+    required AppColorTokens tokens,
+    required bool isDark,
+  }) {
+    final primary = tokens.neutralOnSurface;
+    final secondary = isDark ? tokens.neutralTone80 : tokens.neutralTone60;
+    final tertiary = tokens.neutralTone60;
+    return AppTypography.textTheme(
+      primary: primary,
+      secondary: secondary,
+      tertiary: tertiary,
+    );
+  }
+
+  static CupertinoThemeData _buildCupertinoThemeData({
+    required Brightness brightness,
+    required TweakcnThemeVariant variant,
+    required AppColorTokens tokens,
+  }) {
+    final isDark = brightness == Brightness.dark;
+    final primaryText = tokens.neutralOnSurface;
+    final secondaryText = isDark ? tokens.neutralTone80 : tokens.neutralTone60;
+    final actionColor = variant.primary;
+
+    return CupertinoThemeData(
+      brightness: brightness,
+      primaryColor: actionColor,
+      scaffoldBackgroundColor: tokens.neutralTone10,
+      barBackgroundColor: tokens.neutralTone10,
+      textTheme: CupertinoTextThemeData(
+        textStyle: AppTypography.bodyLargeStyle.copyWith(color: primaryText),
+        actionTextStyle: AppTypography.bodyLargeStyle.copyWith(
+          color: actionColor,
+        ),
+        actionSmallTextStyle: AppTypography.bodyMediumStyle.copyWith(
+          color: actionColor,
+        ),
+        tabLabelTextStyle: AppTypography.micro.copyWith(color: secondaryText),
+        navTitleTextStyle: AppTypography.titleLargeStyle.copyWith(
+          color: primaryText,
+        ),
+        navLargeTitleTextStyle: AppTypography.displayLargeStyle.copyWith(
+          color: primaryText,
+        ),
+        navActionTextStyle: AppTypography.bodyLargeStyle.copyWith(
+          color: actionColor,
+        ),
+        pickerTextStyle: AppTypography.extraLarge.copyWith(color: primaryText),
+        dateTimePickerTextStyle: AppTypography.extraLarge.copyWith(
+          color: primaryText,
+        ),
+      ),
+    );
+  }
+
+  static Color _platformTextInputAccentColor(TweakcnThemeVariant variant) {
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.iOS || TargetPlatform.macOS => const Color(0xFF007AFF),
+      _ => variant.primary,
+    };
+  }
+
   static double _contrastRatio(Color a, Color b) {
     final luminanceA = a.computeLuminance();
     final luminanceB = b.computeLuminance();
@@ -328,9 +388,9 @@ class AppTheme {
       PageTransitionsTheme(
         builders: <TargetPlatform, PageTransitionsBuilder>{
           TargetPlatform.android: ZoomPageTransitionsBuilder(),
-          TargetPlatform.iOS: ZoomPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
           TargetPlatform.linux: ZoomPageTransitionsBuilder(),
-          TargetPlatform.macOS: ZoomPageTransitionsBuilder(),
+          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
           TargetPlatform.windows: ZoomPageTransitionsBuilder(),
         },
       );

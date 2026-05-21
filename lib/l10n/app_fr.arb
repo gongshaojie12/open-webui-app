@@ -27,9 +27,11 @@
   "autoSelect": "Fourni par le serveur",
   "loadingModels": "Chargement des modèles...",
   "failedToLoadModels": "Échec du chargement des modèles",
+  "failedToLoadFiles": "Échec du chargement des fichiers",
   "availableModels": "Modèles disponibles",
   "noResults": "Aucun résultat",
   "searchModels": "Rechercher des modèles...",
+  "searchFiles": "Rechercher des fichiers...",
   "errorMessage": "Une erreur s'est produite. Veuillez réessayer.",
   "closeButtonSemantic": "Fermer",
   "loadingContent": "Chargement du contenu",
@@ -37,13 +39,14 @@
   "noItemsToDisplay": "Aucun élément à afficher",
   "knowledgeBase": "Base de connaissances",
   "attachments": "Pièces jointes",
+  "files": "Fichiers",
   "takePhoto": "Prendre une photo",
   "document": "Document",
   "backToServerSetup": "Retour à la configuration du serveur",
   "connectedToServer": "Connecté au serveur",
   "signIn": "Se connecter",
   "enterCredentials": "Entrez vos identifiants pour accéder à vos conversations IA",
-  "credentials": "E-mail",
+  "credentials": "Identifiants",
   "apiKey": "Clé API",
   "token": "Jeton",
   "usernameOrEmail": "Nom d'utilisateur ou e‑mail",
@@ -85,6 +88,9 @@
   "genericSignInFailed": "Connexion impossible. Vérifiez vos identifiants et le serveur.",
   "attachmentLabel": "Pièce jointe",
   "tools": "Outils",
+  "toolServer": "Serveur d'outils",
+  "toolServers": "Serveurs d'outils",
+  "terminal": "Terminal",
   "filters": "Filtres",
   "voiceInput": "Entrée vocale",
   "voice": "Voix",
@@ -162,6 +168,7 @@
   "chineseSimplified": "Chinois (simplifié)",
   "chineseTraditional": "Chinois (traditionnel)",
   "korean": "Coréen",
+  "japanese": "日本語",
   "deleteMessagesTitle": "Supprimer les messages",
   "deleteMessagesMessage": "Supprimer {count} messages ?",
   "@deleteMessagesMessage": {
@@ -296,7 +303,7 @@
     "placeholders": {
       "duration": {
         "type": "String",
-        "example": "3 s"
+        "example": "3s"
       }
     }
   },
@@ -310,11 +317,11 @@
   "sendOnEnterDescription": "Entrée envoie (clavier logiciel). Cmd/Ctrl+Entrée aussi disponible",
   "disableHapticsWhileStreaming": "Désactiver les retours haptiques pendant le streaming",
   "disableHapticsWhileStreamingDescription": "Coupe les retours haptiques des réponses en direct sans affecter le reste de l’app",
-  "androidAssistantTitle": "Android digital assistant",
-  "androidAssistantDescription": "Choose what happens when you trigger the Android digital assistant.",
-  "androidAssistantOverlayOption": "Show quick overlay (default)",
-  "androidAssistantNewChatOption": "Open 众小智AI with a new chat",
-  "androidAssistantVoiceCallOption": "Start a voice call",
+  "androidAssistantTitle": "Assistant numérique Android",
+  "androidAssistantDescription": "Choisissez ce qui se passe lorsque vous déclenchez l’assistant numérique Android.",
+  "androidAssistantOverlayOption": "Afficher la superposition rapide (par défaut)",
+  "androidAssistantNewChatOption": "Ouvrir 众小智AI avec un nouveau chat",
+  "androidAssistantVoiceCallOption": "Démarrer un appel vocal",
   "sttSettings": "Voix vers texte",
   "sttEngineLabel": "Moteur de reconnaissance",
   "sttEngineDevice": "Sur l’appareil",
@@ -762,7 +769,8 @@
   "@deleteNoteMessage": {
     "placeholders": {
       "title": {
-        "type": "String"
+        "type": "String",
+        "example": "My Note"
       }
     }
   },
@@ -795,7 +803,8 @@
   "@wordCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "150"
       }
     }
   },
@@ -803,7 +812,8 @@
   "@charCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "500"
       }
     }
   },
@@ -813,7 +823,8 @@
   "@promptVariableNumberMin": {
     "placeholders": {
       "min": {
-        "type": "double"
+        "type": "double",
+        "example": "0"
       }
     }
   },
@@ -821,7 +832,8 @@
   "@promptVariableNumberMax": {
     "placeholders": {
       "max": {
-        "type": "double"
+        "type": "double",
+        "example": "100"
       }
     }
   },
@@ -850,7 +862,8 @@
   "@usageTokensPerSecond": {
     "placeholders": {
       "speed": {
-        "type": "String"
+        "type": "String",
+        "example": "45.2"
       }
     }
   },
@@ -858,7 +871,8 @@
   "@usageTokenCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "128"
       }
     }
   },
@@ -866,7 +880,8 @@
   "@usageSecondsFormat": {
     "placeholders": {
       "seconds": {
-        "type": "String"
+        "type": "String",
+        "example": "2.34"
       }
     }
   },
@@ -917,9 +932,113 @@
   "chatSaved": "Chat enregistré dans l'historique",
   "chatSaveFailed": "Échec de l'enregistrement du chat",
   "sidebarChatsTab": "Discussions",
+  "sidebarTerminalTab": "Terminal",
+  "@sidebarTerminalTab": {
+    "description": "Label for the Terminal tab in the sidebar"
+  },
   "sidebarNotesTab": "Notes",
   "sidebarChannelsTab": "Canaux",
   "closeSidebar": "Fermer la barre latérale",
+  "terminalSelectServer": "Sélectionner un serveur de terminal",
+  "@terminalSelectServer": {
+    "description": "Prompt shown when the user needs to choose a terminal server."
+  },
+  "terminalNoServersConfigured": "Aucun serveur de terminal disponible.",
+  "@terminalNoServersConfigured": {
+    "description": "Empty state shown when there are no terminal servers configured."
+  },
+  "terminalConnectAction": "Se connecter",
+  "@terminalConnectAction": {
+    "description": "Button label used to connect to a terminal session."
+  },
+  "terminalDisconnectAction": "Se déconnecter",
+  "@terminalDisconnectAction": {
+    "description": "Button label used to disconnect from a terminal session."
+  },
+  "terminalConnectedStatus": "Connecté",
+  "@terminalConnectedStatus": {
+    "description": "Status label shown when the terminal is connected."
+  },
+  "terminalDisconnectedStatus": "Déconnecté",
+  "@terminalDisconnectedStatus": {
+    "description": "Status label shown when the terminal is disconnected."
+  },
+  "terminalConnectingStatus": "Connexion...",
+  "@terminalConnectingStatus": {
+    "description": "Status label shown while the terminal connection is being established."
+  },
+  "terminalUploadAction": "Téléverser",
+  "@terminalUploadAction": {
+    "description": "Action label for uploading a file into the terminal workspace."
+  },
+  "terminalOpenInBrowserAction": "Ouvrir dans le navigateur",
+  "@terminalOpenInBrowserAction": {
+    "description": "Action label for opening a forwarded port in the browser."
+  },
+  "terminalHomeAction": "Dossier personnel",
+  "@terminalHomeAction": {
+    "description": "Tooltip for navigating back to the terminal home directory."
+  },
+  "terminalCurrentPathLabel": "Chemin actuel",
+  "@terminalCurrentPathLabel": {
+    "description": "Label displayed above the current terminal working directory."
+  },
+  "terminalPortsSectionLabel": "Ports en écoute",
+  "@terminalPortsSectionLabel": {
+    "description": "Section title for ports discovered in the terminal environment."
+  },
+  "terminalNoFiles": "Aucun fichier dans ce dossier.",
+  "@terminalNoFiles": {
+    "description": "Empty state shown when the current terminal directory has no files."
+  },
+  "terminalNoPorts": "Aucun port en écoute détecté.",
+  "@terminalNoPorts": {
+    "description": "Empty state shown when the terminal server reports no listening ports."
+  },
+  "terminalPreviewUnavailable": "Aperçu indisponible. Utilisez plutôt Télécharger.",
+  "@terminalPreviewUnavailable": {
+    "description": "Message shown when a terminal file cannot be previewed inline."
+  },
+  "terminalFeatureDisabled": "Ce serveur de terminal ne propose pas de shell interactif.",
+  "@terminalFeatureDisabled": {
+    "description": "Message shown when the selected terminal server disables interactive terminal sessions."
+  },
+  "terminalFolderNameHint": "Nom du dossier",
+  "@terminalFolderNameHint": {
+    "description": "Hint text used when creating a new folder in the terminal workspace."
+  },
+  "terminalFailedToLoadFiles": "Impossible de charger les fichiers du terminal.",
+  "@terminalFailedToLoadFiles": {
+    "description": "Error message shown when the terminal file list cannot be loaded."
+  },
+  "terminalFailedToLoadPorts": "Impossible de charger les ports en écoute.",
+  "@terminalFailedToLoadPorts": {
+    "description": "Error message shown when terminal port discovery fails."
+  },
+  "terminalFailedToConnect": "Impossible de se connecter au terminal.",
+  "@terminalFailedToConnect": {
+    "description": "Error message shown when the terminal websocket session cannot be opened."
+  },
+  "terminalDownloadFailed": "Impossible de télécharger le fichier sélectionné.",
+  "@terminalDownloadFailed": {
+    "description": "Error message shown when downloading a terminal file fails."
+  },
+  "terminalUploadFailed": "Impossible de téléverser le fichier sélectionné.",
+  "@terminalUploadFailed": {
+    "description": "Error message shown when uploading a terminal file fails."
+  },
+  "terminalRenameFailed": "Impossible de renommer l’élément sélectionné.",
+  "@terminalRenameFailed": {
+    "description": "Error message shown when renaming a file or folder in the terminal workspace fails."
+  },
+  "terminalDeleteFailed": "Impossible de supprimer l’élément sélectionné.",
+  "@terminalDeleteFailed": {
+    "description": "Error message shown when deleting a file or folder in the terminal workspace fails."
+  },
+  "terminalFolderCreateFailed": "Impossible de créer le dossier.",
+  "@terminalFolderCreateFailed": {
+    "description": "Error message shown when creating a new terminal folder fails."
+  },
   "channelCreateTitle": "Créer un canal",
   "channelName": "Nom du canal",
   "channelDescription": "Description",
@@ -943,5 +1062,718 @@
   "searchChannels": "Rechercher des canaux...",
   "channelCreateError": "Impossible de créer le canal",
   "channelMessageHint": "Message...",
-  "audioUploadError": "Échec de l'envoi de l'audio : {error}"
+  "audioUploadError": "Échec de l'envoi de l'audio : {error}",
+  "shareChat": "Partager le chat",
+  "@shareChat": {
+    "description": "Dialog title and action label for sharing a chat."
+  },
+  "shareChatDescription": "Les messages envoyés après la création du lien ne seront pas partagés. Les personnes disposant de l’URL pourront consulter le chat partagé.",
+  "@shareChatDescription": {
+    "description": "Explains that a shared chat link is a snapshot."
+  },
+  "shareChatExisting": "Vous avez déjà partagé ce chat.",
+  "@shareChatExisting": {
+    "description": "Explains that the chat already has an existing shared link."
+  },
+  "shareChatDeleteLink": "Supprimer ce lien",
+  "@shareChatDeleteLink": {
+    "description": "Action label to delete the current shared chat link."
+  },
+  "shareChatDeleteAndCreate": "et créer un nouveau lien partagé.",
+  "@shareChatDeleteAndCreate": {
+    "description": "Continuation text after the delete shared link action."
+  },
+  "copyLink": "Copier le lien",
+  "@copyLink": {
+    "description": "Button label to copy a newly created shared chat URL."
+  },
+  "updateAndCopyLink": "Mettre à jour et copier le lien",
+  "@updateAndCopyLink": {
+    "description": "Button label to refresh a shared chat snapshot and copy the URL."
+  },
+  "sharedChatCopied": "URL du chat partagé copiée dans le presse-papiers.",
+  "@sharedChatCopied": {
+    "description": "Snackbar shown after copying a shared chat URL."
+  },
+  "shareSystemSheet": "Partager...",
+  "@shareSystemSheet": {
+    "description": "Button label to open the platform share sheet."
+  },
+  "chatShareFailed": "Impossible de partager le chat",
+  "@chatShareFailed": {
+    "description": "Snackbar shown when chat sharing fails."
+  },
+  "sharedLinkDeleted": "Lien du chat partagé supprimé",
+  "@sharedLinkDeleted": {
+    "description": "Snackbar shown after deleting a shared chat link."
+  },
+  "deleteSharedLinkFailed": "Impossible de supprimer le lien partagé",
+  "@deleteSharedLinkFailed": {
+    "description": "Snackbar shown when deleting a shared chat link fails."
+  },
+  "systemPrompts": "Prompts système",
+  "globalSystemPrompt": "Prompt système global",
+  "modelSystemPrompts": "Prompts système des modèles",
+  "folderSystemPrompts": "Prompts système des dossiers",
+  "openWebuiModelSettings": "Paramètres de modèle OpenWebUI",
+  "openWebuiFolderSettings": "Paramètres de dossier OpenWebUI",
+  "accessibleModelsCount": "{count} modèles accessibles",
+  "accessibleFoldersCount": "{count} dossiers accessibles",
+  "unableToLoadOpenWebuiSettings": "Impossible de charger les paramètres OpenWebUI.",
+  "unableToLoadModels": "Impossible de charger les modèles.",
+  "unableToLoadFolders": "Impossible de charger les dossiers.",
+  "noAccessibleModelsFound": "Aucun modèle accessible trouvé.",
+  "noAccessibleFoldersFound": "Aucun dossier accessible trouvé.",
+  "tapToLoadServerPromptSettings": "Touchez pour charger les paramètres de prompt du serveur.",
+  "loadingFromOpenWebui": "Chargement depuis OpenWebUI...",
+  "globalSystemPromptEditorDescription": "Enregistré dans vos paramètres utilisateur OpenWebUI et utilisé comme prompt système par défaut du chat.",
+  "modelNoEditableServerRecord": "Ce modèle n’a aucun enregistrement serveur modifiable.",
+  "modelSystemPromptTitle": "Prompt système de {modelName}",
+  "modelSystemPromptEditorDescription": "Enregistré dans params.system du modèle OpenWebUI.",
+  "modelNoWriteAccessDescription": "Vous n’avez pas d’accès en écriture à ce modèle.",
+  "unableToLoadFolder": "Impossible de charger ce dossier.",
+  "folderSystemPromptTitle": "Prompt système de {folderName}",
+  "folderSystemPromptEditorDescription": "Enregistré dans data.system_prompt du dossier OpenWebUI.",
+  "notSet": "Non défini",
+  "enterSystemPrompt": "Saisir le prompt système",
+  "close": "Fermer",
+  "connectionHealth": "État de la connexion",
+  "personalization": "Personnalisation",
+  "personalizationSubtitle": "Modèle par défaut, prompt personnel et mémoires",
+  "yourSystemPrompt": "Votre prompt système",
+  "yourSystemPromptDescription": "Définissez un prompt système personnel qu’OpenWebUI appliquera à vos chats.",
+  "memoryTitle": "Mémoire",
+  "memoryEnabledDescription": "Autorisez le serveur à utiliser vos mémoires enregistrées dans les futurs chats.",
+  "memoryDisabledDescription": "Les mémoires restent sur le serveur, mais ne seront pas injectées dans les chats.",
+  "manageMemories": "Gérer les mémoires",
+  "manageMemoriesDescription": "Ajoutez, modifiez et supprimez les informations que le serveur retient sur vous.",
+  "savedMemoriesCount": "{count} mémoires enregistrées",
+  "memoryEditorDescription": "Gardez les mémoires courtes et précises pour que le serveur les applique correctement.",
+  "memoryHint": "Exemple : je préfère des réponses concises avec des exemples de code.",
+  "addMemory": "Ajouter une mémoire",
+  "editMemory": "Modifier la mémoire",
+  "deleteMemory": "Supprimer la mémoire",
+  "deleteMemoryConfirm": "Supprimer cette mémoire enregistrée du serveur ?",
+  "clearAllMemories": "Effacer toutes les mémoires",
+  "clearAllMemoriesDescription": "Cela supprime définitivement toutes les mémoires enregistrées pour votre compte.",
+  "noMemoriesSaved": "Aucune mémoire enregistrée pour le moment.",
+  "memoryUpdatedAt": "Mis à jour {formattedTime}",
+  "advancedPromptOverrides": "Remplacements avancés de prompts",
+  "advancedPromptOverridesDescription": "Les remplacements de prompts par modèle se trouvent dans App et chat.",
+  "audioSettingsTitle": "Audio",
+  "audioSettingsSubtitle": "Voix vers texte et synthèse vocale",
+  "appAndChat": "App et chat",
+  "appAndChatSubtitle": "Thème, langue, comportement du chat et remplacements avancés",
+  "accountSettingsTitle": "Compte",
+  "accountSettingsSubtitle": "Détails du profil et gestion du mot de passe",
+  "accountDetails": "Détails du compte",
+  "signInToManageAccount": "Connectez-vous pour gérer les détails du compte.",
+  "emailLabel": "E-mail",
+  "roleLabel": "Rôle",
+  "accountStatus": "Statut",
+  "profileDetails": "Détails du profil",
+  "name": "Nom",
+  "avatarUrl": "URL de l’avatar",
+  "avatarUrlHint": "https://example.com/avatar.png",
+  "bioLabel": "Bio",
+  "bioHint": "Une courte description de vous.",
+  "genderLabel": "Genre",
+  "genderPreferNotToSay": "Préfère ne pas le dire",
+  "genderMale": "Masculin",
+  "genderFemale": "Féminin",
+  "genderCustom": "Personnalisé",
+  "customGenderLabel": "Genre personnalisé",
+  "customGenderHint": "Saisissez votre genre",
+  "customGenderRequired": "Saisissez un genre personnalisé ou choisissez une autre option.",
+  "birthDateLabel": "Date de naissance",
+  "selectBirthDate": "Sélectionner une date",
+  "birthDateHint": "AAAA-MM-JJ",
+  "currentAvatar": "Avatar actuel",
+  "uploadFromDevice": "Importer depuis l’appareil",
+  "useInitials": "Initiales",
+  "removeAvatar": "Supprimer",
+  "avatarUploadFailed": "Impossible de mettre à jour l’avatar.",
+  "timezoneLabel": "Fuseau horaire",
+  "timezoneHint": "Europe/Paris",
+  "saveProfile": "Enregistrer le profil",
+  "changePasswordTitle": "Modifier le mot de passe",
+  "passwordChangeUnavailable": "Les changements de mot de passe sont désactivés sur ce serveur.",
+  "currentPassword": "Mot de passe actuel",
+  "newPassword": "Nouveau mot de passe",
+  "confirmNewPassword": "Confirmer le nouveau mot de passe",
+  "nameRequired": "Saisissez un nom avant d’enregistrer.",
+  "profileUpdated": "Profil mis à jour.",
+  "passwordFieldsRequired": "Saisissez votre mot de passe actuel et le nouveau.",
+  "passwordsDoNotMatch": "Les nouveaux mots de passe ne correspondent pas.",
+  "passwordUpdated": "Mot de passe mis à jour.",
+  "activeStatus": "Actif",
+  "inactiveStatus": "Inactif",
+  "appInformation": "Application 众小智AI",
+  "appVersion": "Version",
+  "serverInformation": "Informations du serveur",
+  "serverInfoUnavailable": "Les informations du serveur sont indisponibles pour le moment.",
+  "serverNameLabel": "Nom du serveur",
+  "serverVersionLabel": "Version du serveur",
+  "latestVersionLabel": "Dernière version",
+  "deploymentIdLabel": "ID de déploiement",
+  "defaultLocaleLabel": "Langue par défaut",
+  "userCountLabel": "Nombre d’utilisateurs",
+  "serverDefaultModelsLabel": "Modèles par défaut",
+  "loginFormLabel": "Formulaire de connexion",
+  "passwordChangesLabel": "Changements de mot de passe",
+  "apiKeysLabel": "Clés API",
+  "audioInputLabel": "Entrée audio",
+  "audioOutputLabel": "Sortie audio",
+  "speechToTextEngineLabel": "Moteur voix vers texte",
+  "textToSpeechEngineLabel": "Moteur de synthèse vocale",
+  "licenseMetadataLabel": "Métadonnées de licence",
+  "enabledLabel": "Activé",
+  "disabledLabel": "Désactivé",
+  "noEmailLabel": "Aucun e-mail",
+  "userFallbackName": "Utilisateur",
+  "unknownLabel": "Inconnu",
+  "socketNotConnected": "Non connecté",
+  "socketConnected": "Connecté",
+  "socketDisconnected": "Déconnecté",
+  "socketLatencyLabel": "Latence",
+  "socketReconnectsLabel": "Reconnexions",
+  "socketLastHeartbeat": "Dernier heartbeat : {time}",
+  "socketTransportWebSocket": "Transport WebSocket",
+  "socketTransportPolling": "Transport HTTP polling",
+  "socketTransportUnknown": "Transport inconnu",
+  "socketQualityExcellent": "Excellent",
+  "socketQualityGood": "Bon",
+  "socketQualityFair": "Moyen",
+  "socketQualityPoor": "Mauvais",
+  "timeJustNow": "à l’instant",
+  "timeSecondsAgo": "il y a {count}s",
+  "timeMinutesAgo": "il y a {count}m",
+  "timeHoursAgo": "il y a {count}h",
+  "attach": "Joindre",
+  "@attach": {
+    "description": "Button label to attach content to the current chat or folder chat."
+  },
+  "attachWebpageDescription": "Collez une URL pour intégrer son contenu au chat.",
+  "@attachWebpageDescription": {
+    "description": "Description shown in the web page attachment dialog."
+  },
+  "webpageUrlLabel": "URL de la page web",
+  "@webpageUrlLabel": {
+    "description": "Label for the URL field in the web page attachment dialog."
+  },
+  "invalidHttpUrl": "Saisissez une URL http(s) valide.",
+  "@invalidHttpUrl": {
+    "description": "Validation message when a URL is missing or not HTTP/HTTPS."
+  },
+  "youtubeTranscriptFetchFailed": "Impossible de récupérer la transcription YouTube.",
+  "@youtubeTranscriptFetchFailed": {
+    "description": "Error shown when a YouTube transcript cannot be fetched."
+  },
+  "webpageNoReadableContent": "La page ne contenait aucun contenu lisible.",
+  "@webpageNoReadableContent": {
+    "description": "Error shown when a fetched webpage has no readable text content."
+  },
+  "failedToAttachContent": "Impossible de joindre le contenu.",
+  "@failedToAttachContent": {
+    "description": "Generic error shown when attaching web content fails."
+  },
+  "scrollToBottom": "Aller en bas",
+  "@scrollToBottom": {
+    "description": "Tooltip for the button that scrolls a chat to the newest message."
+  },
+  "editFolder": "Modifier le dossier",
+  "@editFolder": {
+    "description": "Title and menu label for editing a folder."
+  },
+  "editFolderDescription": "Mettez à jour le nom et l’icône du dossier sur le serveur.",
+  "@editFolderDescription": {
+    "description": "Description shown in the folder edit sheet."
+  },
+  "icon": "Icône",
+  "@icon": {
+    "description": "Label for selecting an icon."
+  },
+  "folderIconDescription": "Choisissez l’icône du dossier.",
+  "@folderIconDescription": {
+    "description": "Subtitle for the folder icon picker."
+  },
+  "defaultLabel": "Par défaut",
+  "@defaultLabel": {
+    "description": "Generic label for the default option."
+  },
+  "systemPrompt": "Prompt système",
+  "@systemPrompt": {
+    "description": "Singular label for a system prompt field or menu item."
+  },
+  "move": "Déplacer",
+  "@move": {
+    "description": "Context action to move an item."
+  },
+  "moveToFolder": "Déplacer vers un dossier",
+  "@moveToFolder": {
+    "description": "Title for choosing a destination folder for a chat."
+  },
+  "moveFolder": "Déplacer le dossier",
+  "@moveFolder": {
+    "description": "Title for choosing a destination parent for a folder."
+  },
+  "noFolder": "Aucun dossier",
+  "@noFolder": {
+    "description": "Option to remove a chat from any folder."
+  },
+  "topLevel": "Niveau supérieur",
+  "@topLevel": {
+    "description": "Option to move a folder to the top level."
+  },
+  "failedToMoveFolder": "Impossible de déplacer le dossier",
+  "@failedToMoveFolder": {
+    "description": "Error shown when moving a folder fails."
+  },
+  "failedToRenameFolder": "Impossible de renommer le dossier",
+  "@failedToRenameFolder": {
+    "description": "Error shown when renaming a folder fails."
+  },
+  "browseKnowledgeBase": "Parcourir la base de connaissances",
+  "@browseKnowledgeBase": {
+    "description": "Title for opening the knowledge base picker."
+  },
+  "knowledgePickerHint": "Appuyez sur Entrée pour choisir un document",
+  "@knowledgePickerHint": {
+    "description": "Hint shown for keyboard selection in the knowledge base picker."
+  },
+  "execution": "Exécution",
+  "@execution": {
+    "description": "Fallback label for an unnamed code execution."
+  },
+  "codeExecutionTitle": "Exécution de code",
+  "@codeExecutionTitle": {
+    "description": "Fallback title for a code execution details sheet."
+  },
+  "codeExecutionFailed": "Échec de {label}",
+  "@codeExecutionFailed": {
+    "description": "Title shown when a named code execution fails.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Execution"
+      }
+    }
+  },
+  "codeExecutionRunning": "{label}…",
+  "@codeExecutionRunning": {
+    "description": "Title shown while a named code execution is still running.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Execution"
+      }
+    }
+  },
+  "language": "Langage",
+  "@language": {
+    "description": "Label for a programming language field."
+  },
+  "code": "Code",
+  "@code": {
+    "description": "Label for source code content."
+  },
+  "output": "Sortie",
+  "@output": {
+    "description": "Label for execution output."
+  },
+  "download": "Télécharger",
+  "@download": {
+    "description": "Fallback label for a downloadable file."
+  },
+  "languageWithValue": "Langage : {language}",
+  "@languageWithValue": {
+    "description": "Label and value for a programming language.",
+    "placeholders": {
+      "language": {
+        "type": "String",
+        "example": "Python"
+      }
+    }
+  },
+  "previewDeferredLargeContent": "Aperçu différé pour le contenu volumineux.",
+  "@previewDeferredLargeContent": {
+    "description": "Message shown when an inline preview is delayed because content is large."
+  },
+  "openPreview": "Ouvrir l’aperçu",
+  "@openPreview": {
+    "description": "Button to open a deferred preview."
+  },
+  "copiedToClipboard": "Copié dans le presse-papiers",
+  "@copiedToClipboard": {
+    "description": "Snackbar message after copying content to the clipboard."
+  },
+  "preview": "Aperçu",
+  "@preview": {
+    "description": "Button label for opening a preview."
+  },
+  "alertTip": "Astuce",
+  "@alertTip": {
+    "description": "Fallback label for a tip markdown alert."
+  },
+  "alertImportant": "Important",
+  "@alertImportant": {
+    "description": "Fallback label for an important markdown alert."
+  },
+  "alertWarning": "Avertissement",
+  "@alertWarning": {
+    "description": "Fallback label for a warning markdown alert."
+  },
+  "alertCaution": "Attention",
+  "@alertCaution": {
+    "description": "Fallback label for a caution markdown alert."
+  },
+  "alertNote": "Note",
+  "@alertNote": {
+    "description": "Fallback label for a note markdown alert."
+  },
+  "markdownDetailsGroupPendingTitle": "Analyse de {summary}",
+  "@markdownDetailsGroupPendingTitle": {
+    "description": "Title shown for a pending grouped tool-call details block.",
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "markdownDetailsGroupCompleteTitle": "Analyse terminée : {summary}",
+  "@markdownDetailsGroupCompleteTitle": {
+    "description": "Title shown for a completed grouped tool-call details block.",
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "markdownDetailsGroupUnnamedTool": "outil",
+  "@markdownDetailsGroupUnnamedTool": {
+    "description": "Fallback label used when a grouped tool call has no tool name."
+  },
+  "folderIconFolder": "Dossier",
+  "@folderIconFolder": {
+    "description": "Accessibility label for the folder icon option."
+  },
+  "folderIconOpenFolder": "Dossier ouvert",
+  "@folderIconOpenFolder": {
+    "description": "Accessibility label for the open folder icon option."
+  },
+  "folderIconBriefcase": "Mallette",
+  "@folderIconBriefcase": {
+    "description": "Accessibility label for the briefcase folder icon option."
+  },
+  "folderIconBooks": "Livres",
+  "@folderIconBooks": {
+    "description": "Accessibility label for the books folder icon option."
+  },
+  "folderIconMemo": "Mémo",
+  "@folderIconMemo": {
+    "description": "Accessibility label for the memo folder icon option."
+  },
+  "folderIconDividers": "Intercalaires",
+  "@folderIconDividers": {
+    "description": "Accessibility label for the dividers folder icon option."
+  },
+  "folderIconTools": "Outils",
+  "@folderIconTools": {
+    "description": "Accessibility label for the tools folder icon option."
+  },
+  "folderIconToolbox": "Boîte à outils",
+  "@folderIconToolbox": {
+    "description": "Accessibility label for the toolbox folder icon option."
+  },
+  "folderIconSparkles": "Étincelles",
+  "@folderIconSparkles": {
+    "description": "Accessibility label for the sparkles folder icon option."
+  },
+  "folderIconBrain": "Cerveau",
+  "@folderIconBrain": {
+    "description": "Accessibility label for the brain folder icon option."
+  },
+  "folderIconRocket": "Fusée",
+  "@folderIconRocket": {
+    "description": "Accessibility label for the rocket folder icon option."
+  },
+  "folderIconTarget": "Cible",
+  "@folderIconTarget": {
+    "description": "Accessibility label for the target folder icon option."
+  },
+  "folderIconGeneric": "Icône de dossier",
+  "@folderIconGeneric": {
+    "description": "Generic accessibility label for a custom folder icon."
+  },
+  "thread": "Fil",
+  "@thread": {
+    "description": "Title and context action for a message thread."
+  },
+  "threadWithCount": "Fil ({count})",
+  "@threadWithCount": {
+    "description": "Thread action label with reply count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "channelMembersTitle": "Membres ({count})",
+  "@channelMembersTitle": {
+    "description": "Title for the channel members sheet.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "channelInputPlaceholder": "Écrivez ici...",
+  "@channelInputPlaceholder": {
+    "description": "Placeholder for the channel message composer."
+  },
+  "channelUnknownMember": "Inconnu",
+  "@channelUnknownMember": {
+    "description": "Fallback name for a channel member with no display name."
+  },
+  "replyInputPlaceholder": "Répondre...",
+  "@replyInputPlaceholder": {
+    "description": "Placeholder for the thread reply composer."
+  },
+  "editPhoto": "Modifier la photo",
+  "@editPhoto": {
+    "description": "Action to edit the profile photo."
+  },
+  "replyingToUser": "Réponse à {name}",
+  "@replyingToUser": {
+    "description": "Label shown above the channel composer when replying to a user.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Alex"
+      }
+    }
+  },
+  "voiceCallWithModel": "Appel vocal avec {modelName}",
+  "@voiceCallWithModel": {
+    "description": "Notification title for an ongoing voice call with a model.",
+    "placeholders": {
+      "modelName": {
+        "type": "String",
+        "example": "GPT-4"
+      }
+    }
+  },
+  "notificationPermissionTitle": "Autorisation de notification",
+  "@notificationPermissionTitle": {
+    "description": "Title for the system notification permission prompt."
+  },
+  "callNotificationPermissionRationale": "Les alertes d’appel nécessitent l’autorisation de notification.",
+  "@callNotificationPermissionRationale": {
+    "description": "Rationale shown when requesting notification permission for call alerts."
+  },
+  "callNotificationPermissionPost": "Autorisez les notifications pour afficher les appels entrants.",
+  "@callNotificationPermissionPost": {
+    "description": "Instruction shown when requesting notification permission for incoming calls."
+  },
+  "acceptCall": "Accepter",
+  "@acceptCall": {
+    "description": "Call action to accept an incoming call."
+  },
+  "declineCall": "Refuser",
+  "@declineCall": {
+    "description": "Call action to decline an incoming call."
+  },
+  "missedCall": "Appel manqué",
+  "@missedCall": {
+    "description": "Notification subtitle for a missed call."
+  },
+  "callBack": "Rappeler",
+  "@callBack": {
+    "description": "Notification action to call back after a missed call."
+  },
+  "calling": "Appel...",
+  "@calling": {
+    "description": "Notification subtitle while starting a call."
+  },
+  "hangUp": "Raccrocher",
+  "@hangUp": {
+    "description": "Notification action to hang up a call."
+  },
+  "incomingCallChannelName": "Appel entrant",
+  "@incomingCallChannelName": {
+    "description": "Android notification channel name for incoming calls."
+  },
+  "missedCallChannelName": "Appel manqué",
+  "@missedCallChannelName": {
+    "description": "Android notification channel name for missed calls."
+  },
+  "mute": "Couper le micro",
+  "@mute": {
+    "description": "Notification action to mute a call."
+  },
+  "unmute": "Réactiver le micro",
+  "@unmute": {
+    "description": "Notification action to unmute a call."
+  },
+  "voiceCallMuted": "Micro coupé",
+  "@voiceCallMuted": {
+    "description": "Status label when a voice call is muted."
+  },
+  "voiceCallChannelDescription": "Notifications d’appels vocaux en cours",
+  "@voiceCallChannelDescription": {
+    "description": "Android notification channel description for ongoing voice calls."
+  },
+  "@greetingTitle": {
+    "description": "Greeting shown on the empty chat page.",
+    "placeholders": {
+      "username": {
+        "type": "String",
+        "example": "Alex"
+      }
+    }
+  },
+  "@continueWithProvider": {
+    "description": "Button text for OAuth provider sign-in.",
+    "placeholders": {
+      "provider": {
+        "type": "String",
+        "example": "Google"
+      }
+    }
+  },
+  "@channelMembers": {
+    "description": "Member count display in channel header",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@audioUploadError": {
+    "description": "Error message when audio upload fails",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "description": "The error message"
+      }
+    }
+  },
+  "@accessibleModelsCount": {
+    "description": "Subtitle showing how many accessible models are listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "@accessibleFoldersCount": {
+    "description": "Subtitle showing how many accessible folders are listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "@modelSystemPromptTitle": {
+    "description": "Title for a model system prompt editor.",
+    "placeholders": {
+      "modelName": {
+        "type": "String",
+        "example": "GPT-4"
+      }
+    }
+  },
+  "@folderSystemPromptTitle": {
+    "description": "Title for a folder system prompt editor.",
+    "placeholders": {
+      "folderName": {
+        "type": "String",
+        "example": "Work"
+      }
+    }
+  },
+  "@savedMemoriesCount": {
+    "description": "Shows how many memories are saved.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@memoryUpdatedAt": {
+    "description": "Shows when a memory was last updated.",
+    "placeholders": {
+      "formattedTime": {}
+    }
+  },
+  "@socketLastHeartbeat": {
+    "description": "Shows when the socket last received a heartbeat.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "just now"
+      }
+    }
+  },
+  "@timeSecondsAgo": {
+    "description": "Compact relative time label for seconds ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "@timeMinutesAgo": {
+    "description": "Compact relative time label for minutes ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "@timeHoursAgo": {
+    "description": "Compact relative time label for hours ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "rateLimitExceeded": "Trop de requêtes. Veuillez patienter avant de réessayer.",
+  "@rateLimitExceeded": {
+    "description": "Error shown when the server rejects a request due to rate limiting."
+  },
+  "rateLimitRetryAfter": "Veuillez patienter {duration} avant de réessayer.",
+  "@rateLimitRetryAfter": {
+    "description": "Advice shown when a rate limit response includes a retry delay.",
+    "placeholders": {
+      "duration": {
+        "type": "String",
+        "example": "1m 30s"
+      }
+    }
+  },
+  "rateLimitRetrySoon": "Veuillez patienter un instant avant de réessayer.",
+  "@rateLimitRetrySoon": {
+    "description": "Advice shown when a rate limit response does not include an exact retry delay."
+  },
+  "securityCertificateError": "Erreur de certificat de sécurité. Impossible de vérifier l’identité du serveur.",
+  "@securityCertificateError": {
+    "description": "Error shown when the server TLS certificate cannot be trusted or verified."
+  },
+  "noToolsAvailable": "Aucun outil disponible",
+  "@noToolsAvailable": {
+    "description": "Empty state shown when no tools are available in the composer overflow menu."
+  },
+  "failedToLoadTools": "Impossible de charger les outils",
+  "@failedToLoadTools": {
+    "description": "Error shown when the composer overflow menu cannot load tools."
+  }
 }

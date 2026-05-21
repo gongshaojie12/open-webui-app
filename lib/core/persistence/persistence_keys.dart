@@ -16,6 +16,9 @@ final class PreferenceKeys {
   static const String voiceSttPreference = 'voice_stt_preference';
   static const String socketTransportMode = 'socket_transport_mode';
   static const String quickPills = 'quick_pills';
+  static const String chatWebSearchEnabled = 'chat_web_search_enabled';
+  static const String chatImageGenerationEnabled =
+      'chat_image_generation_enabled';
   static const String sendOnEnterKey = 'send_on_enter';
   static const String activeServerId = 'active_server_id';
   static const String themeMode = 'theme_mode';
@@ -37,6 +40,11 @@ final class PreferenceKeys {
   static const String drawerShowPinned = 'drawer_show_pinned';
   static const String drawerShowFolders = 'drawer_show_folders';
   static const String drawerShowRecent = 'drawer_show_recent';
+
+  /// Notes sidebar tab section visibility (separate from [drawerShowPinned] /
+  /// [drawerShowRecent]).
+  static const String notesListShowPinned = 'notes_list_show_pinned';
+  static const String notesListShowRecent = 'notes_list_show_recent';
 
   static const String sidebarActiveTab = 'sidebar_active_tab';
 }

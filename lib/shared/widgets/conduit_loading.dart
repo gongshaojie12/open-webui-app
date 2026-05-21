@@ -146,13 +146,11 @@ class _LoadingIndicator extends StatelessWidget {
         SizedBox(height: spacing),
         Text(
           message!,
-          style: TextStyle(
-            color: color,
-            fontSize: type == _LoadingType.button
-                ? AppTypography.bodySmall
-                : AppTypography.bodyLarge,
-            fontWeight: FontWeight.w500,
-          ),
+          style:
+              (type == _LoadingType.button
+                      ? AppTypography.bodySmallStyle
+                      : AppTypography.bodyLargeStyle)
+                  .copyWith(color: color, fontWeight: FontWeight.w500),
           textAlign: TextAlign.center,
         ),
       ],
@@ -388,18 +386,16 @@ class LoadingStateWrapper<T> extends StatelessWidget {
               const SizedBox(height: Spacing.md),
               Text(
                 AppLocalizations.of(context)!.errorMessage,
-                style: TextStyle(
+                style: AppTypography.headlineSmallStyle.copyWith(
                   color: context.conduitTheme.textSecondary,
-                  fontSize: AppTypography.headlineSmall,
                   fontWeight: FontWeight.w500,
                 ),
               ),
               const SizedBox(height: Spacing.sm),
               Text(
                 error.toString(),
-                style: TextStyle(
+                style: AppTypography.bodySmallStyle.copyWith(
                   color: context.conduitTheme.textSecondary,
-                  fontSize: AppTypography.bodySmall,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -439,27 +435,18 @@ class LoadingButton extends StatelessWidget {
 
 /// Refresh indicator with Conduit styling.
 ///
-/// Uses platform-appropriate refresh controls:
-/// - iOS: Native Cupertino-style refresh control (when child is CustomScrollView)
-/// - Android/Other: Material RefreshIndicator
+/// Uses Flutter's adaptive refresh indicator so the spinner stays visible and
+/// platform-appropriate across ListView and CustomScrollView call sites.
 ///
 /// Set [edgeOffset] to position the indicator below an app bar or other
 /// overlay. For example, use `MediaQuery.of(context).padding.top + kToolbarHeight`
 /// to position below a transparent/floating app bar.
-///
-/// Note: On iOS with a CustomScrollView child, [edgeOffset] is ignored since
-/// CupertinoSliverRefreshControl naturally positions itself based on scroll
-/// content. The scroll view's existing padding should handle app bar clearance.
 class ConduitRefreshIndicator extends StatelessWidget {
   final Widget child;
   final Future<void> Function() onRefresh;
 
   /// The distance from the top of the scroll view where the refresh indicator
   /// will appear. Useful for positioning below a floating/transparent app bar.
-  ///
-  /// Note: This is only effective on Android/non-iOS platforms, or on iOS when
-  /// the child is not a CustomScrollView. For iOS with CustomScrollView, the
-  /// refresh control naturally positions based on scroll content.
   final double edgeOffset;
 
   const ConduitRefreshIndicator({
@@ -471,39 +458,7 @@ class ConduitRefreshIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // On iOS, try to use CupertinoSliverRefreshControl for native feel
-    // when the child is directly a CustomScrollView
-    if (Platform.isIOS && child is CustomScrollView) {
-      final csv = child as CustomScrollView;
-      return CustomScrollView(
-        key: csv.key,
-        controller: csv.controller,
-        scrollDirection: csv.scrollDirection,
-        reverse: csv.reverse,
-        primary: csv.primary,
-        physics: csv.physics,
-        shrinkWrap: csv.shrinkWrap,
-        cacheExtent: csv.cacheExtent,
-        keyboardDismissBehavior: csv.keyboardDismissBehavior,
-        clipBehavior: csv.clipBehavior,
-        center: csv.center,
-        anchor: csv.anchor,
-        semanticChildCount: csv.semanticChildCount,
-        dragStartBehavior: csv.dragStartBehavior,
-        restorationId: csv.restorationId,
-        slivers: [
-          // CupertinoSliverRefreshControl naturally positions itself based on
-          // scroll content; the scroll view's existing padding handles app bar
-          // clearance, so no edgeOffset adjustment is needed here.
-          CupertinoSliverRefreshControl(onRefresh: onRefresh),
-          ...csv.slivers,
-        ],
-      );
-    }
-
-    // For Android, other platforms, or when child is not a CustomScrollView,
-    // use Material RefreshIndicator which works with any scrollable
-    return RefreshIndicator(
+    return RefreshIndicator.adaptive(
       onRefresh: onRefresh,
       color: context.conduitTheme.buttonPrimary,
       backgroundColor: context.conduitTheme.surfaceBackground,
@@ -1159,7 +1114,9 @@ class ErrorStateWidget extends StatelessWidget {
             Text(
               message,
               style: theme.textTheme.bodyMedium?.copyWith(
-                color: context.conduitTheme.textSecondary.withValues(alpha: 0.6),
+                color: context.conduitTheme.textSecondary.withValues(
+                  alpha: 0.6,
+                ),
               ),
               textAlign: TextAlign.center,
             ),

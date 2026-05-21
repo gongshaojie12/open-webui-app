@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter_plus/webview_flutter_plus.dart';
+import 'package:conduit/l10n/app_localizations.dart';
 
 import '../theme/theme_extensions.dart';
 import 'webview_content_height.dart';
@@ -14,10 +16,35 @@ const _embedMinHeight = 220.0;
 const _embedMaxHeight = 900.0;
 
 class WebContentEmbed extends StatefulWidget {
-  const WebContentEmbed({super.key, required this.source, this.argsText = ''});
+  const WebContentEmbed({
+    super.key,
+    required this.source,
+    this.argsText = '',
+    this.deferUntilExpanded = true,
+    this.initiallyExpanded = false,
+    this.showChrome = true,
+    this.fillAvailableHeight = false,
+    this.previewTitle,
+    this.previewDescription,
+    @visibleForTesting this.debugTreatAsSupported,
+    @visibleForTesting this.debugSeedControllerForTesting = false,
+    @visibleForTesting this.debugOnControllerReset,
+  });
 
   final String source;
   final String argsText;
+  final bool deferUntilExpanded;
+  final bool initiallyExpanded;
+  final bool showChrome;
+  final bool fillAvailableHeight;
+  final String? previewTitle;
+  final String? previewDescription;
+  @visibleForTesting
+  final bool? debugTreatAsSupported;
+  @visibleForTesting
+  final bool debugSeedControllerForTesting;
+  @visibleForTesting
+  final VoidCallback? debugOnControllerReset;
 
   @override
   State<WebContentEmbed> createState() => _WebContentEmbedState();
@@ -32,8 +59,12 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
   WebViewControllerPlus? _controller;
   double _height = _embedDefaultHeight;
   bool _isLoading = true;
+  bool _loadScheduled = false;
+  bool _retryLoadScheduled = false;
   String? _loadError;
   int _loadRequestId = 0;
+  late bool _isExpanded;
+  bool _debugHasSeededController = false;
 
   bool get _isRunningInTestEnvironment {
     return WidgetsBinding.instance.runtimeType.toString().contains(
@@ -42,6 +73,9 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
   }
 
   bool get _isSupported {
+    if (widget.debugTreatAsSupported != null) {
+      return widget.debugTreatAsSupported!;
+    }
     if (kIsWeb) {
       return false;
     }
@@ -64,6 +98,8 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
         raw.startsWith('//');
   }
 
+  bool get _hasController => _controller != null || _debugHasSeededController;
+
   String get _unsupportedMessage {
     if (_isRunningInTestEnvironment) {
       return 'Embedded content preview is unavailable in widget tests.';
@@ -74,20 +110,88 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
   @override
   void initState() {
     super.initState();
-    _initializeController();
+    _isExpanded = widget.initiallyExpanded || !widget.deferUntilExpanded;
+    if (widget.debugSeedControllerForTesting) {
+      _debugHasSeededController = true;
+      _isLoading = false;
+    }
   }
 
   @override
   void didUpdateWidget(covariant WebContentEmbed oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.source != widget.source ||
-        oldWidget.argsText != widget.argsText) {
-      _initializeController();
+        oldWidget.argsText != widget.argsText ||
+        oldWidget.deferUntilExpanded != widget.deferUntilExpanded ||
+        oldWidget.initiallyExpanded != widget.initiallyExpanded) {
+      _loadScheduled = false;
+      _retryLoadScheduled = false;
+      _isExpanded = widget.initiallyExpanded || !widget.deferUntilExpanded;
+      _resetControllerState(isLoading: _isExpanded);
+      if (_isExpanded) {
+        unawaited(_initializeController());
+      }
     }
   }
 
+  void _resetControllerState({required bool isLoading}) {
+    final hadController = _hasController;
+    if (mounted) {
+      setState(() {
+        _loadRequestId += 1;
+        _controller = null;
+        _debugHasSeededController = false;
+        _height = _embedDefaultHeight;
+        _isLoading = isLoading;
+        _loadError = null;
+      });
+    } else {
+      _loadRequestId += 1;
+      _controller = null;
+      _debugHasSeededController = false;
+      _height = _embedDefaultHeight;
+      _isLoading = isLoading;
+      _loadError = null;
+    }
+    if (hadController) {
+      widget.debugOnControllerReset?.call();
+    }
+  }
+
+  void _scheduleControllerInitialization(BuildContext context) {
+    if (!_isExpanded || _loadScheduled || _hasController || !_isSupported) {
+      return;
+    }
+
+    if (Scrollable.recommendDeferredLoadingForContext(context)) {
+      if (_retryLoadScheduled) {
+        return;
+      }
+      _retryLoadScheduled = true;
+      Future<void>.delayed(const Duration(milliseconds: 250), () {
+        if (!mounted) {
+          return;
+        }
+        _retryLoadScheduled = false;
+        if (!_hasController && !_loadScheduled) {
+          setState(() {});
+        }
+      });
+      return;
+    }
+
+    _retryLoadScheduled = false;
+    _loadScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _initializeController();
+    });
+  }
+
   Future<void> _initializeController() async {
-    if (!_isSupported) {
+    if (!_isSupported || !_isExpanded) {
       return;
     }
 
@@ -188,9 +292,9 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
           measuredHeight <= 0) {
         return;
       }
-      final clampedHeight = measuredHeight
-          .clamp(_embedMinHeight, _embedMaxHeight)
-          .toDouble();
+      final clampedHeight = widget.fillAvailableHeight
+          ? _height
+          : measuredHeight.clamp(_embedMinHeight, _embedMaxHeight).toDouble();
       setState(() {
         _height = clampedHeight;
         _isLoading = false;
@@ -213,8 +317,66 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
       return _EmbedFallbackCard(source: widget.source, message: _loadError!);
     }
 
+    if (!_isExpanded) {
+      return _EmbedDeferredCard(
+        title: widget.previewTitle ?? 'Embedded Preview',
+        description:
+            widget.previewDescription ??
+            (_isRemoteUrl
+                ? (widget.source.startsWith('//')
+                      ? 'https:${widget.source}'
+                      : widget.source)
+                : 'Load the embedded preview when you need it.'),
+        onOpen: () {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _isExpanded = true;
+          });
+        },
+      );
+    }
+
     if (_controller == null) {
+      _scheduleControllerInitialization(context);
+      if (!widget.showChrome) {
+        return const Center(child: CircularProgressIndicator());
+      }
       return const _EmbedLoadingCard();
+    }
+
+    final webView = Stack(
+      children: [
+        Positioned.fill(
+          child: WebViewWidget(
+            controller: _controller!,
+            gestureRecognizers: _gestureRecognizers,
+          ),
+        ),
+        if (_isLoading)
+          const Positioned.fill(
+            child: ColoredBox(
+              color: Colors.transparent,
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          ),
+      ],
+    );
+
+    final sizedWebView = widget.fillAvailableHeight
+        ? LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.hasBoundedHeight) {
+                return SizedBox.expand(child: webView);
+              }
+              return SizedBox(height: _height, child: webView);
+            },
+          )
+        : SizedBox(height: _height, child: webView);
+
+    if (!widget.showChrome) {
+      return sizedWebView;
     }
 
     return DecoratedBox(
@@ -226,26 +388,7 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(AppBorderRadius.md),
-        child: SizedBox(
-          height: _height,
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: WebViewWidget(
-                  controller: _controller!,
-                  gestureRecognizers: _gestureRecognizers,
-                ),
-              ),
-              if (_isLoading)
-                const Positioned.fill(
-                  child: ColoredBox(
-                    color: Colors.transparent,
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
-                ),
-            ],
-          ),
-        ),
+        child: sizedWebView,
       ),
     );
   }
@@ -299,6 +442,62 @@ class _EmbedLoadingCard extends StatelessWidget {
   }
 }
 
+class _EmbedDeferredCard extends StatelessWidget {
+  const _EmbedDeferredCard({
+    required this.title,
+    required this.description,
+    required this.onOpen,
+  });
+
+  final String title;
+  final String description;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.conduitTheme;
+    final l10n = AppLocalizations.of(context);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.cardBackground,
+        border: Border.all(color: theme.cardBorder),
+        borderRadius: BorderRadius.circular(AppBorderRadius.md),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(Spacing.sm),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: AppTypography.bodyMediumStyle.copyWith(
+                color: theme.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: Spacing.xs),
+            Text(
+              description,
+              style: AppTypography.bodySmallStyle.copyWith(
+                color: theme.textSecondary,
+              ),
+            ),
+            const SizedBox(height: Spacing.sm),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: onOpen,
+                child: Text(l10n?.openPreview ?? 'Open preview'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _EmbedFallbackCard extends StatelessWidget {
   const _EmbedFallbackCard({required this.source, required this.message});
 
@@ -327,9 +526,8 @@ class _EmbedFallbackCard extends StatelessWidget {
           children: [
             Text(
               message,
-              style: TextStyle(
+              style: AppTypography.bodySmallStyle.copyWith(
                 color: theme.textSecondary,
-                fontSize: AppTypography.bodySmall,
               ),
             ),
             if (_isRemoteUrl) ...[

@@ -36,9 +36,8 @@ class FileAttachmentWidget extends ConsumerWidget {
         children: [
           Text(
             AppLocalizations.of(context)!.attachments,
-            style: TextStyle(
+            style: AppTypography.labelMediumStyle.copyWith(
               color: context.conduitTheme.textSecondary.withValues(alpha: 0.7),
-              fontSize: AppTypography.labelMedium,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -101,9 +100,8 @@ class _FileAttachmentCard extends ConsumerWidget {
           ],
           Text(
             fileState.fileName,
-            style: TextStyle(
+            style: AppTypography.labelMediumStyle.copyWith(
               color: context.conduitTheme.textPrimary,
-              fontSize: AppTypography.labelMedium,
               fontWeight: FontWeight.w500,
             ),
             maxLines: 1,
@@ -112,9 +110,8 @@ class _FileAttachmentCard extends ConsumerWidget {
           const SizedBox(height: Spacing.xs),
           Text(
             fileState.formattedSize,
-            style: TextStyle(
+            style: AppTypography.labelSmallStyle.copyWith(
               color: context.conduitTheme.textSecondary.withValues(alpha: 0.6),
-              fontSize: AppTypography.labelSmall,
             ),
           ),
           if (fileState.status == FileUploadStatus.uploading) ...[
@@ -125,9 +122,8 @@ class _FileAttachmentCard extends ConsumerWidget {
             const SizedBox(height: Spacing.xs),
             Text(
               'Failed to upload',
-              style: TextStyle(
+              style: AppTypography.labelSmallStyle.copyWith(
                 color: context.conduitTheme.error,
-                fontSize: AppTypography.labelSmall,
               ),
             ),
           ],
@@ -212,9 +208,11 @@ class _FileAttachmentCard extends ConsumerWidget {
 
   void _removeAttachment(WidgetRef ref) {
     ref.read(attachedFilesProvider.notifier).removeFile(fileState.file.path);
-    ref
-        .read(taskQueueProvider.notifier)
-        .cancelUploadsForFile(fileState.file.path);
+    if (!fileState.isRemote) {
+      ref
+          .read(taskQueueProvider.notifier)
+          .cancelUploadsForFile(fileState.file.path);
+    }
   }
 
   Widget _buildProgressBar(BuildContext context) {
@@ -247,6 +245,9 @@ class _FileAttachmentCard extends ConsumerWidget {
   }
 
   bool _canPreviewImage() {
+    if (fileState.isRemote) {
+      return false;
+    }
     if (fileState.isImage != null) {
       return fileState.isImage!;
     }
@@ -256,16 +257,13 @@ class _FileAttachmentCard extends ConsumerWidget {
 
   Widget _buildImagePreview(BuildContext context, Widget removeButton) {
     final File file = fileState.file;
-    final bool fileExists = file.existsSync();
-    final Widget basePreview = fileExists
-        ? Image.file(
-            file,
-            fit: BoxFit.cover,
-            filterQuality: FilterQuality.medium,
-            errorBuilder: (context, error, stackTrace) =>
-                _buildPreviewPlaceholderContent(context),
-          )
-        : _buildPreviewPlaceholderContent(context);
+    final Widget basePreview = Image.file(
+      file,
+      fit: BoxFit.cover,
+      filterQuality: FilterQuality.medium,
+      errorBuilder: (context, error, stackTrace) =>
+          _buildPreviewPlaceholderContent(context),
+    );
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -370,11 +368,10 @@ class MessageAttachmentPreview extends StatelessWidget {
                     const SizedBox(width: Spacing.xs),
                     Text(
                       AppLocalizations.of(context)!.attachmentLabel,
-                      style: TextStyle(
+                      style: AppTypography.labelSmallStyle.copyWith(
                         color: context.conduitTheme.textPrimary.withValues(
                           alpha: 0.8,
                         ),
-                        fontSize: AppTypography.labelSmall,
                       ),
                     ),
                   ],

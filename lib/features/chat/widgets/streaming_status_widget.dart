@@ -1,11 +1,28 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import '../../../core/models/chat_message.dart';
+import '../../../core/services/native_sheet_bridge.dart';
 import '../../../core/utils/debug_logger.dart';
 import '../../../shared/theme/theme_extensions.dart';
+import '../../../shared/widgets/themed_sheets.dart';
 import 'assistant_detail_header.dart';
+
+List<ChatStatusUpdate> filterVisibleStatusUpdates(
+  List<ChatStatusUpdate> updates, {
+  required bool isStreaming,
+}) {
+  final visible = updates
+      .where((u) => u.hidden != true)
+      .toList(growable: false);
+  if (isStreaming) {
+    return visible;
+  }
+  return visible.where((u) => u.done != false).toList(growable: false);
+}
 
 /// A minimal, unobtrusive streaming status widget inspired by OpenWebUI.
 /// Displays live status updates during AI response generation without
@@ -27,15 +44,16 @@ class StreamingStatusWidget extends StatefulWidget {
 class _StreamingStatusWidgetState extends State<StreamingStatusWidget> {
   @override
   Widget build(BuildContext context) {
-    final visible = widget.updates
-        .where((u) => u.hidden != true)
-        .toList(growable: false);
-    if (visible.isEmpty) return const SizedBox.shrink();
+    final displayUpdates = filterVisibleStatusUpdates(
+      widget.updates,
+      isStreaming: widget.isStreaming,
+    );
+    if (displayUpdates.isEmpty) return const SizedBox.shrink();
 
-    final current = visible.last;
+    final current = displayUpdates.last;
     final isPending = current.done != true && widget.isStreaming;
     final hasDetails =
-        visible.length > 1 ||
+        displayUpdates.length > 1 ||
         _collectQueries(current).isNotEmpty ||
         _collectLinks(current).isNotEmpty;
 
@@ -43,7 +61,7 @@ class _StreamingStatusWidgetState extends State<StreamingStatusWidget> {
       onTap: hasDetails
           ? () => _showStatusBottomSheet(
               context,
-              updates: visible,
+              updates: displayUpdates,
               isStreaming: widget.isStreaming,
             )
           : null,
@@ -63,20 +81,59 @@ class _StreamingStatusWidgetState extends State<StreamingStatusWidget> {
     BuildContext context, {
     required List<ChatStatusUpdate> updates,
     required bool isStreaming,
-  }) {
+  }) async {
     final theme = context.conduitTheme;
     final current = updates.last;
     final title = _resolveStatusDescription(current);
 
-    showModalBottomSheet<void>(
+    if (Platform.isIOS) {
+      final items = <NativeSheetItemConfig>[
+        for (var index = 0; index < updates.length; index++) ...[
+          NativeSheetItemConfig(
+            id: 'status-update-$index',
+            title: _resolveStatusDescription(updates[index]),
+            subtitle: _collectQueries(updates[index]).isEmpty
+                ? null
+                : _collectQueries(updates[index]).join(', '),
+            sfSymbol: 'circle.dotted',
+            kind: NativeSheetItemKind.info,
+          ),
+          for (final link in _collectLinks(updates[index]))
+            NativeSheetItemConfig(
+              id: 'status-link-$index-${link.url}',
+              title: link.title ?? link.url,
+              subtitle: link.url,
+              sfSymbol: 'link',
+              url: link.url,
+            ),
+        ],
+      ];
+      try {
+        await NativeSheetBridge.instance.presentSheet(
+          root: NativeSheetDetailConfig(
+            id: 'streaming-status',
+            title: title,
+            items: items,
+          ),
+          rethrowErrors: true,
+        );
+        return;
+      } catch (_) {
+        if (!context.mounted) {
+          return;
+        }
+      }
+    }
+
+    if (!context.mounted) {
+      return;
+    }
+
+    ThemedSheets.showSurface<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: theme.surfaceBackground,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(AppBorderRadius.dialog),
-        ),
-      ),
+      showHandle: false,
+      padding: EdgeInsets.zero,
       builder: (ctx) {
         return DraggableScrollableSheet(
           initialChildSize: 0.6,
@@ -114,18 +171,14 @@ class _StreamingStatusWidgetState extends State<StreamingStatusWidget> {
                       Expanded(
                         child: Text(
                           title,
-                          style: TextStyle(
-                            fontSize: AppTypography.bodyLarge,
+                          style: AppTypography.bodyLargeStyle.copyWith(
                             fontWeight: FontWeight.w600,
                             color: theme.textPrimary,
                           ),
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 20),
+                      SheetCloseButton(
                         onPressed: () => Navigator.of(ctx).pop(),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
                         color: theme.textSecondary,
                       ),
                     ],
@@ -369,8 +422,7 @@ class _MinimalQueryChips extends StatelessWidget {
                   constraints: const BoxConstraints(maxWidth: 150),
                   child: Text(
                     query,
-                    style: TextStyle(
-                      fontSize: AppTypography.labelSmall,
+                    style: AppTypography.labelMediumStyle.copyWith(
                       color: theme.textSecondary,
                     ),
                     maxLines: 1,
@@ -445,8 +497,7 @@ class _MinimalSourceLinks extends StatelessWidget {
                     constraints: const BoxConstraints(maxWidth: 100),
                     child: Text(
                       link.title ?? domain,
-                      style: TextStyle(
-                        fontSize: AppTypography.labelSmall,
+                      style: AppTypography.labelMediumStyle.copyWith(
                         color: theme.textSecondary,
                       ),
                       maxLines: 1,
@@ -461,8 +512,7 @@ class _MinimalSourceLinks extends StatelessWidget {
         if (remaining > 0)
           Text(
             '+$remaining',
-            style: TextStyle(
-              fontSize: AppTypography.labelSmall,
+            style: AppTypography.labelMediumStyle.copyWith(
               color: theme.textSecondary,
             ),
           ).animate().fadeIn(

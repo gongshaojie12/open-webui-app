@@ -1,6 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cached_network_image_ce/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -15,8 +16,10 @@ import 'package:conduit/l10n/app_localizations.dart';
 
 import '../web_content_embed.dart';
 import '../webview_content_height.dart';
+import '../themed_sheets.dart';
 import '../../theme/color_tokens.dart';
 import '../../theme/theme_extensions.dart';
+import 'renderer/markdown_style.dart';
 import 'package:conduit/core/network/self_signed_image_cache_manager.dart';
 import 'package:conduit/core/network/image_header_utils.dart';
 
@@ -39,6 +42,7 @@ class ConduitMarkdown {
     VoidCallback? onPreview,
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final markdownStyle = ConduitMarkdownStyle.fromTheme(context);
     final normalizedLanguage = language.trim().isEmpty
         ? 'plaintext'
         : language.trim();
@@ -103,11 +107,7 @@ class ConduitMarkdown {
             code: code,
             highlightLanguage: highlightLanguage,
             highlightTheme: highlightTheme,
-            codeStyle: AppTypography.codeStyle.copyWith(
-              fontFamily: AppTypography.monospaceFontFamily,
-              fontSize: 13,
-              height: 1.55,
-            ),
+            codeStyle: markdownStyle.codeBlock,
             isDark: isDark,
           ),
         ],
@@ -134,6 +134,7 @@ class ConduitMarkdown {
     required String language,
   }) {
     final theme = context.conduitTheme;
+    final markdownStyle = ConduitMarkdownStyle.fromTheme(context);
     final previewLabel = _previewTitleForLanguage(language);
 
     return Container(
@@ -152,15 +153,18 @@ class ConduitMarkdown {
         children: [
           Text(
             previewLabel,
-            style: AppTypography.codeStyle.copyWith(
+            style: markdownStyle.codeChrome.copyWith(
               color: theme.textSecondary,
-              fontSize: 11,
               fontWeight: FontWeight.w600,
-              letterSpacing: 0.35,
             ),
           ),
           const SizedBox(height: Spacing.xs),
-          WebContentEmbed(source: code),
+          WebContentEmbed(
+            source: code,
+            deferUntilExpanded: false,
+            initiallyExpanded: true,
+            previewTitle: previewLabel,
+          ),
         ],
       ),
     );
@@ -170,68 +174,70 @@ class ConduitMarkdown {
     BuildContext context, {
     required String code,
     required String language,
-  }) {
+  }) async {
     final theme = context.conduitTheme;
     final title = _previewTitleForLanguage(language);
 
-    return showModalBottomSheet<void>(
+    if (!context.mounted) {
+      return;
+    }
+
+    return ThemedSheets.showCustom<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: theme.surfaceBackground,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(AppBorderRadius.dialog),
-        ),
-      ),
+      useSafeArea: true,
       builder: (sheetContext) {
-        return SafeArea(
-          child: FractionallySizedBox(
-            heightFactor: 0.9,
+        final markdownStyle = ConduitMarkdownStyle.fromTheme(sheetContext);
+        return SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height,
+          child: ColoredBox(
+            color: theme.surfaceBackground,
             child: Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: Spacing.sm),
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: theme.dividerColor.withValues(alpha: 0.4),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    Spacing.lg,
-                    Spacing.sm,
-                    Spacing.lg,
-                    Spacing.sm,
-                  ),
-                  child: Row(
+                SafeArea(
+                  bottom: false,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        Icons.visibility_outlined,
-                        size: 18,
-                        color: theme.textSecondary,
-                      ),
-                      const SizedBox(width: Spacing.sm),
-                      Expanded(
-                        child: Text(
-                          title,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: AppTypography.bodyLarge,
-                            fontWeight: FontWeight.w600,
-                            color: theme.textPrimary,
+                      Padding(
+                        padding: const EdgeInsets.only(top: Spacing.sm),
+                        child: Container(
+                          width: 36,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: theme.dividerColor.withValues(alpha: 0.4),
+                            borderRadius: BorderRadius.circular(2),
                           ),
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 20),
-                        onPressed: () => Navigator.of(sheetContext).pop(),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                        color: theme.textSecondary,
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          Spacing.lg,
+                          Spacing.sm,
+                          Spacing.lg,
+                          Spacing.sm,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.visibility_outlined,
+                              size: 18,
+                              color: theme.textSecondary,
+                            ),
+                            const SizedBox(width: Spacing.sm),
+                            Expanded(
+                              child: Text(
+                                title,
+                                overflow: TextOverflow.ellipsis,
+                                style: markdownStyle.sheetTitle,
+                              ),
+                            ),
+                            SheetCloseButton(
+                              onPressed: () => Navigator.of(sheetContext).pop(),
+                              color: theme.textSecondary,
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -241,9 +247,13 @@ class ConduitMarkdown {
                   color: theme.dividerColor.withValues(alpha: 0.3),
                 ),
                 Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.all(Spacing.lg),
-                    children: [WebContentEmbed(source: code)],
+                  child: WebContentEmbed(
+                    source: code,
+                    deferUntilExpanded: false,
+                    initiallyExpanded: true,
+                    showChrome: false,
+                    fillAvailableHeight: true,
+                    previewTitle: title,
                   ),
                 ),
               ],
@@ -373,7 +383,8 @@ class ConduitMarkdown {
           ),
         ),
       ),
-      errorWidget: (context, url, error) => buildImageError(context, theme),
+      errorBuilder: (context, error, stackTrace) =>
+          buildImageError(context, theme),
       imageBuilder: (context, imageProvider) => Container(
         margin: const EdgeInsets.symmetric(vertical: Spacing.sm),
         decoration: BoxDecoration(
@@ -460,9 +471,8 @@ class ConduitMarkdown {
     required String code,
   }) {
     final l10n = AppLocalizations.of(context);
-    final textStyle = AppTypography.bodySmallStyle.copyWith(
-      color: conduitTheme.codeText.withValues(alpha: 0.7),
-    );
+    final markdownStyle = ConduitMarkdownStyle.fromTheme(context);
+    final textStyle = _unsupportedPreviewTextStyle(markdownStyle, conduitTheme);
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: Spacing.sm),
@@ -491,7 +501,7 @@ class ConduitMarkdown {
             textAlign: TextAlign.left,
             textDirection: TextDirection.ltr,
             textWidthBasis: TextWidthBasis.parent,
-            style: AppTypography.codeStyle.copyWith(
+            style: markdownStyle.detailCode.copyWith(
               color: conduitTheme.codeText,
             ),
           ),
@@ -570,9 +580,8 @@ class ConduitMarkdown {
     required ConduitThemeExtension conduitTheme,
   }) {
     final l10n = AppLocalizations.of(context);
-    final textStyle = AppTypography.bodySmallStyle.copyWith(
-      color: conduitTheme.codeText.withValues(alpha: 0.7),
-    );
+    final markdownStyle = ConduitMarkdownStyle.fromTheme(context);
+    final textStyle = _unsupportedPreviewTextStyle(markdownStyle, conduitTheme);
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: Spacing.sm),
@@ -590,6 +599,15 @@ class ConduitMarkdown {
             'Chart preview is not available on this platform.',
         style: textStyle,
       ),
+    );
+  }
+
+  static TextStyle _unsupportedPreviewTextStyle(
+    ConduitMarkdownStyle markdownStyle,
+    ConduitThemeExtension conduitTheme,
+  ) {
+    return markdownStyle.detailAction.copyWith(
+      color: conduitTheme.codeText.withValues(alpha: 0.7),
     );
   }
 }
@@ -688,6 +706,7 @@ class _CollapseToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final markdownStyle = ConduitMarkdownStyle.fromTheme(context);
     final labelColor = isDark
         ? const Color(0xFF9DA5B4)
         : const Color(0xFF57606A);
@@ -729,9 +748,8 @@ class _CollapseToggle extends StatelessWidget {
               child: Text(
                 isCollapsed ? 'Show $hiddenLineCount more lines' : 'Show less',
                 key: ValueKey(isCollapsed),
-                style: AppTypography.codeStyle.copyWith(
+                style: markdownStyle.codeChrome.copyWith(
                   color: labelColor,
-                  fontSize: 12,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -781,6 +799,7 @@ class _CodeBlockHeaderState extends State<CodeBlockHeader> {
 
   @override
   Widget build(BuildContext context) {
+    final markdownStyle = ConduitMarkdownStyle.fromTheme(context);
     final label = widget.language.isEmpty ? 'plaintext' : widget.language;
 
     // Colors derived from the code block theme for consistency
@@ -822,18 +841,16 @@ class _CodeBlockHeaderState extends State<CodeBlockHeader> {
           // Language label
           Text(
             label,
-            style: AppTypography.codeStyle.copyWith(
+            style: markdownStyle.codeChrome.copyWith(
               color: labelColor,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              letterSpacing: 0.3,
+              fontWeight: FontWeight.w600,
             ),
           ),
           const Spacer(),
           if (widget.onPreview != null) ...[
             _CodeBlockActionButton(
               icon: Icons.visibility_outlined,
-              label: 'Preview',
+              label: AppLocalizations.of(context)!.preview,
               color: iconColor,
               onTap: widget.onPreview!,
             ),
@@ -878,9 +895,8 @@ class _CodeBlockHeaderState extends State<CodeBlockHeader> {
                         opacity: 1.0,
                         child: Text(
                           _isCopied ? 'Copied!' : 'Copy',
-                          style: AppTypography.codeStyle.copyWith(
+                          style: markdownStyle.codeChrome.copyWith(
                             color: _isCopied ? successColor : iconColor,
-                            fontSize: 11,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -931,6 +947,7 @@ class _CodeBlockActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final markdownStyle = ConduitMarkdownStyle.fromTheme(context);
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
@@ -949,9 +966,8 @@ class _CodeBlockActionButton extends StatelessWidget {
             const SizedBox(width: Spacing.xs),
             Text(
               label,
-              style: AppTypography.codeStyle.copyWith(
+              style: markdownStyle.codeChrome.copyWith(
                 color: color,
-                fontSize: 11,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -1007,6 +1023,8 @@ class _ChartJsDiagramState extends State<ChartJsDiagram> {
   double _height = _chartPreviewMinHeight;
   bool _isLoading = true;
   int _loadRequestId = 0;
+  bool _loadScheduled = false;
+  bool _retryLoadScheduled = false;
   final Set<Factory<OneSequenceGestureRecognizer>> _gestureRecognizers =
       <Factory<OneSequenceGestureRecognizer>>{
         Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
@@ -1015,27 +1033,6 @@ class _ChartJsDiagramState extends State<ChartJsDiagram> {
   @override
   void initState() {
     super.initState();
-    if (!ChartJsDiagram.isSupported) {
-      return;
-    }
-    ChartJsDiagram._loadScript().then((value) {
-      if (!mounted) {
-        return;
-      }
-      _script = value;
-      _controller = WebViewControllerPlus()
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(Colors.transparent)
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onPageFinished: (_) {
-              _scheduleHeightUpdates(_loadRequestId);
-            },
-          ),
-        );
-      _loadHtml();
-      setState(() {});
-    });
   }
 
   @override
@@ -1050,14 +1047,23 @@ class _ChartJsDiagramState extends State<ChartJsDiagram> {
         oldWidget.colorScheme != widget.colorScheme ||
         oldWidget.tokens != widget.tokens;
     if (contentChanged || themeChanged) {
-      _loadHtml();
+      if (_controller != null && _script != null) {
+        _loadHtml();
+      } else {
+        _loadScheduled = false;
+        _retryLoadScheduled = false;
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     if (_controller == null) {
-      return const Center(child: CircularProgressIndicator());
+      _scheduleInitialization(context);
+      return const SizedBox(
+        height: _chartPreviewMinHeight,
+        child: Center(child: CircularProgressIndicator()),
+      );
     }
     return SizedBox(
       height: _height,
@@ -1080,6 +1086,67 @@ class _ChartJsDiagramState extends State<ChartJsDiagram> {
         ],
       ),
     );
+  }
+
+  void _scheduleInitialization(BuildContext context) {
+    if (_loadScheduled || _controller != null || !ChartJsDiagram.isSupported) {
+      return;
+    }
+
+    if (Scrollable.recommendDeferredLoadingForContext(context)) {
+      if (_retryLoadScheduled) {
+        return;
+      }
+      _retryLoadScheduled = true;
+      Future<void>.delayed(const Duration(milliseconds: 250), () {
+        if (!mounted) {
+          return;
+        }
+        _retryLoadScheduled = false;
+        if (_controller == null && !_loadScheduled) {
+          setState(() {});
+        }
+      });
+      return;
+    }
+
+    _retryLoadScheduled = false;
+    _loadScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_initializeController());
+    });
+  }
+
+  Future<void> _initializeController() async {
+    if (!ChartJsDiagram.isSupported || _controller != null) {
+      _loadScheduled = false;
+      return;
+    }
+
+    try {
+      final value = await ChartJsDiagram._loadScript();
+      if (!mounted) {
+        return;
+      }
+      _script = value;
+      _controller = WebViewControllerPlus()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setBackgroundColor(Colors.transparent)
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageFinished: (_) {
+              _scheduleHeightUpdates(_loadRequestId);
+            },
+          ),
+        );
+      _loadHtml();
+      setState(() {});
+    } finally {
+      _loadScheduled = false;
+    }
   }
 
   void _loadHtml() {
@@ -1383,6 +1450,8 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
   double _height = _mermaidPreviewMinHeight;
   bool _isLoading = true;
   int _loadRequestId = 0;
+  bool _loadScheduled = false;
+  bool _retryLoadScheduled = false;
   final Set<Factory<OneSequenceGestureRecognizer>> _gestureRecognizers =
       <Factory<OneSequenceGestureRecognizer>>{
         Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
@@ -1391,27 +1460,6 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
   @override
   void initState() {
     super.initState();
-    if (!MermaidDiagram.isSupported) {
-      return;
-    }
-    MermaidDiagram._loadScript().then((value) {
-      if (!mounted) {
-        return;
-      }
-      _script = value;
-      _controller = WebViewControllerPlus()
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(Colors.transparent)
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onPageFinished: (_) {
-              _scheduleHeightUpdates(_loadRequestId);
-            },
-          ),
-        );
-      _loadHtml();
-      setState(() {});
-    });
   }
 
   @override
@@ -1426,14 +1474,23 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
         oldWidget.colorScheme != widget.colorScheme ||
         oldWidget.tokens != widget.tokens;
     if (codeChanged || themeChanged) {
-      _loadHtml();
+      if (_controller != null && _script != null) {
+        _loadHtml();
+      } else {
+        _loadScheduled = false;
+        _retryLoadScheduled = false;
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     if (_controller == null) {
-      return const Center(child: CircularProgressIndicator());
+      _scheduleInitialization(context);
+      return const SizedBox(
+        height: _mermaidPreviewMinHeight,
+        child: Center(child: CircularProgressIndicator()),
+      );
     }
     return SizedBox(
       height: _height,
@@ -1456,6 +1513,67 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
         ],
       ),
     );
+  }
+
+  void _scheduleInitialization(BuildContext context) {
+    if (_loadScheduled || _controller != null || !MermaidDiagram.isSupported) {
+      return;
+    }
+
+    if (Scrollable.recommendDeferredLoadingForContext(context)) {
+      if (_retryLoadScheduled) {
+        return;
+      }
+      _retryLoadScheduled = true;
+      Future<void>.delayed(const Duration(milliseconds: 250), () {
+        if (!mounted) {
+          return;
+        }
+        _retryLoadScheduled = false;
+        if (_controller == null && !_loadScheduled) {
+          setState(() {});
+        }
+      });
+      return;
+    }
+
+    _retryLoadScheduled = false;
+    _loadScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_initializeController());
+    });
+  }
+
+  Future<void> _initializeController() async {
+    if (!MermaidDiagram.isSupported || _controller != null) {
+      _loadScheduled = false;
+      return;
+    }
+
+    try {
+      final value = await MermaidDiagram._loadScript();
+      if (!mounted) {
+        return;
+      }
+      _script = value;
+      _controller = WebViewControllerPlus()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setBackgroundColor(Colors.transparent)
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageFinished: (_) {
+              _scheduleHeightUpdates(_loadRequestId);
+            },
+          ),
+        );
+      _loadHtml();
+      setState(() {});
+    } finally {
+      _loadScheduled = false;
+    }
   }
 
   void _loadHtml() {

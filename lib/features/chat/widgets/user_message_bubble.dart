@@ -1,26 +1,44 @@
+import 'dart:io' show Platform;
+import 'dart:math' as math;
+
 import 'package:adaptive_platform_ui/adaptive_platform_ui.dart';
+import 'package:conduit/core/services/haptic_service.dart';
+import 'package:conduit/l10n/app_localizations.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/providers/app_providers.dart';
+import '../../../core/services/navigation_service.dart';
+import '../../../shared/services/tasks/task_queue.dart';
 import '../../../shared/theme/conduit_input_styles.dart';
 import '../../../shared/theme/theme_extensions.dart';
-import 'enhanced_image_attachment.dart';
-import 'enhanced_attachment.dart';
-
-import 'package:flutter/cupertino.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'dart:io' show Platform;
-import 'package:conduit/l10n/app_localizations.dart';
-import 'package:conduit/core/services/haptic_service.dart';
-import '../../../core/providers/app_providers.dart';
-import '../providers/chat_providers.dart';
-import '../../../shared/services/tasks/task_queue.dart';
 import '../../../shared/utils/conversation_context_menu.dart';
 import '../../tools/providers/tools_providers.dart';
+import '../providers/chat_providers.dart';
 import '../utils/file_utils.dart';
-import '../../../core/services/navigation_service.dart';
+import '../utils/message_targeting.dart';
+import 'enhanced_attachment.dart';
+import 'enhanced_image_attachment.dart';
 
 // Pre-compiled regex for extracting file IDs from URLs (performance optimization)
 // Handles both /api/v1/files/{id} and /api/v1/files/{id}/content formats
 final _fileIdPattern = RegExp(r'/api/v1/files/([^/]+)(?:/content)?$');
+
+class _UserFilePartitions {
+  const _UserFilePartitions({
+    required this.imageFiles,
+    required this.noteFiles,
+    required this.nonImageFiles,
+  });
+
+  final List<dynamic> imageFiles;
+  final List<dynamic> noteFiles;
+  final List<dynamic> nonImageFiles;
+
+  bool get hasRenderableFiles =>
+      imageFiles.isNotEmpty || noteFiles.isNotEmpty || nonImageFiles.isNotEmpty;
+}
 
 class UserMessageBubble extends ConsumerStatefulWidget {
   final dynamic message;
@@ -28,6 +46,7 @@ class UserMessageBubble extends ConsumerStatefulWidget {
   final bool isStreaming;
   final String? modelName;
   final VoidCallback? onCopy;
+  final VoidCallback onDelete;
   final VoidCallback? onEdit;
   final VoidCallback? onRegenerate;
   final VoidCallback? onLike;
@@ -40,6 +59,7 @@ class UserMessageBubble extends ConsumerStatefulWidget {
     this.isStreaming = false,
     this.modelName,
     this.onCopy,
+    required this.onDelete,
     this.onEdit,
     this.onRegenerate,
     this.onLike,
@@ -54,7 +74,8 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
   bool _isEditing = false;
   late final TextEditingController _editController;
   final FocusNode _editFocusNode = FocusNode();
-  final GlobalKey _bubbleKey = GlobalKey();
+  List<dynamic>? _lastPartitionedFiles;
+  _UserFilePartitions? _lastFilePartitions;
 
   @override
   void initState() {
@@ -80,33 +101,10 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
     );
   }
 
-  Widget _buildUserFileImages() {
-    if (widget.message.files == null || widget.message.files!.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    final allFiles = widget.message.files!;
-
-    // Separate images and non-image files
-    // Match OpenWebUI: type === 'image' OR content_type starts with 'image/'
-    final imageFiles = allFiles
-        .where(
-          (file) =>
-              file is Map && isImageFile(file) && getFileUrl(file) != null,
-        )
-        .toList();
-    final noteFiles = allFiles
-        .where((file) => file is Map && _isRenderableNoteAttachment(file))
-        .toList();
-    final nonImageFiles = allFiles
-        .where(
-          (file) =>
-              file is Map &&
-              !_isRenderableNoteAttachment(file) &&
-              !isImageFile(file) &&
-              getFileUrl(file) != null,
-        )
-        .toList();
+  Widget _buildUserFileImages(_UserFilePartitions partitions) {
+    final imageFiles = partitions.imageFiles;
+    final noteFiles = partitions.noteFiles;
+    final nonImageFiles = partitions.nonImageFiles;
 
     final widgets = <Widget>[];
 
@@ -153,6 +151,54 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
     return file['type'] == 'note';
   }
 
+  _UserFilePartitions? _currentFilePartitions() {
+    final files = widget.message.files;
+    if (files is! List || files.isEmpty) {
+      return null;
+    }
+    return _partitionUserFiles(files);
+  }
+
+  _UserFilePartitions _partitionUserFiles(List<dynamic> files) {
+    if (identical(_lastPartitionedFiles, files) &&
+        _lastFilePartitions != null) {
+      return _lastFilePartitions!;
+    }
+
+    final imageFiles = <dynamic>[];
+    final noteFiles = <dynamic>[];
+    final nonImageFiles = <dynamic>[];
+
+    for (final file in files) {
+      if (file is! Map) {
+        continue;
+      }
+      if (_isRenderableNoteAttachment(file)) {
+        noteFiles.add(file);
+        continue;
+      }
+
+      final fileUrl = getFileUrl(file);
+      if (fileUrl == null) {
+        continue;
+      }
+      if (isImageFile(file)) {
+        imageFiles.add(file);
+      } else {
+        nonImageFiles.add(file);
+      }
+    }
+
+    final partitions = _UserFilePartitions(
+      imageFiles: imageFiles,
+      noteFiles: noteFiles,
+      nonImageFiles: nonImageFiles,
+    );
+    _lastPartitionedFiles = files;
+    _lastFilePartitions = partitions;
+    return partitions;
+  }
+
   Widget _buildFileImageLayout(List<dynamic> imageFiles, int imageCount) {
     if (imageCount == 1) {
       final file = imageFiles[0];
@@ -172,16 +218,18 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
               borderRadius: BorderRadius.circular(
                 AppBorderRadius.messageBubble,
               ),
-              child: EnhancedImageAttachment(
-                attachmentId: imageUrl,
-                isUserMessage: true,
-                isMarkdownFormat: false,
-                constraints: const BoxConstraints(
-                  maxWidth: 280,
-                  maxHeight: 350,
+              child: RepaintBoundary(
+                child: EnhancedImageAttachment(
+                  attachmentId: imageUrl,
+                  isUserMessage: true,
+                  isMarkdownFormat: false,
+                  constraints: const BoxConstraints(
+                    maxWidth: 280,
+                    maxHeight: 350,
+                  ),
+                  disableAnimation: widget.isStreaming,
+                  httpHeaders: _headersForFile(file),
                 ),
-                disableAnimation: widget.isStreaming,
-                httpHeaders: _headersForFile(file),
               ),
             ),
           ),
@@ -215,17 +263,19 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
                       borderRadius: BorderRadius.circular(
                         AppBorderRadius.messageBubble,
                       ),
-                      child: EnhancedImageAttachment(
-                        key: ValueKey('user_file_attachment_$imageUrl'),
-                        attachmentId: imageUrl,
-                        isUserMessage: true,
-                        isMarkdownFormat: false,
-                        constraints: const BoxConstraints(
-                          maxWidth: 135,
-                          maxHeight: 180,
+                      child: RepaintBoundary(
+                        child: EnhancedImageAttachment(
+                          key: ValueKey('user_file_attachment_$imageUrl'),
+                          attachmentId: imageUrl,
+                          isUserMessage: true,
+                          isMarkdownFormat: false,
+                          constraints: const BoxConstraints(
+                            maxWidth: 135,
+                            maxHeight: 180,
+                          ),
+                          disableAnimation: widget.isStreaming,
+                          httpHeaders: _headersForFile(file),
                         ),
-                        disableAnimation: widget.isStreaming,
-                        httpHeaders: _headersForFile(file),
                       ),
                     ),
                   ),
@@ -258,17 +308,19 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(AppBorderRadius.md),
-                      child: EnhancedImageAttachment(
-                        key: ValueKey('user_file_grid_attachment_$imageUrl'),
-                        attachmentId: imageUrl,
-                        isUserMessage: true,
-                        isMarkdownFormat: false,
-                        constraints: BoxConstraints(
-                          maxWidth: imageCount == 3 ? 135 : 90,
-                          maxHeight: imageCount == 3 ? 135 : 90,
+                      child: RepaintBoundary(
+                        child: EnhancedImageAttachment(
+                          key: ValueKey('user_file_grid_attachment_$imageUrl'),
+                          attachmentId: imageUrl,
+                          isUserMessage: true,
+                          isMarkdownFormat: false,
+                          constraints: BoxConstraints(
+                            maxWidth: imageCount == 3 ? 135 : 90,
+                            maxHeight: imageCount == 3 ? 135 : 90,
+                          ),
+                          disableAnimation: widget.isStreaming,
+                          httpHeaders: _headersForFile(file),
                         ),
-                        disableAnimation: widget.isStreaming,
-                        httpHeaders: _headersForFile(file),
                       ),
                     ),
                   );
@@ -463,60 +515,57 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
 
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 280),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppBorderRadius.md),
-          onTap: noteId == null || noteId.isEmpty
-              ? null
-              : () {
-                  ConduitHaptics.selectionClick();
-                  NavigationService.router.go('/notes/$noteId');
-                },
-          child: Ink(
-            padding: const EdgeInsets.all(Spacing.md),
-            decoration: BoxDecoration(
-              color: theme.cardBackground,
-              borderRadius: BorderRadius.circular(AppBorderRadius.md),
-              border: Border.all(
-                color: theme.textPrimary.withValues(alpha: 0.12),
-                width: BorderWidth.regular,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: noteId == null || noteId.isEmpty
+            ? null
+            : () {
+                ConduitHaptics.selectionClick();
+                NavigationService.router.go('/notes/$noteId');
+              },
+        child: Container(
+          padding: const EdgeInsets.all(Spacing.md),
+          decoration: BoxDecoration(
+            color: theme.cardBackground,
+            borderRadius: BorderRadius.circular(AppBorderRadius.md),
+            border: Border.all(
+              color: theme.textPrimary.withValues(alpha: 0.12),
+              width: BorderWidth.regular,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: theme.buttonPrimary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(AppBorderRadius.small),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  Platform.isIOS
+                      ? CupertinoIcons.doc_text
+                      : Icons.sticky_note_2_outlined,
+                  color: theme.buttonPrimary,
+                  size: IconSize.medium,
+                ),
               ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: theme.buttonPrimary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(AppBorderRadius.small),
-                  ),
-                  alignment: Alignment.center,
-                  child: Icon(
-                    Platform.isIOS
-                        ? CupertinoIcons.doc_text
-                        : Icons.sticky_note_2_outlined,
-                    color: theme.buttonPrimary,
-                    size: IconSize.medium,
+              const SizedBox(width: Spacing.sm),
+              Flexible(
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.bodySmallStyle.copyWith(
+                    color: theme.textPrimary,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
                   ),
                 ),
-                const SizedBox(width: Spacing.sm),
-                Flexible(
-                  child: Text(
-                    title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTypography.bodySmallStyle.copyWith(
-                      color: theme.textPrimary,
-                      fontWeight: FontWeight.w600,
-                      height: 1.3,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -575,6 +624,16 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
           }
         },
       ),
+      ConduitContextMenuAction(
+        cupertinoIcon: CupertinoIcons.delete,
+        materialIcon: Icons.delete_outline,
+        label: l10n.delete,
+        destructive: true,
+        onBeforeClose: () => ConduitHaptics.mediumImpact(),
+        onSelected: () async {
+          widget.onDelete();
+        },
+      ),
     ];
   }
 
@@ -584,66 +643,68 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
   }
 
   Widget _buildUserMessage() {
+    final theme = context.conduitTheme;
     final hasImages =
         widget.message.attachmentIds != null &&
         widget.message.attachmentIds!.isNotEmpty;
     final hasText = widget.message.content.isNotEmpty;
-    final hasFilesFromArray =
-        widget.message.files != null &&
-        (widget.message.files as List).any(
-          (f) =>
-              f is Map && (f['url'] != null || _isRenderableNoteAttachment(f)),
-        );
+    final filePartitions = _currentFilePartitions();
+    final hasFilesFromArray = filePartitions?.hasRenderableFiles ?? false;
     // Prefer input/textPrimary colors during inline editing to avoid low contrast
-    final inlineEditTextColor = context.conduitTheme.textPrimary;
-    final inlineEditFill = context.conduitTheme.surfaceContainer.withValues(
-      alpha: 0.92,
+    final inlineEditTextColor = theme.textPrimary;
+    final inlineEditFill = theme.surfaceContainer.withValues(alpha: 0.92);
+    final bubbleMaxWidth = math.min(
+      MediaQuery.sizeOf(context).width * 0.78,
+      640.0,
     );
-    // Use rounded rectangle for multiline, pill for single-line (like chat input)
-    // Consider multiline if text exceeds ~50 chars or contains newlines
-    // Check length first (O(1)) to short-circuit before scanning for newlines
-    final content = widget.message.content;
-    final isMultiline = content.length > 50 || content.contains('\n');
-    final bubbleRadius = isMultiline
-        ? AppBorderRadius.xl
-        : AppBorderRadius.pill;
+    final bubbleBorderColor = theme.chatBubbleUserText.withValues(
+      alpha: theme.isDark ? 0.16 : 0.08,
+    );
+    const bubbleBorderRadius = BorderRadius.only(
+      topLeft: Radius.circular(AppBorderRadius.chatBubble),
+      topRight: Radius.circular(AppBorderRadius.chatBubble),
+      bottomLeft: Radius.circular(AppBorderRadius.chatBubble),
+      bottomRight: Radius.circular(AppBorderRadius.md),
+    );
+    final actions = _buildMessageActions(context);
+    final attachmentContent = hasFilesFromArray
+        ? _buildUserFileImages(filePartitions!)
+        : hasImages
+        ? _buildUserAttachmentImages()
+        : null;
 
-    return ConduitContextMenu(
-      actions: _buildMessageActions(context),
-      child: Container(
-        width: double.infinity,
-        margin: const EdgeInsets.only(bottom: Spacing.md, left: Spacing.xxxl),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            // Display images outside and above the text bubble (iMessage style)
-            // Prioritize files array over attachmentIds to avoid duplication
-            if (hasFilesFromArray) ...[
-              _buildUserFileImages(),
-            ] else if (hasImages) ...[
-              _buildUserAttachmentImages(),
-            ],
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: Spacing.lg, left: Spacing.xxl),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // Display images outside and above the text bubble (iMessage style)
+          // Prioritize files array over attachmentIds to avoid duplication
+          if (attachmentContent != null)
+            ConduitContextMenu(actions: actions, child: attachmentContent),
 
-            // Display text bubble if there's text content
-            if (hasText) const SizedBox(height: Spacing.xs),
-            if (hasText)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Flexible(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: MediaQuery.of(context).size.width * 0.82,
-                      ),
+          // Display text bubble if there's text content
+          if (hasText) const SizedBox(height: Spacing.xs),
+          if (hasText)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Flexible(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: bubbleMaxWidth),
+                    child: ConduitContextMenu(
+                      actions: actions,
                       child: Container(
-                        key: _bubbleKey,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: Spacing.md,
-                          vertical: Spacing.md,
-                        ),
+                        key: const Key('user-message-bubble-surface'),
+                        padding: const EdgeInsets.all(Spacing.sm + Spacing.xs),
                         decoration: BoxDecoration(
-                          color: context.conduitTheme.chatBubbleUser,
-                          borderRadius: BorderRadius.circular(bubbleRadius),
+                          color: theme.chatBubbleUser,
+                          borderRadius: bubbleBorderRadius,
+                          border: Border.all(
+                            color: bubbleBorderColor,
+                            width: BorderWidth.thin,
+                          ),
                         ),
                         child: _isEditing
                             ? Focus(
@@ -656,9 +717,7 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
                                       AppBorderRadius.small,
                                     ),
                                     border: Border.all(
-                                      color: context
-                                          .conduitTheme
-                                          .inputBorderFocused
+                                      color: theme.inputBorderFocused
                                           .withValues(alpha: 0.5),
                                       width: BorderWidth.thin,
                                     ),
@@ -690,11 +749,11 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
                             : Text(
                                 widget.message.content,
                                 style: AppTypography.chatMessageStyle.copyWith(
-                                  color:
-                                      context.conduitTheme.chatBubbleUserText,
+                                  color: theme.chatBubbleUserText,
                                 ),
                                 softWrap: true,
                                 textAlign: TextAlign.left,
+                                textWidthBasis: TextWidthBasis.longestLine,
                                 textHeightBehavior: const TextHeightBehavior(
                                   applyHeightToFirstAscent: false,
                                   applyHeightToLastDescent: false,
@@ -705,16 +764,16 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
+            ),
 
-            // Edit action buttons - show Save/Cancel when editing
-            if (_isEditing) ...[
-              const SizedBox(height: Spacing.sm),
-              _buildEditActionButtons(),
-            ],
+          // Edit action buttons - show Save/Cancel when editing
+          if (_isEditing) ...[
+            const SizedBox(height: Spacing.sm),
+            _buildEditActionButtons(),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -727,79 +786,73 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         // Cancel button
-        Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: _cancelInlineEdit,
-            borderRadius: BorderRadius.circular(AppBorderRadius.small),
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: Spacing.md,
-                vertical: Spacing.xs,
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _cancelInlineEdit,
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: Spacing.md,
+              vertical: Spacing.xs,
+            ),
+            decoration: BoxDecoration(
+              color: theme.surfaceContainer,
+              borderRadius: BorderRadius.circular(AppBorderRadius.small),
+              border: Border.all(
+                color: theme.cardBorder,
+                width: BorderWidth.thin,
               ),
-              decoration: BoxDecoration(
-                color: theme.surfaceContainer,
-                borderRadius: BorderRadius.circular(AppBorderRadius.small),
-                border: Border.all(
-                  color: theme.cardBorder,
-                  width: BorderWidth.thin,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Platform.isIOS ? CupertinoIcons.xmark : Icons.close,
+                  size: IconSize.xs,
+                  color: theme.textSecondary,
                 ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Platform.isIOS ? CupertinoIcons.xmark : Icons.close,
-                    size: IconSize.xs,
+                const SizedBox(width: Spacing.xs),
+                Text(
+                  l10n.cancel,
+                  style: AppTypography.standard.copyWith(
                     color: theme.textSecondary,
+                    fontWeight: FontWeight.w500,
                   ),
-                  const SizedBox(width: Spacing.xs),
-                  Text(
-                    l10n.cancel,
-                    style: AppTypography.standard.copyWith(
-                      color: theme.textSecondary,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
         const SizedBox(width: Spacing.sm),
         // Save button
-        Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: _saveInlineEdit,
-            borderRadius: BorderRadius.circular(AppBorderRadius.small),
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: Spacing.md,
-                vertical: Spacing.xs,
-              ),
-              decoration: BoxDecoration(
-                color: theme.buttonPrimary,
-                borderRadius: BorderRadius.circular(AppBorderRadius.small),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Platform.isIOS ? CupertinoIcons.check_mark : Icons.check,
-                    size: IconSize.xs,
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _saveInlineEdit,
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: Spacing.md,
+              vertical: Spacing.xs,
+            ),
+            decoration: BoxDecoration(
+              color: theme.buttonPrimary,
+              borderRadius: BorderRadius.circular(AppBorderRadius.small),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Platform.isIOS ? CupertinoIcons.check_mark : Icons.check,
+                  size: IconSize.xs,
+                  color: theme.buttonPrimaryText,
+                ),
+                const SizedBox(width: Spacing.xs),
+                Text(
+                  l10n.save,
+                  style: AppTypography.standard.copyWith(
                     color: theme.buttonPrimaryText,
+                    fontWeight: FontWeight.w600,
                   ),
-                  const SizedBox(width: Spacing.xs),
-                  Text(
-                    l10n.save,
-                    style: AppTypography.standard.copyWith(
-                      color: theme.buttonPrimaryText,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
@@ -841,11 +894,19 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
     }
 
     try {
-      // Remove messages after this one
+      final messageId = widget.message.id?.toString();
+      if (messageId == null || messageId.isEmpty) {
+        return;
+      }
+
       final messages = ref.read(chatMessagesProvider);
-      final idx = messages.indexOf(widget.message);
+      final idx = indexOfMessageId(messages, messageId);
       if (idx >= 0) {
-        final keep = messages.take(idx).toList(growable: false);
+        final keep = truncateMessagesAfterId(
+          messages,
+          messageId,
+          includeTarget: false,
+        );
         ref.read(chatMessagesProvider.notifier).setMessages(keep);
 
         // Enqueue edited text as a new message

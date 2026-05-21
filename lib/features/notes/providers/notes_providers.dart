@@ -5,6 +5,24 @@ import 'package:conduit/core/providers/app_providers.dart';
 
 part 'notes_providers.g.dart';
 
+List<Note> _sortNotes(Iterable<Note> notes) {
+  final sorted = notes.toList(growable: true);
+  sorted.sort((a, b) {
+    final updatedCompare = b.updatedAt.compareTo(a.updatedAt);
+    if (updatedCompare != 0) {
+      return updatedCompare;
+    }
+
+    final createdCompare = b.createdAt.compareTo(a.createdAt);
+    if (createdCompare != 0) {
+      return createdCompare;
+    }
+
+    return a.id.compareTo(b.id);
+  });
+  return List<Note>.unmodifiable(sorted);
+}
+
 /// Provider for the list of all notes with user information.
 @Riverpod(keepAlive: true)
 class NotesList extends _$NotesList {
@@ -18,7 +36,7 @@ class NotesList extends _$NotesList {
     // Update the notes feature enabled state
     ref.read(notesFeatureEnabledProvider.notifier).setEnabled(featureEnabled);
 
-    return rawNotes.map((json) => Note.fromJson(json)).toList();
+    return _sortNotes(rawNotes.map((json) => Note.fromJson(json)));
   }
 
   /// Refresh the notes list from the server.
@@ -32,7 +50,7 @@ class NotesList extends _$NotesList {
   /// Add a newly created note to the list.
   void addNote(Note note) {
     final current = state.value ?? [];
-    state = AsyncValue.data([note, ...current]);
+    state = AsyncValue.data(_sortNotes([note, ...current]));
   }
 
   /// Update an existing note in the list.
@@ -41,19 +59,19 @@ class NotesList extends _$NotesList {
     final updated = current.map((n) {
       return n.id == updatedNote.id ? updatedNote : n;
     }).toList();
-    state = AsyncValue.data(updated);
+    state = AsyncValue.data(_sortNotes(updated));
   }
 
   /// Remove a note from the list.
   void removeNote(String noteId) {
     final current = state.value ?? [];
     final updated = current.where((n) => n.id != noteId).toList();
-    state = AsyncValue.data(updated);
+    state = AsyncValue.data(_sortNotes(updated));
   }
 }
 
 /// Provider for a single note by ID.
-@riverpod
+@Riverpod(keepAlive: true)
 Future<Note?> noteById(Ref ref, String id) async {
   final api = ref.watch(apiServiceProvider);
   if (api == null) return null;
@@ -95,7 +113,7 @@ TimeRange getTimeRangeForTimestamp(DateTime timestamp) {
 }
 
 /// Provider that returns notes grouped by time range.
-@riverpod
+@Riverpod(keepAlive: true)
 Map<TimeRange, List<Note>> notesGroupedByTime(Ref ref) {
   final notesAsync = ref.watch(notesListProvider);
   final notes = notesAsync.value ?? [];
@@ -111,11 +129,7 @@ Map<TimeRange, List<Note>> notesGroupedByTime(Ref ref) {
 }
 
 /// Provider for notes filtered by search query.
-@riverpod
-List<Note> filteredNotes(Ref ref, String query) {
-  final notesAsync = ref.watch(notesListProvider);
-  final notes = notesAsync.value ?? [];
-
+List<Note> filterNotesByQuery(List<Note> notes, String query) {
   if (query.isEmpty) return notes;
 
   final lowerQuery = query.toLowerCase();
@@ -126,6 +140,13 @@ List<Note> filteredNotes(Ref ref, String query) {
     );
     return titleMatch || contentMatch;
   }).toList();
+}
+
+/// Provider for notes filtered by search query.
+@Riverpod(keepAlive: true)
+Future<List<Note>> filteredNotes(Ref ref, String query) async {
+  final notes = await ref.watch(notesListProvider.future);
+  return filterNotesByQuery(notes, query);
 }
 
 /// Provider for creating a new note.
@@ -245,6 +266,48 @@ class NoteUpdater extends _$NoteUpdater {
   }
 }
 
+/// Provider for toggling a note's pinned state.
+@Riverpod(keepAlive: true)
+class NotePinToggler extends _$NotePinToggler {
+  @override
+  AsyncValue<Note?> build() => const AsyncValue.data(null);
+
+  Future<Note?> togglePin(Note note) async {
+    state = const AsyncValue.loading();
+
+    final api = ref.read(apiServiceProvider);
+    if (api == null) {
+      if (!ref.mounted) return null;
+      state = AsyncValue.error(
+        Exception('API service not available'),
+        StackTrace.current,
+      );
+      return null;
+    }
+
+    try {
+      final json = await api.toggleNotePinned(note.id);
+      if (!ref.mounted) return null;
+
+      final updatedNote = Note.fromJson(json);
+      ref.read(notesListProvider.notifier).updateNote(updatedNote);
+
+      final activeNote = ref.read(activeNoteProvider);
+      if (activeNote?.id == updatedNote.id) {
+        ref.read(activeNoteProvider.notifier).set(updatedNote);
+      }
+
+      ref.invalidate(noteByIdProvider(updatedNote.id));
+      state = AsyncValue.data(updatedNote);
+      return updatedNote;
+    } catch (e, st) {
+      if (!ref.mounted) return null;
+      state = AsyncValue.error(e, st);
+      return null;
+    }
+  }
+}
+
 /// Provider for deleting a note.
 @Riverpod(keepAlive: true)
 class NoteDeleter extends _$NoteDeleter {
@@ -286,7 +349,7 @@ class NoteDeleter extends _$NoteDeleter {
 }
 
 /// Provider for the currently active/selected note.
-@riverpod
+@Riverpod(keepAlive: true)
 class ActiveNote extends _$ActiveNote {
   @override
   Note? build() => null;

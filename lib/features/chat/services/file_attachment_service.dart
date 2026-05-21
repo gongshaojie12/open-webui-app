@@ -8,6 +8,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as path;
 import '../../../core/providers/app_providers.dart';
+import '../../../core/models/file_info.dart';
 import '../../../shared/utils/file_type_utils.dart';
 import '../../../core/services/worker_manager.dart';
 import '../../../core/utils/debug_logger.dart';
@@ -241,7 +242,7 @@ class FileAttachmentService {
     List<String>? allowedExtensions,
   }) async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         allowMultiple: allowMultiple,
         type: allowedExtensions != null ? FileType.custom : FileType.any,
         allowedExtensions: allowedExtensions,
@@ -269,8 +270,23 @@ class FileAttachmentService {
 
   // Pick image from gallery
   Future<LocalAttachment?> pickImage() async {
+    if (Platform.isAndroid || Platform.isIOS) {
+      try {
+        return await _pickImageWithImagePicker();
+      } catch (e) {
+        DebugLogger.log(
+          'ImagePicker image failed: $e',
+          scope: 'attachments/image',
+        );
+      }
+    }
+
+    return _pickImageWithFilePicker();
+  }
+
+  Future<LocalAttachment?> _pickImageWithFilePicker() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         allowMultiple: false,
         type: FileType.image,
       );
@@ -296,6 +312,11 @@ class FileAttachmentService {
       );
     }
 
+    if (Platform.isAndroid || Platform.isIOS) return null;
+    return _pickImageWithImagePicker();
+  }
+
+  Future<LocalAttachment?> _pickImageWithImagePicker() async {
     try {
       final XFile? image = await _imagePicker.pickImage(
         source: ImageSource.gallery,
@@ -499,6 +520,9 @@ class FileUploadState {
   /// Human-readable file size string.
   String get formattedSize => FileTypeUtils.formatFileSize(fileSize);
 
+  /// Whether this attachment references a previously uploaded server file.
+  bool get isRemote => file.path.startsWith('remote://');
+
   /// Emoji icon representing the file type.
   String get fileIcon {
     final ext = path.extension(fileName).toLowerCase();
@@ -520,7 +544,7 @@ class MockFileAttachmentService {
     List<String>? allowedExtensions,
   }) async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         allowMultiple: allowMultiple,
         type: allowedExtensions != null ? FileType.custom : FileType.any,
         allowedExtensions: allowedExtensions,
@@ -620,6 +644,25 @@ class AttachedFilesNotifier extends Notifier<List<FileUploadState>> {
         .toList();
 
     state = [...state, ...newStates];
+  }
+
+  void addRemoteFile(FileInfo file) {
+    if (state.any((entry) => entry.fileId == file.id)) {
+      return;
+    }
+
+    state = [
+      ...state,
+      FileUploadState(
+        file: File('remote://${file.id}'),
+        fileName: file.displayName,
+        fileSize: file.size,
+        progress: 1.0,
+        status: FileUploadStatus.completed,
+        fileId: file.id,
+        isImage: false,
+      ),
+    ];
   }
 
   void updateFileState(String filePath, FileUploadState newState) {

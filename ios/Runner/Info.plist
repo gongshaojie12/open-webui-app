@@ -25,6 +25,7 @@
 			<string>es</string>
 			<string>fr</string>
 			<string>it</string>
+			<string>ja</string>
 			<string>ko</string>
 			<string>nl</string>
 			<string>ru</string>
@@ -58,14 +59,18 @@
 				<string>app.cogwheel.conduit.widget</string>
 				<key>CFBundleURLSchemes</key>
 				<array>
-					<string>conduit</string>
+					<string>$(APP_URL_SCHEME)</string>
 				</array>
 			</dict>
 		</array>
 		<key>CFBundleVersion</key>
 		<string>$(FLUTTER_BUILD_NUMBER)</string>
 		<key>AppGroupId</key>
-		<string>group.app.cogwheel.conduit</string>
+		<string>$(APP_GROUP_ID)</string>
+		<key>FLTEnableImpeller</key>
+		<true/>
+		<key>FLTEnableWideGamut</key>
+		<true/>
 		<key>ITSAppUsesNonExemptEncryption</key>
 		<false/>
 		<key>LSApplicationQueriesSchemes</key>
@@ -96,7 +101,6 @@
 		<array>
 			<string>audio</string>
 			<string>processing</string>
-			<string>remote-notification</string>
 			<string>voip</string>
 		</array>
 		<key>UILaunchStoryboardName</key>

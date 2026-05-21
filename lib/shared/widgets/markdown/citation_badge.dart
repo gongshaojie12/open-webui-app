@@ -1,4 +1,3 @@
-import 'package:adaptive_platform_ui/adaptive_platform_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -15,6 +14,35 @@ Future<void> _launchSourceUrl(String url) async {
   } catch (_) {
     // Ignore source launch failures.
   }
+}
+
+TextStyle _badgeLabelTextStyle(BuildContext context, Color color) {
+  final textTheme = Theme.of(context).textTheme;
+  return textTheme.labelSmall?.copyWith(
+        color: color,
+        fontWeight: FontWeight.w500,
+        fontSize: 10,
+        height: 1,
+      ) ??
+      AppTypography.labelSmallStyle.copyWith(
+        color: color,
+        fontWeight: FontWeight.w500,
+        fontSize: 10,
+        height: 1,
+      );
+}
+
+TextStyle _badgeCountTextStyle(BuildContext context, Color color) {
+  final textTheme = Theme.of(context).textTheme;
+  return textTheme.labelSmall?.copyWith(
+        color: color,
+        fontWeight: FontWeight.w600,
+        fontSize: AppTypography.labelSmallStyle.fontSize,
+      ) ??
+      AppTypography.labelSmallStyle.copyWith(
+        color: color,
+        fontWeight: FontWeight.w600,
+      );
 }
 
 /// A compact inline citation badge showing source domain/title.
@@ -40,6 +68,7 @@ class CitationBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = context.conduitTheme;
+    final badgeTextStyle = _badgeLabelTextStyle(context, theme.textSecondary);
 
     // Check if index is valid
     if (sourceIndex < 0 || sourceIndex >= sources.length) {
@@ -49,40 +78,36 @@ class CitationBadge extends StatelessWidget {
     final source = sources[sourceIndex];
     final url = SourceReferenceHelper.getSourceUrl(source);
     final title = SourceReferenceHelper.getSourceLabel(source, sourceIndex);
-    final displayTitle = SourceReferenceHelper.formatDisplayTitle(title);
+    final inlineTitle = SourceReferenceHelper.getInlineSourceLabel(
+      source,
+      sourceIndex,
+    );
+    final displayTitle = SourceReferenceHelper.formatDisplayTitle(inlineTitle);
 
-    return AdaptiveTooltip(
+    return Tooltip(
       message: title,
       preferBelow: false,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () {
-            if (onTap != null) {
-              onTap!();
-            } else if (url != null) {
-              _launchSourceUrl(url);
-            }
-          },
-          borderRadius: BorderRadius.circular(20),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-            margin: const EdgeInsets.symmetric(horizontal: 1),
-            decoration: BoxDecoration(
-              color: theme.surfaceContainer.withValues(alpha: 0.24),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              displayTitle,
-              style: TextStyle(
-                fontSize: 10,
-                height: 1,
-                fontWeight: FontWeight.w500,
-                color: theme.textSecondary,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          if (onTap != null) {
+            onTap!();
+          } else if (url != null) {
+            _launchSourceUrl(url);
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+          margin: const EdgeInsets.symmetric(horizontal: 1),
+          decoration: BoxDecoration(
+            color: theme.surfaceContainer.withValues(alpha: 0.24),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            displayTitle,
+            style: badgeTextStyle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       ),
@@ -128,6 +153,8 @@ class CitationBadgeGroup extends StatelessWidget {
     }
 
     final theme = context.conduitTheme;
+    final badgeTextStyle = _badgeLabelTextStyle(context, theme.textSecondary);
+    final countTextStyle = _badgeCountTextStyle(context, theme.buttonPrimary);
 
     // Get first valid source for display
     final firstIndex = sourceIndices.first;
@@ -138,89 +165,92 @@ class CitationBadgeGroup extends StatelessWidget {
     }
 
     final firstSource = sources[firstIndex];
-    final firstTitle = SourceReferenceHelper.getSourceLabel(
+    final firstTitle = SourceReferenceHelper.getInlineSourceLabel(
       firstSource,
       firstIndex,
     );
     final displayTitle = SourceReferenceHelper.formatDisplayTitle(firstTitle);
     final additionalCount = sourceIndices.length - 1;
 
-    final menuItems = sourceIndices
+    final validIndices = sourceIndices
         .where((index) => index >= 0 && index < sources.length)
-        .map((index) {
-          final source = sources[index];
-          final title = SourceReferenceHelper.getSourceLabel(source, index);
-          return AdaptivePopupMenuItem<int>(
-            value: index,
-            label: SourceReferenceHelper.formatDisplayTitle(title),
-            icon: PlatformInfo.isIOS ? 'link' : Icons.link_rounded,
-          );
-        })
-        .toList();
+        .toList(growable: false);
 
-    return AdaptivePopupMenuButton.widget<int>(
-      items: menuItems,
-      onSelected: (_, entry) {
-        final index = entry.value;
-        if (index == null) return;
-
-        if (onSourceTap != null) {
-          onSourceTap!(index);
-          return;
-        }
-
-        if (index >= 0 && index < sources.length) {
-          final url = SourceReferenceHelper.getSourceUrl(sources[index]);
-          if (url != null) {
-            _launchSourceUrl(url);
+    return Material(
+      type: MaterialType.transparency,
+      child: PopupMenuButton<int>(
+        itemBuilder: (context) => [
+          for (final index in validIndices)
+            PopupMenuItem<int>(
+              value: index,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.link_rounded, size: 16),
+                  const SizedBox(width: Spacing.xs),
+                  Flexible(
+                    child: Text(
+                      SourceReferenceHelper.formatDisplayTitle(
+                        SourceReferenceHelper.getInlineSourceLabel(
+                          sources[index],
+                          index,
+                        ),
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+        onSelected: (index) {
+          if (onSourceTap != null) {
+            onSourceTap!(index);
+            return;
           }
-        }
-      },
-      buttonStyle: PopupButtonStyle.glass,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-        margin: const EdgeInsets.symmetric(horizontal: 1),
-        decoration: BoxDecoration(
-          color: theme.surfaceContainer.withValues(alpha: 0.24),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.link_rounded,
-              size: 9,
-              color: theme.textSecondary.withValues(alpha: 0.7),
-            ),
-            const SizedBox(width: 3),
-            Text(
-              displayTitle,
-              style: TextStyle(
-                fontSize: 10,
-                height: 1,
-                fontWeight: FontWeight.w500,
-                color: theme.textSecondary,
+
+          if (index >= 0 && index < sources.length) {
+            final url = SourceReferenceHelper.getSourceUrl(sources[index]);
+            if (url != null) {
+              _launchSourceUrl(url);
+            }
+          }
+        },
+        padding: EdgeInsets.zero,
+        tooltip: '',
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+          margin: const EdgeInsets.symmetric(horizontal: 1),
+          decoration: BoxDecoration(
+            color: theme.surfaceContainer.withValues(alpha: 0.24),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.link_rounded,
+                size: 9,
+                color: theme.textSecondary.withValues(alpha: 0.7),
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(width: 3),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-              decoration: BoxDecoration(
-                color: theme.buttonPrimary.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(AppBorderRadius.small),
+              const SizedBox(width: 3),
+              Text(
+                displayTitle,
+                style: badgeTextStyle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              child: Text(
-                '+$additionalCount',
-                style: TextStyle(
-                  fontSize: 9,
-                  fontWeight: FontWeight.w600,
-                  color: theme.buttonPrimary,
+              const SizedBox(width: 3),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: theme.buttonPrimary.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(AppBorderRadius.small),
                 ),
+                child: Text('+$additionalCount', style: countTextStyle),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

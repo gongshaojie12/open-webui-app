@@ -6,22 +6,27 @@ import 'package:flutter/foundation.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:uuid/uuid.dart';
 import 'chat_completion_transport.dart';
+import '../models/account_metadata.dart';
 import '../models/backend_config.dart';
-import '../models/server_config.dart';
-import '../models/user.dart';
-import '../models/model.dart';
-import '../models/conversation.dart';
 import '../models/chat_message.dart';
+import '../models/conversation.dart';
 import '../models/file_info.dart';
 import '../models/knowledge_base.dart';
 import '../models/knowledge_base_file.dart';
+import '../models/model.dart';
 import '../models/prompt.dart';
+import '../models/server_about_info.dart';
+import '../models/server_config.dart';
+import '../models/server_memory.dart';
+import '../models/server_user_settings.dart';
+import '../models/user.dart';
 import '../auth/api_auth_interceptor.dart';
 import '../error/api_error_interceptor.dart';
 // Tool-call details are parsed in the UI layer to render collapsible blocks
 import 'connectivity_service.dart';
 import '../utils/debug_logger.dart';
 import '../utils/embed_utils.dart';
+import '../utils/message_tree_utils.dart' as message_tree;
 import 'conversation_parsing.dart';
 import 'worker_manager.dart';
 import 'server_tls_http_client_factory.dart';
@@ -93,6 +98,8 @@ final class _SniffJson extends _SniffResult {
   /// The parsed JSON map.
   final Map<String, dynamic> json;
 }
+
+enum _ChatRequestMetadataFormat { modernV09, legacyPreV09 }
 
 /// Result of a health check with proxy detection.
 ///
@@ -227,6 +234,7 @@ class ApiService {
   final ServerConfig serverConfig;
   final WorkerManager _workerManager;
   late final ApiAuthInterceptor _authInterceptor;
+  _ChatRequestMetadataFormat? _chatRequestMetadataFormat;
   // Public getter for dio instance
   Dio get dio => _dio;
 
@@ -345,7 +353,12 @@ class ApiService {
   ///
   /// When a proxy is detected, returns [HealthCheckResult.proxyAuthRequired]
   /// so the app can show a WebView for proxy authentication.
-  Future<HealthCheckResult> checkHealthWithProxyDetection() async {
+  ///
+  /// Set [throwOnConnectionError] when the caller needs to show the exact
+  /// transport failure instead of a collapsed [HealthCheckResult.unreachable].
+  Future<HealthCheckResult> checkHealthWithProxyDetection({
+    bool throwOnConnectionError = false,
+  }) async {
     try {
       // Create a temporary Dio instance that doesn't follow redirects
       // so we can detect proxy redirects
@@ -442,6 +455,9 @@ class ApiService {
       if (e.type == DioExceptionType.connectionTimeout ||
           e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.unknown) {
+        if (throwOnConnectionError) {
+          rethrow;
+        }
         return HealthCheckResult.unreachable;
       }
 
@@ -460,6 +476,9 @@ class ApiService {
         }
       }
 
+      if (throwOnConnectionError) {
+        rethrow;
+      }
       return HealthCheckResult.unreachable;
     } catch (e) {
       if (e.toString().toLowerCase().contains(
@@ -472,6 +491,9 @@ class ApiService {
         scope: 'api/proxy-detect',
         error: e,
       );
+      if (throwOnConnectionError) {
+        rethrow;
+      }
       return HealthCheckResult.unreachable;
     }
   }
@@ -506,6 +528,7 @@ class ApiService {
         return null;
       }
 
+      _setChatRequestMetadataFormatFromVersion(data['version']);
       return _enrichBackendConfigWithAudioConfig(BackendConfig.fromJson(data));
     } catch (e) {
       return null;
@@ -528,6 +551,7 @@ class ApiService {
       if (jsonMap == null) {
         return null;
       }
+      _setChatRequestMetadataFormatFromVersion(jsonMap['version']);
       return _enrichBackendConfigWithAudioConfig(
         BackendConfig.fromJson(jsonMap),
       );
@@ -571,6 +595,45 @@ class ApiService {
       );
       return config;
     }
+  }
+
+  Future<ServerAboutInfo> getServerAboutInfo() async {
+    final results = await Future.wait<dynamic>([
+      _dio.get('/api/config').then((response) => response.data),
+      (() async {
+        try {
+          return (await _dio.get('/api/version')).data;
+        } catch (_) {
+          return null;
+        }
+      })(),
+      (() async {
+        try {
+          return (await _dio.get('/api/version/updates')).data;
+        } catch (_) {
+          return null;
+        }
+      })(),
+      (() async {
+        try {
+          return (await _dio.get('/api/changelog')).data;
+        } catch (_) {
+          return null;
+        }
+      })(),
+    ]);
+
+    final config = _coerceResponseMap(results[0]);
+    if (config == null) {
+      throw StateError('Unexpected /api/config response type.');
+    }
+
+    return ServerAboutInfo.fromJson(
+      config,
+      versionData: _coerceResponseMap(results[1]),
+      updateData: _coerceResponseMap(results[2]),
+      changelog: _coerceResponseMap(results[3]),
+    );
   }
 
   // Authentication
@@ -643,14 +706,88 @@ class ApiService {
   }
 
   // User info
-  Future<User> getCurrentUser() async {
-    final response = await _dio.get('/api/v1/auths/');
+  Future<User> getCurrentUser({
+    bool suppressAuthFailureNotification = false,
+  }) async {
+    final response = await _dio.get(
+      '/api/v1/auths/',
+      options: suppressAuthFailureNotification
+          ? Options(extra: const {'suppressAuthFailureNotification': true})
+          : null,
+    );
     DebugLogger.log('user-info', scope: 'api/user');
     return User.fromJson(response.data);
   }
 
+  Future<AccountMetadata> getAccountMetadata() async {
+    final results = await Future.wait<dynamic>([
+      _dio.get('/api/v1/auths/').then((response) => response.data),
+      (() async {
+        try {
+          return (await _dio.get('/api/v1/users/user/info')).data;
+        } catch (_) {
+          return null;
+        }
+      })(),
+    ]);
+
+    final accountData = _coerceResponseMap(results[0]);
+    if (accountData == null) {
+      throw StateError('Unexpected account response type.');
+    }
+
+    return AccountMetadata.fromJson(
+      accountData,
+      info: _coerceResponseMap(results[1]),
+    );
+  }
+
+  Future<AccountMetadata> updateAccountMetadata({
+    required String name,
+    required String profileImageUrl,
+    String? bio,
+    String? gender,
+    String? dateOfBirth,
+    String? timezone,
+  }) async {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) {
+      throw ArgumentError('name cannot be empty');
+    }
+
+    await _dio.post(
+      '/api/v1/auths/update/profile',
+      data: {
+        'name': trimmedName,
+        'profile_image_url': profileImageUrl.trim(),
+        'bio': _normalizeNullableString(bio),
+        'gender': _normalizeNullableString(gender),
+        'date_of_birth': _normalizeNullableString(dateOfBirth),
+      },
+    );
+
+    if (timezone != null) {
+      await _dio.post(
+        '/api/v1/auths/update/timezone',
+        data: {'timezone': timezone.trim()},
+      );
+    }
+
+    return getAccountMetadata();
+  }
+
+  Future<void> updateAccountPassword({
+    required String password,
+    required String newPassword,
+  }) async {
+    await _dio.post(
+      '/api/v1/auths/update/password',
+      data: {'password': password, 'new_password': newPassword},
+    );
+  }
+
   // Models
-  Future<List<Model>> getModels() async {
+  Future<List<Model>> getModels({bool includeHidden = false}) async {
     final response = await _dio.get('/api/models');
 
     // Normalize common response formats:
@@ -684,6 +821,7 @@ class ApiService {
     }
 
     final models = <Model>[];
+    var hiddenModelCount = 0;
     for (final raw in rawModels) {
       try {
         if (raw is String) {
@@ -694,7 +832,14 @@ class ApiService {
           final normalized = raw.map(
             (key, value) => MapEntry(key.toString(), value),
           );
-          models.add(Model.fromJson(normalized));
+          final model = Model.fromJson(normalized);
+          if (model.isHidden) {
+            hiddenModelCount++;
+          }
+          if (model.isHidden && !includeHidden) {
+            continue;
+          }
+          models.add(model);
           continue;
         }
         DebugLogger.warning(
@@ -716,7 +861,7 @@ class ApiService {
     DebugLogger.log(
       'models-count',
       scope: 'api/models',
-      data: {'count': models.length},
+      data: {'count': models.length, 'hidden': hiddenModelCount},
     );
     return models;
   }
@@ -724,42 +869,47 @@ class ApiService {
   // Get default model configuration from OpenWebUI user settings
   Future<String?> getDefaultModel() async {
     try {
-      final response = await _dio.get('/api/v1/users/user/settings');
-
-      DebugLogger.log('settings-ok', scope: 'api/user-settings');
-
-      final data = response.data;
-      if (data is Map<String, dynamic>) {
-        // Extract default model from ui.models array
-        final ui = data['ui'];
-        if (ui is Map<String, dynamic>) {
-          final models = ui['models'];
-          if (models is List && models.isNotEmpty) {
-            // Return the first model in the user's preferred models list
-            final defaultModel = models.first.toString();
-            DebugLogger.log(
-              'default-model',
-              scope: 'api/user-settings',
-              data: {'id': defaultModel},
-            );
-            return defaultModel;
-          }
-        }
+      final settings = await getServerUserSettingsModel();
+      final defaultModel = settings.defaultModelId;
+      if (defaultModel != null) {
+        DebugLogger.log(
+          'default-model',
+          scope: 'api/user-settings',
+          data: {'id': defaultModel, 'source': 'user-settings'},
+        );
+        return defaultModel;
       }
-
-      // Fallback: user has no default model configured, pick first available
-      // This fixes issue #353 where secondary accounts couldn't send messages
-      DebugLogger.log('default-model-fallback', scope: 'api/user-settings');
-      return _getFirstAvailableModelId();
     } catch (e) {
       DebugLogger.error(
         'default-model-error',
         scope: 'api/user-settings',
         error: e,
       );
-      // Attempt fallback even on error
-      return _getFirstAvailableModelId();
     }
+
+    try {
+      final response = await _dio.get('/api/config');
+      final config = _coerceResponseMap(response.data);
+      final defaultModels = _coerceStringList(config?['default_models']);
+      if (defaultModels.isNotEmpty) {
+        final defaultModel = defaultModels.first;
+        DebugLogger.log(
+          'default-model',
+          scope: 'api/user-settings',
+          data: {'id': defaultModel, 'source': 'server-config'},
+        );
+        return defaultModel;
+      }
+    } catch (e) {
+      DebugLogger.error(
+        'default-model-config-error',
+        scope: 'api/user-settings',
+        error: e,
+      );
+    }
+
+    DebugLogger.log('default-model-fallback', scope: 'api/user-settings');
+    return _getFirstAvailableModelId();
   }
 
   /// Returns the ID of the first available model, or null if none available.
@@ -880,6 +1030,56 @@ class ApiService {
       },
     );
     return conversations;
+  }
+
+  /// Fetches a single page of chat summaries for sidebar pagination.
+  ///
+  /// This mirrors OpenWebUI's sidebar behavior where the main chat list loads
+  /// incrementally, while pinned/archived sections are fetched separately.
+  Future<List<Conversation>> getConversationPage({
+    int page = 1,
+    bool includeFolders = true,
+    bool includePinned = false,
+  }) async {
+    final safePage = page < 1 ? 1 : page;
+    _traceApi('Fetching conversation page: $safePage');
+
+    final queryParams = <String, dynamic>{'page': safePage};
+    if (includeFolders) {
+      queryParams['include_folders'] = true;
+    }
+    if (includePinned) {
+      queryParams['include_pinned'] = true;
+    }
+
+    final response = await _dio.get(
+      '/api/v1/chats/',
+      queryParameters: queryParams,
+    );
+    final data = response.data;
+    if (data is! List) {
+      throw Exception('Expected array of chats, got ${data.runtimeType}');
+    }
+
+    return _parseConversationSummaryList(
+      data,
+      debugLabel: 'parse_conversation_page_$safePage',
+    );
+  }
+
+  /// Fetches pinned chat summaries for the sidebar.
+  Future<List<Conversation>> getPinnedConversationSummaries() async {
+    final pinnedChats = await _fetchChatCollection(
+      '/api/v1/chats/pinned',
+      debugLabel: 'pinned chats',
+    );
+    final conversations = await _parseConversationSummaryList(
+      pinnedChats,
+      debugLabel: 'parse_pinned_conversations',
+    );
+    return conversations
+        .map((conversation) => conversation.copyWith(pinned: true))
+        .toList(growable: false);
   }
 
   Future<List<dynamic>> _fetchChatCollection(
@@ -1214,7 +1414,12 @@ class ApiService {
     return Conversation.fromJson(json);
   }
 
-  // Sync conversation messages to ensure WebUI can load conversation history
+  /// Replaces the server's stored chat history with the provided message list.
+  ///
+  /// Only use this when the caller has a complete, authoritative snapshot of
+  /// the conversation, such as an explicit repair or migration flow. Do not
+  /// call it from normal persisted-chat send/regenerate/completion paths,
+  /// because replaying a partial local buffer can truncate server history.
   Future<void> syncConversationMessages(
     String conversationId,
     List<ChatMessage> messages, {
@@ -1403,6 +1608,275 @@ class ApiService {
     DebugLogger.log('sync-ok', scope: 'api/conversation');
   }
 
+  Map<String, dynamic> _deepCloneJsonMap(Map<String, dynamic> source) {
+    final cloned = json.decode(json.encode(source));
+    if (cloned is Map<String, dynamic>) {
+      return cloned;
+    }
+    return Map<String, dynamic>.from(source);
+  }
+
+  Map<String, dynamic>? _coerceJsonMap(dynamic value) {
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+    if (value is Map) {
+      return value.map((key, value) => MapEntry(key?.toString() ?? '', value));
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? _coerceResponseMap(dynamic value) {
+    if (value is String && value.isNotEmpty) {
+      try {
+        final decoded = json.decode(value);
+        return _coerceJsonMap(decoded);
+      } catch (_) {
+        return null;
+      }
+    }
+    return _coerceJsonMap(value);
+  }
+
+  String? _normalizeNullableString(String? value) {
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed;
+  }
+
+  List<String> _coerceStringList(dynamic value) {
+    if (value is! List) {
+      return <String>[];
+    }
+
+    return value
+        .map((item) => item?.toString().trim() ?? '')
+        .where((item) => item.isNotEmpty)
+        .toList(growable: true);
+  }
+
+  List<Map<String, dynamic>> _buildHistoryChainMessages(
+    Map<String, Map<String, dynamic>> messagesMap,
+    String currentId,
+  ) {
+    return message_tree
+        .chainToRoot<Map<String, dynamic>>(
+          currentId,
+          messagesById: messagesMap,
+          parentIdOf: message_tree.rawMessageParentId,
+        )
+        .map(_deepCloneJsonMap)
+        .toList(growable: false);
+  }
+
+  Set<String> _collectMessageDescendantIds(
+    Map<String, Map<String, dynamic>> messagesMap,
+    String messageId,
+  ) {
+    return message_tree.collectDescendantIds(messageId, {
+      for (final entry in messagesMap.entries)
+        entry.key: message_tree.rawMessageChildrenIds(entry.value),
+    });
+  }
+
+  String? _latestRemainingMessageId(
+    Map<String, Map<String, dynamic>> messagesMap,
+  ) {
+    return message_tree.latestRemainingMessageId<Map<String, dynamic>>(
+      messagesMap,
+      timestampOf: (message) {
+        final timestamp = message['timestamp'];
+        return timestamp is num ? timestamp : null;
+      },
+    );
+  }
+
+  /// Deletes one message from the current server-side chat history.
+  ///
+  /// This edits the latest raw chat payload from the server instead of replaying
+  /// a local message list, preserving any server-only history fields and
+  /// messages that may have arrived since the local state last synced.
+  Future<void> deleteConversationMessage(
+    String conversationId,
+    String messageId,
+  ) async {
+    _traceApi('Deleting message $messageId from chat $conversationId');
+
+    final response = await _dio.get('/api/v1/chats/$conversationId');
+    final rawConversation = _coerceJsonMap(response.data);
+    final rawChat = _coerceJsonMap(rawConversation?['chat']);
+    if (rawConversation == null || rawChat == null) {
+      throw Exception(
+        'Delete message failed: invalid chat payload for $conversationId',
+      );
+    }
+
+    final chat = _deepCloneJsonMap(rawChat);
+    final history = _coerceJsonMap(chat['history']) ?? <String, dynamic>{};
+    final rawMessagesMap =
+        _coerceJsonMap(history['messages']) ?? <String, dynamic>{};
+    final messagesMap = <String, Map<String, dynamic>>{};
+
+    for (final entry in rawMessagesMap.entries) {
+      final message = _coerceJsonMap(entry.value);
+      if (message == null) continue;
+      messagesMap[entry.key] = _deepCloneJsonMap(message);
+    }
+
+    if (!messagesMap.containsKey(messageId)) {
+      return;
+    }
+
+    final removedIds = _collectMessageDescendantIds(messagesMap, messageId);
+    messagesMap.removeWhere((id, _) => removedIds.contains(id));
+
+    for (final entry in messagesMap.entries) {
+      final message = entry.value;
+      final children = _coerceStringList(
+        message['childrenIds'],
+      ).where((id) => !removedIds.contains(id)).toList(growable: false);
+      message['childrenIds'] = children;
+    }
+
+    final currentId = history['currentId']?.toString();
+    final nextCurrentId = currentId != null && !removedIds.contains(currentId)
+        ? currentId
+        : _latestRemainingMessageId(messagesMap);
+
+    history['messages'] = messagesMap;
+    if (nextCurrentId == null || nextCurrentId.isEmpty) {
+      history.remove('currentId');
+      chat['messages'] = <Map<String, dynamic>>[];
+    } else {
+      history['currentId'] = nextCurrentId;
+      chat['messages'] = _buildHistoryChainMessages(messagesMap, nextCurrentId);
+    }
+    chat['history'] = history;
+
+    await _dio.post('/api/v1/chats/$conversationId', data: {'chat': chat});
+  }
+
+  Future<void> _persistLegacyPendingTurn({
+    required String conversationId,
+    required String assistantMessageId,
+    required String model,
+    required Map<String, dynamic> userMessage,
+    Map<String, dynamic>? modelItem,
+  }) async {
+    _traceApi(
+      'Persisting legacy pending turn for chat=$conversationId '
+      'assistant=$assistantMessageId',
+    );
+
+    final response = await _dio.get('/api/v1/chats/$conversationId');
+    final rawConversation = _coerceJsonMap(response.data);
+    final rawChat = _coerceJsonMap(rawConversation?['chat']);
+    if (rawConversation == null || rawChat == null) {
+      throw Exception(
+        'Legacy chat persistence failed: invalid chat payload for '
+        '$conversationId',
+      );
+    }
+
+    final chat = _deepCloneJsonMap(rawChat);
+    final history = _coerceJsonMap(chat['history']) ?? <String, dynamic>{};
+    final rawMessagesMap =
+        _coerceJsonMap(history['messages']) ?? <String, dynamic>{};
+    final messagesMap = <String, Map<String, dynamic>>{};
+
+    for (final entry in rawMessagesMap.entries) {
+      final message = _coerceJsonMap(entry.value);
+      if (message == null) {
+        continue;
+      }
+      messagesMap[entry.key] = _deepCloneJsonMap(message);
+    }
+
+    final normalizedUserMessage = _deepCloneJsonMap(userMessage)
+      ..removeWhere((_, value) => value == null);
+    final userMessageId = normalizedUserMessage['id']?.toString().trim() ?? '';
+    if (userMessageId.isEmpty) {
+      throw Exception(
+        'Legacy chat persistence failed: missing user message id',
+      );
+    }
+
+    final existingUserMessage = messagesMap[userMessageId];
+    final mergedUserMessage = <String, dynamic>{
+      if (existingUserMessage != null)
+        ..._deepCloneJsonMap(existingUserMessage),
+      ...normalizedUserMessage,
+    };
+    final userChildrenIds = <String>[
+      ..._coerceStringList(existingUserMessage?['childrenIds']),
+      ..._coerceStringList(normalizedUserMessage['childrenIds']),
+    ];
+    if (!userChildrenIds.contains(assistantMessageId)) {
+      userChildrenIds.add(assistantMessageId);
+    }
+    mergedUserMessage['childrenIds'] = userChildrenIds;
+    messagesMap[userMessageId] = mergedUserMessage;
+
+    final parentId = mergedUserMessage['parentId']?.toString().trim();
+    if (parentId != null && parentId.isNotEmpty) {
+      final existingParentMessage = messagesMap[parentId];
+      if (existingParentMessage != null) {
+        final mergedParentMessage = _deepCloneJsonMap(existingParentMessage);
+        final parentChildrenIds = _coerceStringList(
+          existingParentMessage['childrenIds'],
+        );
+        if (!parentChildrenIds.contains(userMessageId)) {
+          parentChildrenIds.add(userMessageId);
+        }
+        mergedParentMessage['childrenIds'] = parentChildrenIds;
+        messagesMap[parentId] = mergedParentMessage;
+      }
+    }
+
+    final existingAssistantMessage = messagesMap[assistantMessageId];
+    final assistantModelName =
+        modelItem?['name']?.toString().trim().isNotEmpty == true
+        ? modelItem!['name'].toString().trim()
+        : model;
+    final assistantTimestamp =
+        existingAssistantMessage?['timestamp'] ??
+        DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final mergedAssistantMessage = <String, dynamic>{
+      if (existingAssistantMessage != null)
+        ..._deepCloneJsonMap(existingAssistantMessage),
+      'id': assistantMessageId,
+      'parentId': userMessageId,
+      'childrenIds': _coerceStringList(
+        existingAssistantMessage?['childrenIds'],
+      ),
+      'role': 'assistant',
+      'content': existingAssistantMessage?['content'] ?? '',
+      'timestamp': assistantTimestamp,
+      'model': model,
+      'modelName': assistantModelName,
+      'modelIdx': existingAssistantMessage?['modelIdx'] ?? 0,
+    }..remove('done');
+    messagesMap[assistantMessageId] = mergedAssistantMessage;
+
+    history['messages'] = messagesMap;
+    history['currentId'] = assistantMessageId;
+    chat['history'] = history;
+    chat['messages'] = _buildHistoryChainMessages(
+      messagesMap,
+      assistantMessageId,
+    );
+
+    final models = _coerceStringList(chat['models']);
+    if (!models.contains(model)) {
+      models.add(model);
+    }
+    chat['models'] = models;
+
+    await _dio.post('/api/v1/chats/$conversationId', data: {'chat': chat});
+  }
+
   Future<void> updateConversation(
     String id, {
     String? title,
@@ -1440,6 +1914,11 @@ class ApiService {
     return data['share_id'] as String?;
   }
 
+  Future<void> deleteSharedConversation(String id) async {
+    _traceApi('Deleting shared conversation link: $id');
+    await _dio.delete('/api/v1/chats/$id/share');
+  }
+
   // Clone conversation
   Future<Conversation> cloneConversation(String id) async {
     _traceApi('Cloning conversation: $id');
@@ -1469,6 +1948,68 @@ class ApiService {
     _traceApi('Updating user settings');
     // Align with web client update route
     await _dio.post('/api/v1/users/user/settings/update', data: settings);
+  }
+
+  Future<ServerUserSettings> getServerUserSettingsModel() async {
+    return ServerUserSettings.fromJson(await getUserSettings());
+  }
+
+  Future<ServerUserSettings> updateUserSystemPrompt(
+    String? systemPrompt,
+  ) async {
+    final settings = _deepCloneJsonMap(await getUserSettings());
+    final ui = _coerceJsonMap(settings['ui']) ?? <String, dynamic>{};
+    final trimmed = _normalizeNullableString(systemPrompt);
+
+    if (trimmed == null || trimmed.isEmpty) {
+      ui.remove('system');
+    } else {
+      ui['system'] = trimmed;
+    }
+
+    settings.remove('system');
+    settings['ui'] = ui;
+    _traceApi('Updating user system prompt');
+    final response = await _dio.post(
+      '/api/v1/users/user/settings/update',
+      data: settings,
+    );
+    final data = _coerceResponseMap(response.data) ?? settings;
+    return ServerUserSettings.fromJson(data);
+  }
+
+  Future<ServerUserSettings> updateUserDefaultModel(String? modelId) async {
+    final settings = _deepCloneJsonMap(await getUserSettings());
+    final ui = _coerceJsonMap(settings['ui']) ?? <String, dynamic>{};
+    final trimmed = _normalizeNullableString(modelId);
+
+    if (trimmed == null) {
+      ui.remove('models');
+    } else {
+      ui['models'] = <String>[trimmed];
+    }
+
+    settings['ui'] = ui;
+    final response = await _dio.post(
+      '/api/v1/users/user/settings/update',
+      data: settings,
+    );
+    final data = _coerceResponseMap(response.data) ?? settings;
+    return ServerUserSettings.fromJson(data);
+  }
+
+  Future<ServerUserSettings> updateUserMemoryEnabled(bool enabled) async {
+    final settings = _deepCloneJsonMap(await getUserSettings());
+    final ui = _coerceJsonMap(settings['ui']) ?? <String, dynamic>{};
+    ui['memory'] = enabled;
+    settings['ui'] = ui;
+
+    final response = await _dio.post(
+      '/api/v1/users/user/settings/update',
+      data: settings,
+    );
+    final data = _coerceResponseMap(response.data) ?? settings;
+    return ServerUserSettings.fromJson(data);
   }
 
   // Suggestions
@@ -1584,11 +2125,51 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
-  Future<void> updateFolder(String id, {String? name}) async {
+  Future<Map<String, dynamic>?> getFolderById(String id) async {
+    _traceApi('Fetching folder: $id');
+    final response = await _dio.get('/api/v1/folders/$id');
+    final data = response.data;
+    return data is Map<String, dynamic> ? data : null;
+  }
+
+  Future<Map<String, dynamic>?> updateFolder(
+    String id, {
+    String? name,
+    Map<String, dynamic>? data,
+    Map<String, dynamic>? meta,
+  }) async {
     _traceApi('Updating folder: $id');
-    if (name != null) {
-      await _dio.post('/api/v1/folders/$id/update', data: {'name': name});
+    final payload = <String, dynamic>{
+      'name': ?name,
+      'data': ?data,
+      'meta': ?meta,
+    };
+    if (payload.isEmpty) {
+      return null;
     }
+    final response = await _dio.post(
+      '/api/v1/folders/$id/update',
+      data: payload,
+    );
+    final responseData = response.data;
+    return responseData is Map<String, dynamic> ? responseData : null;
+  }
+
+  Future<Map<String, dynamic>?> updateFolderSystemPrompt(
+    String id,
+    String? systemPrompt,
+  ) async {
+    final folder = await getFolderById(id);
+    final data = _coerceJsonMap(folder?['data']) ?? <String, dynamic>{};
+    final trimmed = systemPrompt?.trim();
+
+    if (trimmed == null || trimmed.isEmpty) {
+      data['system_prompt'] = '';
+    } else {
+      data['system_prompt'] = trimmed;
+    }
+
+    return updateFolder(id, data: data);
   }
 
   Future<void> updateFolderParent(String id, String? parentId) async {
@@ -1723,16 +2304,46 @@ class ApiService {
 
   Future<List<FileInfo>> getUserFiles() async {
     _traceApi('Fetching user files');
-    final response = await _dio.get('/api/v1/files/');
-    final data = response.data;
-    if (data is List) {
-      final normalized = await _normalizeList(
-        data,
-        debugLabel: 'parse_file_list',
-      );
-      return normalized.map(FileInfo.fromJson).toList(growable: false);
+    final files = <FileInfo>[];
+    var page = 1;
+    int? total;
+
+    while (true) {
+      final pageResult = await getUserFilesPage(page: page);
+
+      files.addAll(pageResult.items);
+      total ??= pageResult.total;
+
+      if (pageResult.items.isEmpty) {
+        break;
+      }
+      if (!pageResult.isPaginated) {
+        break;
+      }
+      if (total != null && files.length >= total) {
+        break;
+      }
+
+      page += 1;
     }
-    return const [];
+
+    return List<FileInfo>.unmodifiable(files);
+  }
+
+  /// Fetches a single page of the current user's files.
+  ///
+  /// Supports both the current paginated OpenWebUI response shape and the
+  /// legacy plain-list payload used by older servers.
+  Future<({List<FileInfo> items, int? total, bool isPaginated})>
+  getUserFilesPage({int page = 1}) async {
+    final response = await _dio.get(
+      '/api/v1/files/',
+      queryParameters: {'page': page, 'content': false},
+    );
+    return _parseFileInfoCollection(
+      response.data,
+      debugLabel: 'parse_file_list_page_$page',
+    );
   }
 
   // Enhanced File Operations
@@ -1743,39 +2354,50 @@ class ApiService {
     int? offset,
   }) async {
     _traceApi('Searching files with query: $query');
-    final queryParams = <String, dynamic>{};
-    if (query != null) queryParams['q'] = query;
-    if (contentType != null) queryParams['content_type'] = contentType;
-    if (limit != null) queryParams['limit'] = limit;
-    if (offset != null) queryParams['offset'] = offset;
-
-    final response = await _dio.get(
-      '/api/v1/files/search',
-      queryParameters: queryParams,
-    );
-    final data = response.data;
-    if (data is List) {
-      final normalized = await _normalizeList(
-        data,
-        debugLabel: 'parse_file_search',
-      );
-      return normalized.map(FileInfo.fromJson).toList(growable: false);
+    final trimmedQuery = query?.trim();
+    if (trimmedQuery == null || trimmedQuery.isEmpty) {
+      return const [];
     }
-    return const [];
+
+    final queryParams = <String, dynamic>{};
+    queryParams['filename'] = trimmedQuery.contains('*')
+        ? trimmedQuery
+        : '*$trimmedQuery*';
+    queryParams['content'] = false;
+    if (limit != null) queryParams['limit'] = limit;
+    if (offset != null) queryParams['skip'] = offset;
+
+    try {
+      final response = await _dio.get(
+        '/api/v1/files/search',
+        queryParameters: queryParams,
+      );
+      final data = response.data;
+      if (data is List) {
+        final normalized = await _normalizeList(
+          data,
+          debugLabel: 'parse_file_search',
+        );
+        var results = normalized.map(FileInfo.fromJson).toList(growable: false);
+        if (contentType != null && contentType.trim().isNotEmpty) {
+          results = results
+              .where((file) => file.mimeType.startsWith(contentType))
+              .toList(growable: false);
+        }
+        return results;
+      }
+      return const [];
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) {
+        return const [];
+      }
+      rethrow;
+    }
   }
 
   Future<List<FileInfo>> getAllFiles() async {
     _traceApi('Fetching all files (admin)');
-    final response = await _dio.get('/api/v1/files/all');
-    final data = response.data;
-    if (data is List) {
-      final normalized = await _normalizeList(
-        data,
-        debugLabel: 'parse_file_all',
-      );
-      return normalized.map(FileInfo.fromJson).toList(growable: false);
-    }
-    return const [];
+    return getUserFiles();
   }
 
   Future<String> uploadFileWithProgress(
@@ -1874,6 +2496,40 @@ class ApiService {
     _traceApi('Fetching file statistics');
     final response = await _dio.get('/api/v1/files/stats');
     return response.data as Map<String, dynamic>;
+  }
+
+  Future<({List<FileInfo> items, int? total, bool isPaginated})>
+  _parseFileInfoCollection(dynamic data, {required String debugLabel}) async {
+    if (data is List) {
+      final normalized = await _normalizeList(data, debugLabel: debugLabel);
+      return (
+        items: normalized.map(FileInfo.fromJson).toList(growable: false),
+        total: null,
+        isPaginated: false,
+      );
+    }
+
+    if (data is Map<String, dynamic>) {
+      final items = data['items'];
+      final totalValue = data['total'];
+      final total = switch (totalValue) {
+        int raw => raw,
+        num raw => raw.toInt(),
+        String raw => int.tryParse(raw),
+        _ => null,
+      };
+
+      if (items is List) {
+        final normalized = await _normalizeList(items, debugLabel: debugLabel);
+        return (
+          items: normalized.map(FileInfo.fromJson).toList(growable: false),
+          total: total,
+          isPaginated: true,
+        );
+      }
+    }
+
+    return (items: const <FileInfo>[], total: null, isPaginated: false);
   }
 
   // Knowledge Base
@@ -2176,6 +2832,39 @@ class ApiService {
     }
   }
 
+  void _setChatRequestMetadataFormatFromVersion(dynamic rawVersion) {
+    final inferred = _inferChatRequestMetadataFormatFromVersion(rawVersion);
+    if (inferred != null) {
+      _chatRequestMetadataFormat = inferred;
+    }
+  }
+
+  _ChatRequestMetadataFormat? _inferChatRequestMetadataFormatFromVersion(
+    dynamic rawVersion,
+  ) {
+    final version = rawVersion?.toString().trim();
+    if (version == null || version.isEmpty) {
+      return null;
+    }
+
+    final match = RegExp(r'(\d+)\.(\d+)').firstMatch(version);
+    if (match == null) {
+      return null;
+    }
+
+    final major = int.tryParse(match.group(1)!);
+    final minor = int.tryParse(match.group(2)!);
+    if (major == null || minor == null) {
+      return null;
+    }
+
+    if (major > 0 || minor >= 9) {
+      return _ChatRequestMetadataFormat.modernV09;
+    }
+
+    return _ChatRequestMetadataFormat.legacyPreV09;
+  }
+
   Future<Map<String, dynamic>?> processYoutube({
     required String url,
     String? collectionName,
@@ -2245,6 +2934,50 @@ class ApiService {
       _traceApi('Failed to get model details for $modelId: $e');
     }
     return null;
+  }
+
+  Future<Map<String, dynamic>?> updateModel(Map<String, dynamic> model) async {
+    final payload = <String, dynamic>{
+      'id': model['id'],
+      'base_model_id': model['base_model_id'],
+      'name': model['name'],
+      'meta': _coerceJsonMap(model['meta']) ?? <String, dynamic>{},
+      'params': _coerceJsonMap(model['params']) ?? <String, dynamic>{},
+      'access_grants': model['access_grants'],
+      'is_active': model['is_active'],
+    };
+    payload.removeWhere((_, value) => value == null);
+
+    final response = await _dio.post(
+      '/api/v1/models/model/update',
+      data: payload,
+    );
+    final data = response.data;
+    return data is Map<String, dynamic> ? data : null;
+  }
+
+  Future<Map<String, dynamic>?> updateModelSystemPrompt(
+    String modelId,
+    String? systemPrompt,
+  ) async {
+    final model = await getModelDetails(modelId);
+    if (model == null) {
+      throw StateError('Model "$modelId" has no editable server record.');
+    }
+
+    final params = _coerceJsonMap(model['params']) ?? <String, dynamic>{};
+    final trimmed = systemPrompt?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      params.remove('system');
+    } else {
+      params['system'] = trimmed;
+    }
+
+    final updated = await updateModel({...model, 'params': params});
+    if (updated == null) {
+      throw StateError('Model "$modelId" update returned no server record.');
+    }
+    return updated;
   }
 
   // Send chat completed notification
@@ -2965,26 +3698,56 @@ class ApiService {
   }
 
   // Memory & Notes
-  Future<List<Map<String, dynamic>>> getMemories() async {
+  Future<List<ServerMemory>> getMemories() async {
     _traceApi('Fetching memories');
     final response = await _dio.get('/api/v1/memories/');
     final data = response.data;
     if (data is List) {
-      return data.cast<Map<String, dynamic>>();
+      return data
+          .whereType<Map>()
+          .map((entry) => ServerMemory.fromJson(entry.cast<String, dynamic>()))
+          .toList(growable: false);
     }
-    return [];
+    return const <ServerMemory>[];
   }
 
-  Future<Map<String, dynamic>> createMemory({
-    required String content,
-    String? title,
-  }) async {
+  Future<ServerMemory> createMemory({required String content}) async {
     _traceApi('Creating memory');
     final response = await _dio.post(
-      '/api/v1/memories/',
-      data: {'content': content, 'title': ?title},
+      '/api/v1/memories/add',
+      data: {'content': content},
     );
-    return response.data as Map<String, dynamic>;
+    final data = _coerceResponseMap(response.data);
+    if (data == null) {
+      throw StateError('Unexpected memory create response type.');
+    }
+    return ServerMemory.fromJson(data);
+  }
+
+  Future<ServerMemory> updateMemory({
+    required String memoryId,
+    required String content,
+  }) async {
+    _traceApi('Updating memory');
+    final response = await _dio.post(
+      '/api/v1/memories/$memoryId/update',
+      data: {'content': content},
+    );
+    final data = _coerceResponseMap(response.data);
+    if (data == null) {
+      throw StateError('Unexpected memory update response type.');
+    }
+    return ServerMemory.fromJson(data);
+  }
+
+  Future<void> deleteMemory(String memoryId) async {
+    _traceApi('Deleting memory');
+    await _dio.delete('/api/v1/memories/$memoryId');
+  }
+
+  Future<void> clearAllMemories() async {
+    _traceApi('Clearing all memories');
+    await _dio.delete('/api/v1/memories/delete/user');
   }
 
   // Team Collaboration
@@ -3383,6 +4146,7 @@ class ApiService {
     required String messageId,
     String? sessionId,
     String? conversationId,
+    String? terminalId,
     List<String>? toolIds,
     List<String>? filterIds,
     List<String>? skillIds,
@@ -3394,29 +4158,39 @@ class ApiService {
     List<Map<String, dynamic>>? toolServers,
     Map<String, dynamic>? backgroundTasks,
     Map<String, dynamic>? userSettings,
-    String? parentMessageId,
-    Map<String, dynamic>? parentMessage,
+    String? parentId,
+    Map<String, dynamic>? userMessage,
     Map<String, dynamic>? variables,
+    List<Map<String, dynamic>>? files,
+    _ChatRequestMetadataFormat metadataFormat =
+        _ChatRequestMetadataFormat.modernV09,
   }) {
+    bool isImageFile(Map<String, dynamic> file) {
+      if (file['type'] == 'image') {
+        return true;
+      }
+      final contentType = file['content_type']?.toString() ?? '';
+      return contentType.startsWith('image/');
+    }
+
     // Process messages to match OpenWebUI format
     final processedMessages = messages.map((message) {
       final role = message['role'] as String;
       final content = message['content'];
+      final output = message['output'];
       final rawFiles = message['files'];
       final files = rawFiles is List
           ? rawFiles.whereType<Map<String, dynamic>>().toList()
           : <Map<String, dynamic>>[];
 
       final isContentArray = content is List;
-      final hasImages =
-          files.isNotEmpty && files.any((file) => file['type'] == 'image');
+      final hasImages = files.isNotEmpty && files.any(isImageFile);
+      final messageBase = <String, dynamic>{'role': role, 'output': ?output};
 
       if (isContentArray) {
-        return {'role': role, 'content': content};
+        return {...messageBase, 'content': content};
       } else if (hasImages && role == 'user') {
-        final imageFiles = files
-            .where((file) => file['type'] == 'image')
-            .toList();
+        final imageFiles = files.where(isImageFile).toList();
         final contentText = content is String ? content : '';
         final contentArray = <Map<String, dynamic>>[
           {'type': 'text', 'text': contentText},
@@ -3427,23 +4201,58 @@ class ApiService {
             'image_url': {'url': file['url']},
           });
         }
-        return {'role': role, 'content': contentArray};
+        return {...messageBase, 'content': contentArray};
       } else {
         final contentText = content is String ? content : '';
-        return {'role': role, 'content': contentText};
+        return {...messageBase, 'content': contentText};
       }
     }).toList();
 
-    // Separate non-image files from messages
+    String requestFileKey(Map<String, dynamic> file) {
+      final id = file['id']?.toString().trim();
+      if (id != null && id.isNotEmpty) {
+        return 'id:$id';
+      }
+
+      final url = file['url']?.toString().trim();
+      if (url != null && url.isNotEmpty) {
+        return 'url:$url';
+      }
+
+      final type = file['type']?.toString().trim() ?? 'file';
+      final name = file['name']?.toString().trim();
+      if (name != null && name.isNotEmpty) {
+        return 'name:$type:$name';
+      }
+
+      return 'json:${jsonEncode(file)}';
+    }
+
+    // Separate non-image files from explicit request files and messages.
     final allFiles = <Map<String, dynamic>>[];
+    final seenFileKeys = <String>{};
+
+    void addRequestFiles(Iterable<Map<String, dynamic>> requestFiles) {
+      for (final file in requestFiles) {
+        final normalizedFile = Map<String, dynamic>.from(file);
+        if (isImageFile(normalizedFile)) {
+          continue;
+        }
+
+        final fileKey = requestFileKey(normalizedFile);
+        if (seenFileKeys.add(fileKey)) {
+          allFiles.add(normalizedFile);
+        }
+      }
+    }
+
+    if (files != null && files.isNotEmpty) {
+      addRequestFiles(files);
+    }
     for (final message in messages) {
       final rawFiles = message['files'];
       if (rawFiles is List) {
-        final files = rawFiles.whereType<Map<String, dynamic>>().toList();
-        final nonImageFiles = files
-            .where((file) => file['type'] != 'image')
-            .toList();
-        allFiles.addAll(nonImageFiles);
+        addRequestFiles(rawFiles.whereType<Map<String, dynamic>>());
       }
     }
 
@@ -3451,7 +4260,7 @@ class ApiService {
     final data = <String, dynamic>{
       'stream': true,
       'model': model,
-      'messages': processedMessages,
+      if (processedMessages.isNotEmpty) 'messages': processedMessages,
       'params': <String, dynamic>{},
     };
 
@@ -3588,15 +4397,28 @@ class ApiService {
     if (conversationId != null) {
       data['chat_id'] = conversationId;
     }
-    if (parentMessageId != null) {
-      data['parent_id'] = parentMessageId;
+    if (terminalId != null && terminalId.isNotEmpty) {
+      data['terminal_id'] = terminalId;
     }
-
-    // Include the full parent (user) message so the backend has context
-    // for filters and pipelines. Falls back to an empty object to prevent
-    // NoneType error in OWUI 0.6.42+.
-    // See: https://github.com/cogwheel0/conduit/issues/311
-    data['parent_message'] = parentMessage ?? <String, dynamic>{};
+    switch (metadataFormat) {
+      case _ChatRequestMetadataFormat.modernV09:
+        // Match OpenWebUI 0.9+'s request shape: `parent_id` is the user
+        // message's parent (the grandparent of the pending assistant
+        // response), and `user_message` is the full OpenWebUI-style user
+        // message object.
+        data['parent_id'] = parentId;
+        data['user_message'] = userMessage ?? <String, dynamic>{};
+      case _ChatRequestMetadataFormat.legacyPreV09:
+        // OpenWebUI <0.9 expects the full message under `parent_message`,
+        // while `parent_id` points at the current user message id.
+        final legacyParentId = userMessage?['id']?.toString().trim();
+        data['parent_id'] = legacyParentId != null && legacyParentId.isNotEmpty
+            ? legacyParentId
+            : parentId;
+        if (userMessage != null) {
+          data['parent_message'] = userMessage;
+        }
+    }
 
     data['background_tasks'] = backgroundTasks ?? <String, dynamic>{};
 
@@ -3624,6 +4446,7 @@ class ApiService {
     required List<Map<String, dynamic>> messages,
     required String model,
     String? conversationId,
+    String? terminalId,
     List<String>? toolIds,
     List<String>? filterIds,
     List<String>? skillIds,
@@ -3637,9 +4460,10 @@ class ApiService {
     Map<String, dynamic>? backgroundTasks,
     String? responseMessageId,
     Map<String, dynamic>? userSettings,
-    String? parentMessageId,
-    Map<String, dynamic>? parentMessage,
+    String? parentId,
+    Map<String, dynamic>? userMessage,
     Map<String, dynamic>? variables,
+    List<Map<String, dynamic>>? files,
   }) async {
     // Generate unique IDs
     final messageId =
@@ -3656,64 +4480,126 @@ class ApiService {
         (sessionIdOverride != null && sessionIdOverride.isNotEmpty)
         ? sessionIdOverride
         : null;
-
-    final data = _buildChatCompletionPayload(
-      messages: messages,
-      model: model,
-      messageId: messageId,
-      sessionId: sessionId,
-      conversationId: conversationId,
-      toolIds: toolIds,
-      filterIds: filterIds,
-      skillIds: skillIds,
-      enableWebSearch: enableWebSearch,
-      enableImageGeneration: enableImageGeneration,
-      enableCodeInterpreter: enableCodeInterpreter,
-      isVoiceMode: isVoiceMode,
-      modelItem: modelItem,
-      toolServers: toolServers,
-      backgroundTasks: backgroundTasks,
-      userSettings: userSettings,
-      parentMessageId: parentMessageId,
-      parentMessage: parentMessage,
-      variables: variables,
-    );
-
-    _traceApi(
-      'sendMessageSession: posting to /api/chat/completions '
-      '(model=$model, sessionId=$sessionId)',
-    );
-
-    final cancelToken = CancelToken();
+    CancelToken? activeCancelToken;
     Future<void> abort() async {
-      if (!cancelToken.isCancelled) {
+      final cancelToken = activeCancelToken;
+      if (cancelToken != null && !cancelToken.isCancelled) {
         cancelToken.cancel('User cancelled');
       }
     }
 
     _streamCancelActions[messageId] = abort;
+    var legacyPendingTurnPersisted = false;
 
-    final resp = await _dio.post<ResponseBody>(
-      '/api/chat/completions',
-      data: data,
-      options: Options(
-        responseType: ResponseType.stream,
-        // Disable receive timeout for streaming: on iOS, request.close()
-        // may not resolve until body data arrives (not just headers),
-        // causing the default 30s timeout to fire prematurely.
-        receiveTimeout: Duration.zero,
-        // Accept all non-5xx so we can inspect error bodies ourselves.
-        validateStatus: (status) => status != null && status < 600,
-      ),
-      cancelToken: cancelToken,
-    );
+    Future<void> ensureLegacyPendingTurnPersisted() async {
+      if (legacyPendingTurnPersisted ||
+          conversationId == null ||
+          conversationId.isEmpty ||
+          conversationId.startsWith('local:') ||
+          userMessage == null ||
+          userMessage.isEmpty) {
+        return;
+      }
 
-    final status = resp.statusCode ?? 0;
+      await _persistLegacyPendingTurn(
+        conversationId: conversationId,
+        assistantMessageId: messageId,
+        model: model,
+        userMessage: userMessage,
+        modelItem: modelItem,
+      );
+      legacyPendingTurnPersisted = true;
+    }
+
+    Future<Response<ResponseBody>> postWithMetadataFormat(
+      _ChatRequestMetadataFormat metadataFormat,
+    ) async {
+      final data = _buildChatCompletionPayload(
+        messages: messages,
+        model: model,
+        messageId: messageId,
+        sessionId: sessionId,
+        conversationId: conversationId,
+        terminalId: terminalId,
+        toolIds: toolIds,
+        filterIds: filterIds,
+        skillIds: skillIds,
+        enableWebSearch: enableWebSearch,
+        enableImageGeneration: enableImageGeneration,
+        enableCodeInterpreter: enableCodeInterpreter,
+        isVoiceMode: isVoiceMode,
+        modelItem: modelItem,
+        toolServers: toolServers,
+        backgroundTasks: backgroundTasks,
+        userSettings: userSettings,
+        parentId: parentId,
+        userMessage: userMessage,
+        variables: variables,
+        files: files,
+        metadataFormat: metadataFormat,
+      );
+
+      _traceApi(
+        'sendMessageSession: posting to /api/chat/completions '
+        '(model=$model, sessionId=$sessionId, '
+        'metadataFormat=${metadataFormat.name})',
+      );
+
+      final cancelToken = CancelToken();
+      activeCancelToken = cancelToken;
+
+      return _dio.post<ResponseBody>(
+        '/api/chat/completions',
+        data: data,
+        options: Options(
+          responseType: ResponseType.stream,
+          // Disable receive timeout for streaming: on iOS, request.close()
+          // may not resolve until body data arrives (not just headers),
+          // causing the default 30s timeout to fire prematurely.
+          receiveTimeout: Duration.zero,
+          // Accept all non-5xx so we can inspect error bodies ourselves.
+          validateStatus: (status) => status != null && status < 600,
+        ),
+        cancelToken: cancelToken,
+      );
+    }
+
+    var metadataFormat =
+        _chatRequestMetadataFormat ?? _ChatRequestMetadataFormat.modernV09;
+    if (metadataFormat == _ChatRequestMetadataFormat.legacyPreV09) {
+      await ensureLegacyPendingTurnPersisted();
+    }
+    var resp = await postWithMetadataFormat(metadataFormat);
+    var status = resp.statusCode ?? 0;
 
     // Surface structured errors before transport binding.
     if (status < 200 || status >= 300) {
       final error = await _decodeChatCompletionError(resp);
-      throw Exception('Chat completion failed ($status): $error');
+      final shouldRetryWithLegacy =
+          metadataFormat == _ChatRequestMetadataFormat.modernV09 &&
+          _isUnsupportedModernChatMetadataError(error);
+
+      if (!shouldRetryWithLegacy) {
+        throw Exception('Chat completion failed ($status): $error');
+      }
+
+      _traceApi(
+        'sendMessageSession: retrying with legacy pre-v0.9 chat metadata '
+        'after error: $error',
+      );
+
+      metadataFormat = _ChatRequestMetadataFormat.legacyPreV09;
+      _chatRequestMetadataFormat = metadataFormat;
+      await ensureLegacyPendingTurnPersisted();
+      resp = await postWithMetadataFormat(metadataFormat);
+      status = resp.statusCode ?? 0;
+
+      if (status < 200 || status >= 300) {
+        final retryError = await _decodeChatCompletionError(resp);
+        throw Exception('Chat completion failed ($status): $retryError');
+      }
+    } else {
+      _chatRequestMetadataFormat ??= metadataFormat;
     }
 
     final session = await classifyChatCompletionResponse(
@@ -3728,6 +4614,18 @@ class ApiService {
       'taskId=${session.taskId}, messageId=${session.messageId}',
     );
     return session;
+  }
+
+  bool _isUnsupportedModernChatMetadataError(String error) {
+    final normalized = error.toLowerCase();
+    if (!normalized.contains('user_message')) {
+      return false;
+    }
+
+    return normalized.contains('unsupported') ||
+        normalized.contains('extra_forbidden') ||
+        normalized.contains('extra inputs') ||
+        normalized.contains('not permitted');
   }
 
   // -----------------------------------------------------------------------
@@ -3832,16 +4730,32 @@ class ApiService {
     String? conversationId,
     required Future<void> Function() abort,
   }) {
+    String? taskId;
     if (json['task_id'] != null) {
+      taskId = json['task_id'].toString();
+    } else {
+      final rawTaskIds = json['task_ids'];
+      if (rawTaskIds is List) {
+        final taskIds = rawTaskIds
+            .map((taskId) => taskId?.toString().trim() ?? '')
+            .where((taskId) => taskId.isNotEmpty)
+            .toList(growable: false);
+        if (taskIds.isNotEmpty) {
+          taskId = taskIds.first;
+        }
+      }
+    }
+
+    if (taskId != null) {
       _traceApi(
         'classifyChatCompletionResponse → taskSocket '
-        '(task_id=${json['task_id']})',
+        '(task_id=$taskId)',
       );
       return ChatCompletionSession.taskSocket(
         messageId: messageId,
         sessionId: sessionId,
         conversationId: conversationId,
-        taskId: json['task_id'].toString(),
+        taskId: taskId,
         abort: abort,
       );
     }
@@ -4013,6 +4927,7 @@ class ApiService {
     required String messageId,
     required String sessionId,
     String? conversationId,
+    String? terminalId,
     bool enableWebSearch = false,
     bool enableImageGeneration = false,
     bool enableCodeInterpreter = false,
@@ -4021,9 +4936,11 @@ class ApiService {
     List<Map<String, dynamic>>? toolServers,
     Map<String, dynamic>? backgroundTasks,
     Map<String, dynamic>? userSettings,
-    String? parentMessageId,
-    Map<String, dynamic>? parentMessage,
+    String? parentId,
+    Map<String, dynamic>? userMessage,
     Map<String, dynamic>? variables,
+    List<Map<String, dynamic>>? files,
+    bool useLegacyChatMetadata = false,
   }) {
     return _buildChatCompletionPayload(
       messages: messages,
@@ -4031,6 +4948,7 @@ class ApiService {
       messageId: messageId,
       sessionId: sessionId,
       conversationId: conversationId,
+      terminalId: terminalId,
       enableWebSearch: enableWebSearch,
       enableImageGeneration: enableImageGeneration,
       enableCodeInterpreter: enableCodeInterpreter,
@@ -4039,9 +4957,13 @@ class ApiService {
       toolServers: toolServers,
       backgroundTasks: backgroundTasks,
       userSettings: userSettings,
-      parentMessageId: parentMessageId,
-      parentMessage: parentMessage,
+      parentId: parentId,
+      userMessage: userMessage,
       variables: variables,
+      files: files,
+      metadataFormat: useLegacyChatMetadata
+          ? _ChatRequestMetadataFormat.legacyPreV09
+          : _ChatRequestMetadataFormat.modernV09,
     );
   }
 
@@ -4331,10 +5253,15 @@ class ApiService {
     final response = await _dio.get('/api/v1/chats/pinned');
     final data = response.data;
     if (data is List) {
-      return data.whereType<Map>().map((chatData) {
-        final map = Map<String, dynamic>.from(chatData);
-        return Conversation.fromJson(parseConversationSummary(map));
-      }).toList();
+      return data
+          .whereType<Map>()
+          .map((chatData) {
+            final map = Map<String, dynamic>.from(chatData);
+            return Conversation.fromJson(
+              parseConversationSummary(map),
+            ).copyWith(pinned: true);
+          })
+          .toList(growable: false);
     }
     return [];
   }
@@ -4352,10 +5279,15 @@ class ApiService {
     );
     final data = response.data;
     if (data is List) {
-      return data.whereType<Map>().map((chatData) {
-        final map = Map<String, dynamic>.from(chatData);
-        return Conversation.fromJson(parseConversationSummary(map));
-      }).toList();
+      return data
+          .whereType<Map>()
+          .map((chatData) {
+            final map = Map<String, dynamic>.from(chatData);
+            return Conversation.fromJson(
+              parseConversationSummary(map),
+            ).copyWith(archived: true);
+          })
+          .toList(growable: false);
     }
     return [];
   }
@@ -4798,6 +5730,13 @@ class ApiService {
         'access_control': ?accessControl,
       },
     );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// Toggle a note's pinned state.
+  Future<Map<String, dynamic>> toggleNotePinned(String id) async {
+    _traceApi('Toggling note pin state: $id');
+    final response = await _dio.post('/api/v1/notes/$id/pin');
     return response.data as Map<String, dynamic>;
   }
 

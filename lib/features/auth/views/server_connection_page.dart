@@ -1,7 +1,9 @@
 import 'dart:convert';
-import 'dart:io' show File, Platform;
+import 'dart:io'
+    show File, HandshakeException, HttpException, Platform, SocketException;
 
 import 'package:adaptive_platform_ui/adaptive_platform_ui.dart';
+import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/cupertino.dart';
@@ -24,6 +26,7 @@ import '../../../core/widgets/error_boundary.dart';
 import '../providers/unified_auth_providers.dart';
 import '../../../shared/services/brand_service.dart';
 import '../../../shared/theme/theme_extensions.dart';
+import '../../../shared/widgets/adaptive_route_shell.dart';
 import '../../../shared/widgets/conduit_components.dart';
 import 'proxy_auth_page.dart';
 
@@ -127,7 +130,12 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
     });
 
     try {
-      String url = _validateAndFormatUrl(_urlController.text.trim());
+      final rawUrl = _urlController.text.trim();
+      String url = _validateAndFormatUrl(rawUrl);
+      if (!_hasExplicitHttpScheme(rawUrl)) {
+        url = await _canonicalizeSchemeLessServerUrl(url);
+        if (!mounted) return;
+      }
 
       final tempConfig = ServerConfig(
         id: const Uuid().v4(),
@@ -151,7 +159,9 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
 
       // First check connectivity with proxy detection
       DebugLogger.log('Checking server health...', scope: 'auth/connection');
-      final healthResult = await api.checkHealthWithProxyDetection();
+      final healthResult = await api.checkHealthWithProxyDetection(
+        throwOnConnectionError: true,
+      );
       DebugLogger.log(
         'Health check result: $healthResult',
         scope: 'auth/connection',
@@ -216,7 +226,7 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
       );
       if (mounted) {
         setState(() {
-          _connectionError = _formatConnectionError(e.toString());
+          _connectionError = _formatConnectionError(e);
         });
       }
     } finally {
@@ -477,6 +487,99 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
     return url;
   }
 
+  bool _hasExplicitHttpScheme(String input) {
+    final normalized = input.trim().toLowerCase();
+    return normalized.startsWith('http://') ||
+        normalized.startsWith('https://');
+  }
+
+  Future<String> _canonicalizeSchemeLessServerUrl(String url) async {
+    final originalUri = Uri.parse(url);
+    if (originalUri.scheme != 'http') {
+      return url;
+    }
+
+    try {
+      final dio = Dio(
+        BaseOptions(
+          baseUrl: url,
+          connectTimeout: const Duration(seconds: 2),
+          receiveTimeout: const Duration(seconds: 2),
+          followRedirects: false,
+          validateStatus: (status) => true,
+          headers: _customHeaders.isNotEmpty
+              ? Map<String, String>.from(_customHeaders)
+              : null,
+        ),
+      );
+
+      final response = await dio.get('/health');
+      final redirectedUrl = _sameHostHttpsRedirectBaseUrl(
+        originalUri,
+        statusCode: response.statusCode,
+        location: response.headers.value('location'),
+      );
+      if (redirectedUrl == null) {
+        return url;
+      }
+
+      DebugLogger.log(
+        'Upgraded scheme-less server URL from $url to $redirectedUrl',
+        scope: 'auth/connection',
+      );
+      return redirectedUrl;
+    } on DioException catch (error) {
+      DebugLogger.log(
+        'Scheme-less HTTPS canonicalization skipped: ${error.type}',
+        scope: 'auth/connection',
+      );
+      return url;
+    } catch (error) {
+      DebugLogger.log(
+        'Scheme-less HTTPS canonicalization skipped: $error',
+        scope: 'auth/connection',
+      );
+      return url;
+    }
+  }
+
+  String? _sameHostHttpsRedirectBaseUrl(
+    Uri originalUri, {
+    required int? statusCode,
+    required String? location,
+  }) {
+    if (location == null || location.isEmpty) {
+      return null;
+    }
+    if (statusCode != 301 &&
+        statusCode != 302 &&
+        statusCode != 303 &&
+        statusCode != 307 &&
+        statusCode != 308) {
+      return null;
+    }
+
+    final redirectUri = originalUri.resolve(location);
+    if (redirectUri.scheme != 'https' ||
+        redirectUri.host.toLowerCase() != originalUri.host.toLowerCase()) {
+      return null;
+    }
+
+    final normalizedPath = originalUri.path == '/'
+        ? ''
+        : originalUri.path.replaceFirst(RegExp(r'/+$'), '');
+    final upgradedPort = redirectUri.hasPort && redirectUri.port != 443
+        ? redirectUri.port
+        : null;
+    final upgradedUri = Uri(
+      scheme: 'https',
+      host: redirectUri.host,
+      port: upgradedPort,
+      path: normalizedPath,
+    );
+    return upgradedUri.toString();
+  }
+
   bool _isIPAddress(String host) {
     return RegExp(r'^\d+\.\d+\.\d+\.\d+$').hasMatch(host);
   }
@@ -545,7 +648,7 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
 
   Future<void> _pickMutualTlsFile({required bool isPrivateKey}) async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         allowMultiple: false,
         type: FileType.custom,
         allowedExtensions: isPrivateKey
@@ -656,47 +759,132 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
     ConduitHaptics.lightImpact();
   }
 
-  String _formatConnectionError(String error) {
+  String _formatConnectionError(Object error) {
     // Clean up the error message
-    String cleanError = error.replaceFirst('Exception: ', '');
+    final errorText = error.toString();
+    final cleanError = _cleanExceptionPrefix(errorText);
 
     // Handle specific error types
-    if (error.contains('mTLS certificate setup failed')) {
+    if (errorText.contains('mTLS certificate setup failed')) {
       return cleanError;
-    } else if (error.contains('HandshakeException') && _hasAnyMutualTlsInput) {
-      return AppLocalizations.of(context)!.mutualTlsHandshakeFailed;
-    } else if (error.contains('TlsException') && _hasAnyMutualTlsInput) {
-      return AppLocalizations.of(context)!.mutualTlsHandshakeFailed;
-    } else if (error.contains('CERTIFICATE_VERIFY_FAILED') &&
+    } else if (errorText.contains('HandshakeException') &&
         _hasAnyMutualTlsInput) {
       return AppLocalizations.of(context)!.mutualTlsHandshakeFailed;
-    } else if (error.contains('alert bad certificate') &&
+    } else if (errorText.contains('TlsException') && _hasAnyMutualTlsInput) {
+      return AppLocalizations.of(context)!.mutualTlsHandshakeFailed;
+    } else if (errorText.contains('CERTIFICATE_VERIFY_FAILED') &&
+        _hasAnyMutualTlsInput) {
+      return AppLocalizations.of(context)!.mutualTlsHandshakeFailed;
+    } else if (errorText.contains('alert bad certificate') &&
         _hasAnyMutualTlsInput) {
       return AppLocalizations.of(context)!.mutualTlsHandshakeFailed;
     }
-    if (error.contains('SocketException')) {
-      return AppLocalizations.of(context)!.weCouldntReachServer;
-    } else if (error.contains('timeout')) {
-      return AppLocalizations.of(context)!.connectionTimedOut;
-    } else if (error.contains('Server URL cannot be empty')) {
+
+    final exactServerUrlError = _formatExactServerUrlError(error);
+    if (exactServerUrlError != null) {
+      return exactServerUrlError;
+    }
+
+    if (errorText.contains('timeout')) {
+      return cleanError;
+    } else if (errorText.contains('Server URL cannot be empty')) {
       return AppLocalizations.of(context)!.serverUrlEmpty;
-    } else if (error.contains('Invalid URL format')) {
+    } else if (errorText.contains('Invalid URL format')) {
       return AppLocalizations.of(context)!.invalidUrlFormat;
-    } else if (error.contains('Only HTTP and HTTPS')) {
+    } else if (errorText.contains('Only HTTP and HTTPS')) {
       return AppLocalizations.of(context)!.useHttpOrHttpsOnly;
-    } else if (error.contains('Server address is required')) {
+    } else if (errorText.contains('Server address is required')) {
       return cleanError;
-    } else if (error.contains('Port must be between')) {
+    } else if (errorText.contains('Port must be between')) {
       return cleanError;
-    } else if (error.contains('Invalid IP address format')) {
+    } else if (errorText.contains('Invalid IP address format')) {
       return cleanError;
-    } else if (error.contains(
+    } else if (errorText.contains(
       'This does not appear to be an Open-WebUI server',
     )) {
       return AppLocalizations.of(context)!.serverNotOpenWebUI;
     }
 
-    return AppLocalizations.of(context)!.couldNotConnectGeneric;
+    return cleanError.isEmpty
+        ? AppLocalizations.of(context)!.couldNotConnectGeneric
+        : cleanError;
+  }
+
+  String? _formatExactServerUrlError(Object error) {
+    if (error is DioException) {
+      return _formatDioException(error);
+    }
+
+    if (error is SocketException ||
+        error is HttpException ||
+        error is HandshakeException) {
+      return _cleanExceptionPrefix(error.toString());
+    }
+
+    return null;
+  }
+
+  String _formatDioException(DioException error) {
+    final response = error.response;
+    if (response != null) {
+      final statusCode = response.statusCode;
+      final statusMessage = response.statusMessage?.trim();
+      final status = [
+        if (statusCode != null) '$statusCode',
+        if (statusMessage != null && statusMessage.isNotEmpty) statusMessage,
+      ].join(' ');
+      final location = response.headers.value('location');
+      final detail = _responseErrorDetail(response.data);
+      final parts = [
+        if (status.isNotEmpty) 'HTTP $status',
+        'from ${response.requestOptions.uri}',
+        if (location != null && location.isNotEmpty) 'redirect: $location',
+        ?detail,
+      ];
+      return parts.join(' - ');
+    }
+
+    final requestUri = error.requestOptions.uri;
+    final rawMessage = error.error?.toString().trim();
+    if (rawMessage != null && rawMessage.isNotEmpty) {
+      return '${error.type.name} for $requestUri: $rawMessage';
+    }
+
+    final dioMessage = error.message?.trim();
+    if (dioMessage != null && dioMessage.isNotEmpty) {
+      return '${error.type.name} for $requestUri: $dioMessage';
+    }
+
+    return '${error.type.name} for $requestUri';
+  }
+
+  String? _responseErrorDetail(Object? data) {
+    final detail = switch (data) {
+      {'detail': final Object value} => value.toString(),
+      {'message': final Object value} => value.toString(),
+      {'error': final Object value} => value.toString(),
+      final String value => value,
+      _ => null,
+    };
+
+    if (detail == null) {
+      return null;
+    }
+
+    final normalized = detail.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    if (normalized.length <= 300) {
+      return normalized;
+    }
+    return '${normalized.substring(0, 300)}...';
+  }
+
+  String _cleanExceptionPrefix(String error) {
+    return error
+        .replaceFirst('Exception: ', '')
+        .replaceFirst('DioException [', '[');
   }
 
   @override
@@ -705,7 +893,7 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
     final safePadding = MediaQuery.of(context).padding;
 
     return ErrorBoundary(
-      child: Scaffold(
+      child: AdaptiveRouteShell(
         backgroundColor: context.conduitTheme.surfaceBackground,
         body: Column(
           children: [
@@ -965,7 +1153,8 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
       child: Column(
         children: [
           // Toggle header
-          InkWell(
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: () =>
                 setState(() => _showAdvancedSettings = !_showAdvancedSettings),
             child: Padding(
@@ -1067,8 +1256,7 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
                     const SizedBox(height: Spacing.xxs),
                     Text(
                       l10n.allowSelfSignedCertificatesDescription,
-                      style: TextStyle(
-                        fontSize: AppTypography.labelSmall,
+                      style: AppTypography.labelSmallStyle.copyWith(
                         color: theme.textSecondary,
                         height: 1.3,
                       ),
@@ -1104,7 +1292,7 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
               children: [
                 Text(
                   l10n.mutualTlsSectionTitle,
-                  style: theme.bodySmall?.copyWith(
+                  style: AppTypography.bodySmallStyle.copyWith(
                     fontWeight: FontWeight.w600,
                     color: theme.textPrimary,
                   ),
@@ -1112,8 +1300,7 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
                 const SizedBox(height: Spacing.xxs),
                 Text(
                   l10n.mutualTlsSectionDescription,
-                  style: TextStyle(
-                    fontSize: AppTypography.labelSmall,
+                  style: AppTypography.labelSmallStyle.copyWith(
                     color: theme.textSecondary,
                     height: 1.3,
                   ),
@@ -1212,7 +1399,7 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
                       children: [
                         Text(
                           l10n.customHeaders,
-                          style: theme.bodySmall?.copyWith(
+                          style: AppTypography.bodySmallStyle.copyWith(
                             fontWeight: FontWeight.w600,
                             color: theme.textPrimary,
                           ),
@@ -1220,8 +1407,7 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
                         const SizedBox(height: Spacing.xxs),
                         Text(
                           l10n.customHeadersDescription,
-                          style: TextStyle(
-                            fontSize: AppTypography.labelSmall,
+                          style: AppTypography.labelSmallStyle.copyWith(
                             color: theme.textSecondary,
                             height: 1.3,
                           ),
@@ -1235,8 +1421,7 @@ class _ServerConnectionPageState extends ConsumerState<ServerConnectionPage> {
                       padding: const EdgeInsets.only(right: Spacing.xs),
                       child: Text(
                         '${_customHeaders.length}/10',
-                        style: TextStyle(
-                          fontSize: AppTypography.labelSmall,
+                        style: AppTypography.labelSmallStyle.copyWith(
                           color: _customHeaders.length >= 10
                               ? theme.error
                               : theme.textTertiary,

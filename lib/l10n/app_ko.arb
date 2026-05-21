@@ -21,11 +21,13 @@
   "autoSelect": "서버 기본값",
   "loadingModels": "모델 로딩 중...",
   "failedToLoadModels": "모델을 불러오지 못했습니다",
+  "failedToLoadFiles": "파일을 불러오지 못했습니다",
   "availableModels": "사용 가능한 모델",
   "modelCapabilityMultimodal": "멀티모달",
   "modelCapabilityReasoning": "추론",
   "noResults": "결과 없음",
   "searchModels": "모델 검색...",
+  "searchFiles": "파일 검색...",
   "errorMessage": "문제가 발생했습니다. 다시 시도해주세요.",
   "closeButtonSemantic": "닫기",
   "loadingContent": "콘텐츠 로딩 중",
@@ -78,13 +80,14 @@
   "noItemsToDisplay": "표시할 항목이 없습니다",
   "knowledgeBase": "지식 베이스",
   "attachments": "첨부 파일",
+  "files": "파일",
   "takePhoto": "사진 촬영",
   "document": "문서",
   "backToServerSetup": "서버 설정으로 돌아가기",
   "connectedToServer": "서버에 연결됨",
   "signIn": "로그인",
   "enterCredentials": "AI 대화에 액세스하려면 자격 증명을 입력하세요",
-  "credentials": "이메일",
+  "credentials": "자격 증명",
   "apiKey": "API 키",
   "token": "토큰",
   "usernameOrEmail": "사용자 이름 또는 이메일",
@@ -126,6 +129,9 @@
   "genericSignInFailed": "로그인할 수 없습니다. 자격 증명과 서버 설정을 확인하세요.",
   "attachmentLabel": "첨부",
   "tools": "도구",
+  "toolServer": "도구 서버",
+  "toolServers": "도구 서버",
+  "terminal": "터미널",
   "filters": "필터",
   "voiceInput": "음성 입력",
   "voice": "음성",
@@ -261,6 +267,7 @@
   "chineseSimplified": "중국어(간체)",
   "chineseTraditional": "중국어(번체)",
   "korean": "한국어",
+  "japanese": "日本語",
   "deleteMessagesTitle": "메시지 삭제",
   "deleteMessagesMessage": "{count}개의 메시지를 삭제하시겠습니까?",
   "@deleteMessagesMessage": {
@@ -427,11 +434,11 @@
   "sendOnEnterDescription": "Enter로 전송 (소프트 키보드). Cmd/Ctrl+Enter도 사용 가능",
   "disableHapticsWhileStreaming": "스트리밍 중 햅틱 끄기",
   "disableHapticsWhileStreamingDescription": "실시간 응답 햅틱만 끄고 앱의 다른 햅틱은 유지합니다",
-  "androidAssistantTitle": "Android digital assistant",
-  "androidAssistantDescription": "Choose what happens when you trigger the Android digital assistant.",
-  "androidAssistantOverlayOption": "Show quick overlay (default)",
-  "androidAssistantNewChatOption": "Open 众小智AI with a new chat",
-  "androidAssistantVoiceCallOption": "Start a voice call",
+  "androidAssistantTitle": "Android 디지털 어시스턴트",
+  "androidAssistantDescription": "Android 디지털 어시스턴트를 실행할 때 수행할 작업을 선택하세요.",
+  "androidAssistantOverlayOption": "빠른 오버레이 표시(기본값)",
+  "androidAssistantNewChatOption": "새 채팅으로 众小智AI 열기",
+  "androidAssistantVoiceCallOption": "음성 통화 시작",
   "sttSettings": "음성 텍스트 변환",
   "sttEngineLabel": "인식 엔진",
   "sttEngineDevice": "기기에서",
@@ -540,7 +547,8 @@
   "@deleteNoteMessage": {
     "placeholders": {
       "title": {
-        "type": "String"
+        "type": "String",
+        "example": "My Note"
       }
     }
   },
@@ -573,7 +581,8 @@
   "@wordCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "150"
       }
     }
   },
@@ -581,7 +590,8 @@
   "@charCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "500"
       }
     }
   },
@@ -591,7 +601,8 @@
   "@promptVariableNumberMin": {
     "placeholders": {
       "min": {
-        "type": "double"
+        "type": "double",
+        "example": "0"
       }
     }
   },
@@ -599,7 +610,8 @@
   "@promptVariableNumberMax": {
     "placeholders": {
       "max": {
-        "type": "double"
+        "type": "double",
+        "example": "100"
       }
     }
   },
@@ -628,7 +640,8 @@
   "@usageTokensPerSecond": {
     "placeholders": {
       "speed": {
-        "type": "String"
+        "type": "String",
+        "example": "45.2"
       }
     }
   },
@@ -636,7 +649,8 @@
   "@usageTokenCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "128"
       }
     }
   },
@@ -644,7 +658,8 @@
   "@usageSecondsFormat": {
     "placeholders": {
       "seconds": {
-        "type": "String"
+        "type": "String",
+        "example": "2.34"
       }
     }
   },
@@ -695,9 +710,113 @@
   "chatSaved": "채팅이 기록에 저장되었습니다",
   "chatSaveFailed": "채팅 저장에 실패했습니다",
   "sidebarChatsTab": "채팅",
+  "sidebarTerminalTab": "터미널",
+  "@sidebarTerminalTab": {
+    "description": "Label for the Terminal tab in the sidebar"
+  },
   "sidebarNotesTab": "노트",
   "sidebarChannelsTab": "채널",
   "closeSidebar": "사이드바 닫기",
+  "terminalSelectServer": "터미널 서버 선택",
+  "@terminalSelectServer": {
+    "description": "Prompt shown when the user needs to choose a terminal server."
+  },
+  "terminalNoServersConfigured": "사용 가능한 터미널 서버가 없습니다.",
+  "@terminalNoServersConfigured": {
+    "description": "Empty state shown when there are no terminal servers configured."
+  },
+  "terminalConnectAction": "연결",
+  "@terminalConnectAction": {
+    "description": "Button label used to connect to a terminal session."
+  },
+  "terminalDisconnectAction": "연결 해제",
+  "@terminalDisconnectAction": {
+    "description": "Button label used to disconnect from a terminal session."
+  },
+  "terminalConnectedStatus": "연결됨",
+  "@terminalConnectedStatus": {
+    "description": "Status label shown when the terminal is connected."
+  },
+  "terminalDisconnectedStatus": "연결 끊김",
+  "@terminalDisconnectedStatus": {
+    "description": "Status label shown when the terminal is disconnected."
+  },
+  "terminalConnectingStatus": "연결 중...",
+  "@terminalConnectingStatus": {
+    "description": "Status label shown while the terminal connection is being established."
+  },
+  "terminalUploadAction": "업로드",
+  "@terminalUploadAction": {
+    "description": "Action label for uploading a file into the terminal workspace."
+  },
+  "terminalOpenInBrowserAction": "브라우저에서 열기",
+  "@terminalOpenInBrowserAction": {
+    "description": "Action label for opening a forwarded port in the browser."
+  },
+  "terminalHomeAction": "홈 디렉터리",
+  "@terminalHomeAction": {
+    "description": "Tooltip for navigating back to the terminal home directory."
+  },
+  "terminalCurrentPathLabel": "현재 경로",
+  "@terminalCurrentPathLabel": {
+    "description": "Label displayed above the current terminal working directory."
+  },
+  "terminalPortsSectionLabel": "수신 대기 포트",
+  "@terminalPortsSectionLabel": {
+    "description": "Section title for ports discovered in the terminal environment."
+  },
+  "terminalNoFiles": "이 디렉터리에 파일이 없습니다.",
+  "@terminalNoFiles": {
+    "description": "Empty state shown when the current terminal directory has no files."
+  },
+  "terminalNoPorts": "감지된 수신 대기 포트가 없습니다.",
+  "@terminalNoPorts": {
+    "description": "Empty state shown when the terminal server reports no listening ports."
+  },
+  "terminalPreviewUnavailable": "미리보기를 사용할 수 없습니다. 대신 다운로드를 사용하세요.",
+  "@terminalPreviewUnavailable": {
+    "description": "Message shown when a terminal file cannot be previewed inline."
+  },
+  "terminalFeatureDisabled": "이 터미널 서버는 대화형 셸을 제공하지 않습니다.",
+  "@terminalFeatureDisabled": {
+    "description": "Message shown when the selected terminal server disables interactive terminal sessions."
+  },
+  "terminalFolderNameHint": "폴더 이름",
+  "@terminalFolderNameHint": {
+    "description": "Hint text used when creating a new folder in the terminal workspace."
+  },
+  "terminalFailedToLoadFiles": "터미널 파일을 불러올 수 없습니다.",
+  "@terminalFailedToLoadFiles": {
+    "description": "Error message shown when the terminal file list cannot be loaded."
+  },
+  "terminalFailedToLoadPorts": "수신 대기 포트를 불러올 수 없습니다.",
+  "@terminalFailedToLoadPorts": {
+    "description": "Error message shown when terminal port discovery fails."
+  },
+  "terminalFailedToConnect": "터미널에 연결할 수 없습니다.",
+  "@terminalFailedToConnect": {
+    "description": "Error message shown when the terminal websocket session cannot be opened."
+  },
+  "terminalDownloadFailed": "선택한 파일을 다운로드할 수 없습니다.",
+  "@terminalDownloadFailed": {
+    "description": "Error message shown when downloading a terminal file fails."
+  },
+  "terminalUploadFailed": "선택한 파일을 업로드할 수 없습니다.",
+  "@terminalUploadFailed": {
+    "description": "Error message shown when uploading a terminal file fails."
+  },
+  "terminalRenameFailed": "선택한 항목의 이름을 변경할 수 없습니다.",
+  "@terminalRenameFailed": {
+    "description": "Error message shown when renaming a file or folder in the terminal workspace fails."
+  },
+  "terminalDeleteFailed": "선택한 항목을 삭제할 수 없습니다.",
+  "@terminalDeleteFailed": {
+    "description": "Error message shown when deleting a file or folder in the terminal workspace fails."
+  },
+  "terminalFolderCreateFailed": "폴더를 만들 수 없습니다.",
+  "@terminalFolderCreateFailed": {
+    "description": "Error message shown when creating a new terminal folder fails."
+  },
   "channelCreateTitle": "채널 만들기",
   "channelName": "채널 이름",
   "channelDescription": "설명",
@@ -721,5 +840,718 @@
   "searchChannels": "채널 검색...",
   "channelCreateError": "채널을 만들지 못했습니다",
   "channelMessageHint": "메시지...",
-  "audioUploadError": "오디오 업로드에 실패했습니다: {error}"
+  "audioUploadError": "오디오 업로드에 실패했습니다: {error}",
+  "shareChat": "채팅 공유",
+  "@shareChat": {
+    "description": "Dialog title and action label for sharing a chat."
+  },
+  "shareChatDescription": "링크를 만든 뒤에 보내는 메시지는 공유되지 않습니다. URL이 있는 사용자는 공유된 채팅을 볼 수 있습니다.",
+  "@shareChatDescription": {
+    "description": "Explains that a shared chat link is a snapshot."
+  },
+  "shareChatExisting": "이미 이 채팅을 공유했습니다.",
+  "@shareChatExisting": {
+    "description": "Explains that the chat already has an existing shared link."
+  },
+  "shareChatDeleteLink": "이 링크 삭제",
+  "@shareChatDeleteLink": {
+    "description": "Action label to delete the current shared chat link."
+  },
+  "shareChatDeleteAndCreate": "후 새 공유 링크 만들기.",
+  "@shareChatDeleteAndCreate": {
+    "description": "Continuation text after the delete shared link action."
+  },
+  "copyLink": "링크 복사",
+  "@copyLink": {
+    "description": "Button label to copy a newly created shared chat URL."
+  },
+  "updateAndCopyLink": "업데이트하고 링크 복사",
+  "@updateAndCopyLink": {
+    "description": "Button label to refresh a shared chat snapshot and copy the URL."
+  },
+  "sharedChatCopied": "공유 채팅 URL을 클립보드에 복사했습니다.",
+  "@sharedChatCopied": {
+    "description": "Snackbar shown after copying a shared chat URL."
+  },
+  "shareSystemSheet": "공유...",
+  "@shareSystemSheet": {
+    "description": "Button label to open the platform share sheet."
+  },
+  "chatShareFailed": "채팅을 공유하지 못했습니다",
+  "@chatShareFailed": {
+    "description": "Snackbar shown when chat sharing fails."
+  },
+  "sharedLinkDeleted": "공유 채팅 링크를 삭제했습니다",
+  "@sharedLinkDeleted": {
+    "description": "Snackbar shown after deleting a shared chat link."
+  },
+  "deleteSharedLinkFailed": "공유 링크를 삭제하지 못했습니다",
+  "@deleteSharedLinkFailed": {
+    "description": "Snackbar shown when deleting a shared chat link fails."
+  },
+  "systemPrompts": "시스템 프롬프트",
+  "globalSystemPrompt": "전역 시스템 프롬프트",
+  "modelSystemPrompts": "모델 시스템 프롬프트",
+  "folderSystemPrompts": "폴더 시스템 프롬프트",
+  "openWebuiModelSettings": "OpenWebUI 모델 설정",
+  "openWebuiFolderSettings": "OpenWebUI 폴더 설정",
+  "accessibleModelsCount": "접근 가능한 모델 {count}개",
+  "accessibleFoldersCount": "접근 가능한 폴더 {count}개",
+  "unableToLoadOpenWebuiSettings": "OpenWebUI 설정을 불러올 수 없습니다.",
+  "unableToLoadModels": "모델을 불러올 수 없습니다.",
+  "unableToLoadFolders": "폴더를 불러올 수 없습니다.",
+  "noAccessibleModelsFound": "접근 가능한 모델을 찾을 수 없습니다.",
+  "noAccessibleFoldersFound": "접근 가능한 폴더를 찾을 수 없습니다.",
+  "tapToLoadServerPromptSettings": "서버 프롬프트 설정을 불러오려면 탭하세요.",
+  "loadingFromOpenWebui": "OpenWebUI에서 불러오는 중...",
+  "globalSystemPromptEditorDescription": "OpenWebUI 사용자 설정에 저장되며 기본 채팅 시스템 프롬프트로 사용됩니다.",
+  "modelNoEditableServerRecord": "이 모델에는 편집 가능한 서버 기록이 없습니다.",
+  "modelSystemPromptTitle": "{modelName} 시스템 프롬프트",
+  "modelSystemPromptEditorDescription": "OpenWebUI 모델 params.system에 저장됩니다.",
+  "modelNoWriteAccessDescription": "이 모델에 대한 쓰기 권한이 없습니다.",
+  "unableToLoadFolder": "이 폴더를 불러올 수 없습니다.",
+  "folderSystemPromptTitle": "{folderName} 시스템 프롬프트",
+  "folderSystemPromptEditorDescription": "OpenWebUI 폴더 data.system_prompt에 저장됩니다.",
+  "notSet": "설정되지 않음",
+  "enterSystemPrompt": "시스템 프롬프트 입력",
+  "close": "닫기",
+  "connectionHealth": "연결 상태",
+  "personalization": "개인화",
+  "personalizationSubtitle": "기본 모델, 개인 프롬프트 및 메모리",
+  "yourSystemPrompt": "내 시스템 프롬프트",
+  "yourSystemPromptDescription": "OpenWebUI가 채팅에 적용할 개인 시스템 프롬프트를 설정합니다.",
+  "memoryTitle": "메모리",
+  "memoryEnabledDescription": "서버가 저장된 메모리를 이후 채팅에서 사용할 수 있도록 허용합니다.",
+  "memoryDisabledDescription": "저장된 메모리는 서버에 남아 있지만 채팅에 삽입되지 않습니다.",
+  "manageMemories": "메모리 관리",
+  "manageMemoriesDescription": "서버가 기억하는 나에 대한 사실을 추가, 편집, 삭제합니다.",
+  "savedMemoriesCount": "저장된 메모리 {count}개",
+  "memoryEditorDescription": "서버가 일관되게 적용할 수 있도록 메모리는 짧고 구체적으로 작성하세요.",
+  "memoryHint": "예: 코드 예제가 포함된 간결한 답변을 선호합니다.",
+  "addMemory": "메모리 추가",
+  "editMemory": "메모리 편집",
+  "deleteMemory": "메모리 삭제",
+  "deleteMemoryConfirm": "서버에서 이 저장된 메모리를 삭제할까요?",
+  "clearAllMemories": "모든 메모리 지우기",
+  "clearAllMemoriesDescription": "계정의 모든 저장된 메모리를 영구적으로 삭제합니다.",
+  "noMemoriesSaved": "아직 저장된 메모리가 없습니다.",
+  "memoryUpdatedAt": "{formattedTime} 업데이트됨",
+  "advancedPromptOverrides": "고급 프롬프트 재정의",
+  "advancedPromptOverridesDescription": "모델 수준 프롬프트 재정의는 앱 및 채팅에 있습니다.",
+  "audioSettingsTitle": "오디오",
+  "audioSettingsSubtitle": "음성 텍스트 변환 및 텍스트 음성 변환",
+  "appAndChat": "앱 및 채팅",
+  "appAndChatSubtitle": "테마, 언어, 채팅 동작 및 고급 재정의",
+  "accountSettingsTitle": "계정",
+  "accountSettingsSubtitle": "프로필 세부 정보 및 비밀번호 관리",
+  "accountDetails": "계정 세부 정보",
+  "signInToManageAccount": "계정 세부 정보를 관리하려면 로그인하세요.",
+  "emailLabel": "이메일",
+  "roleLabel": "역할",
+  "accountStatus": "상태",
+  "profileDetails": "프로필 세부 정보",
+  "name": "이름",
+  "avatarUrl": "아바타 URL",
+  "avatarUrlHint": "https://example.com/avatar.png",
+  "bioLabel": "소개",
+  "bioHint": "나에 대한 짧은 설명입니다.",
+  "genderLabel": "성별",
+  "genderPreferNotToSay": "말하지 않음",
+  "genderMale": "남성",
+  "genderFemale": "여성",
+  "genderCustom": "사용자 지정",
+  "customGenderLabel": "사용자 지정 성별",
+  "customGenderHint": "성별을 입력하세요",
+  "customGenderRequired": "사용자 지정 성별을 입력하거나 다른 옵션을 선택하세요.",
+  "birthDateLabel": "생년월일",
+  "selectBirthDate": "날짜 선택",
+  "birthDateHint": "YYYY-MM-DD",
+  "currentAvatar": "현재 아바타",
+  "uploadFromDevice": "기기에서 업로드",
+  "useInitials": "이니셜",
+  "removeAvatar": "제거",
+  "avatarUploadFailed": "아바타를 업데이트할 수 없습니다.",
+  "timezoneLabel": "시간대",
+  "timezoneHint": "Asia/Seoul",
+  "saveProfile": "프로필 저장",
+  "changePasswordTitle": "비밀번호 변경",
+  "passwordChangeUnavailable": "이 서버에서는 비밀번호 변경이 비활성화되어 있습니다.",
+  "currentPassword": "현재 비밀번호",
+  "newPassword": "새 비밀번호",
+  "confirmNewPassword": "새 비밀번호 확인",
+  "nameRequired": "저장하기 전에 이름을 입력하세요.",
+  "profileUpdated": "프로필이 업데이트되었습니다.",
+  "passwordFieldsRequired": "현재 비밀번호와 새 비밀번호를 입력하세요.",
+  "passwordsDoNotMatch": "새 비밀번호가 일치하지 않습니다.",
+  "passwordUpdated": "비밀번호가 업데이트되었습니다.",
+  "activeStatus": "활성",
+  "inactiveStatus": "비활성",
+  "appInformation": "众小智AI 앱",
+  "appVersion": "버전",
+  "serverInformation": "서버 정보",
+  "serverInfoUnavailable": "현재 서버 정보를 사용할 수 없습니다.",
+  "serverNameLabel": "서버 이름",
+  "serverVersionLabel": "서버 버전",
+  "latestVersionLabel": "최신 버전",
+  "deploymentIdLabel": "배포 ID",
+  "defaultLocaleLabel": "기본 언어",
+  "userCountLabel": "사용자 수",
+  "serverDefaultModelsLabel": "기본 모델",
+  "loginFormLabel": "로그인 양식",
+  "passwordChangesLabel": "비밀번호 변경",
+  "apiKeysLabel": "API 키",
+  "audioInputLabel": "오디오 입력",
+  "audioOutputLabel": "오디오 출력",
+  "speechToTextEngineLabel": "음성 텍스트 변환 엔진",
+  "textToSpeechEngineLabel": "텍스트 음성 변환 엔진",
+  "licenseMetadataLabel": "라이선스 메타데이터",
+  "enabledLabel": "활성화됨",
+  "disabledLabel": "비활성화됨",
+  "noEmailLabel": "이메일 없음",
+  "userFallbackName": "사용자",
+  "unknownLabel": "알 수 없음",
+  "socketNotConnected": "연결되지 않음",
+  "socketConnected": "연결됨",
+  "socketDisconnected": "연결 끊김",
+  "socketLatencyLabel": "지연 시간",
+  "socketReconnectsLabel": "재연결",
+  "socketLastHeartbeat": "마지막 하트비트: {time}",
+  "socketTransportWebSocket": "WebSocket 전송",
+  "socketTransportPolling": "HTTP 폴링 전송",
+  "socketTransportUnknown": "알 수 없는 전송",
+  "socketQualityExcellent": "매우 좋음",
+  "socketQualityGood": "좋음",
+  "socketQualityFair": "보통",
+  "socketQualityPoor": "나쁨",
+  "timeJustNow": "방금",
+  "timeSecondsAgo": "{count}초 전",
+  "timeMinutesAgo": "{count}분 전",
+  "timeHoursAgo": "{count}시간 전",
+  "attach": "첨부",
+  "@attach": {
+    "description": "Button label to attach content to the current chat or folder chat."
+  },
+  "attachWebpageDescription": "URL을 붙여넣어 내용을 채팅에 가져옵니다.",
+  "@attachWebpageDescription": {
+    "description": "Description shown in the web page attachment dialog."
+  },
+  "webpageUrlLabel": "웹페이지 URL",
+  "@webpageUrlLabel": {
+    "description": "Label for the URL field in the web page attachment dialog."
+  },
+  "invalidHttpUrl": "유효한 http(s) URL을 입력하세요.",
+  "@invalidHttpUrl": {
+    "description": "Validation message when a URL is missing or not HTTP/HTTPS."
+  },
+  "youtubeTranscriptFetchFailed": "YouTube 대본을 가져올 수 없습니다.",
+  "@youtubeTranscriptFetchFailed": {
+    "description": "Error shown when a YouTube transcript cannot be fetched."
+  },
+  "webpageNoReadableContent": "페이지에 읽을 수 있는 콘텐츠가 없습니다.",
+  "@webpageNoReadableContent": {
+    "description": "Error shown when a fetched webpage has no readable text content."
+  },
+  "failedToAttachContent": "콘텐츠를 첨부하지 못했습니다.",
+  "@failedToAttachContent": {
+    "description": "Generic error shown when attaching web content fails."
+  },
+  "scrollToBottom": "맨 아래로 스크롤",
+  "@scrollToBottom": {
+    "description": "Tooltip for the button that scrolls a chat to the newest message."
+  },
+  "editFolder": "폴더 편집",
+  "@editFolder": {
+    "description": "Title and menu label for editing a folder."
+  },
+  "editFolderDescription": "서버에서 폴더 이름과 아이콘을 업데이트합니다.",
+  "@editFolderDescription": {
+    "description": "Description shown in the folder edit sheet."
+  },
+  "icon": "아이콘",
+  "@icon": {
+    "description": "Label for selecting an icon."
+  },
+  "folderIconDescription": "폴더 아이콘을 선택하세요.",
+  "@folderIconDescription": {
+    "description": "Subtitle for the folder icon picker."
+  },
+  "defaultLabel": "기본값",
+  "@defaultLabel": {
+    "description": "Generic label for the default option."
+  },
+  "systemPrompt": "시스템 프롬프트",
+  "@systemPrompt": {
+    "description": "Singular label for a system prompt field or menu item."
+  },
+  "move": "이동",
+  "@move": {
+    "description": "Context action to move an item."
+  },
+  "moveToFolder": "폴더로 이동",
+  "@moveToFolder": {
+    "description": "Title for choosing a destination folder for a chat."
+  },
+  "moveFolder": "폴더 이동",
+  "@moveFolder": {
+    "description": "Title for choosing a destination parent for a folder."
+  },
+  "noFolder": "폴더 없음",
+  "@noFolder": {
+    "description": "Option to remove a chat from any folder."
+  },
+  "topLevel": "최상위",
+  "@topLevel": {
+    "description": "Option to move a folder to the top level."
+  },
+  "failedToMoveFolder": "폴더를 이동하지 못했습니다",
+  "@failedToMoveFolder": {
+    "description": "Error shown when moving a folder fails."
+  },
+  "failedToRenameFolder": "폴더 이름을 변경하지 못했습니다",
+  "@failedToRenameFolder": {
+    "description": "Error shown when renaming a folder fails."
+  },
+  "browseKnowledgeBase": "지식 베이스 찾아보기",
+  "@browseKnowledgeBase": {
+    "description": "Title for opening the knowledge base picker."
+  },
+  "knowledgePickerHint": "문서를 선택하려면 Enter를 누르세요",
+  "@knowledgePickerHint": {
+    "description": "Hint shown for keyboard selection in the knowledge base picker."
+  },
+  "execution": "실행",
+  "@execution": {
+    "description": "Fallback label for an unnamed code execution."
+  },
+  "codeExecutionTitle": "코드 실행",
+  "@codeExecutionTitle": {
+    "description": "Fallback title for a code execution details sheet."
+  },
+  "codeExecutionFailed": "{label} 실패",
+  "@codeExecutionFailed": {
+    "description": "Title shown when a named code execution fails.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Execution"
+      }
+    }
+  },
+  "codeExecutionRunning": "{label}…",
+  "@codeExecutionRunning": {
+    "description": "Title shown while a named code execution is still running.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Execution"
+      }
+    }
+  },
+  "language": "언어",
+  "@language": {
+    "description": "Label for a programming language field."
+  },
+  "code": "코드",
+  "@code": {
+    "description": "Label for source code content."
+  },
+  "output": "출력",
+  "@output": {
+    "description": "Label for execution output."
+  },
+  "download": "다운로드",
+  "@download": {
+    "description": "Fallback label for a downloadable file."
+  },
+  "languageWithValue": "언어: {language}",
+  "@languageWithValue": {
+    "description": "Label and value for a programming language.",
+    "placeholders": {
+      "language": {
+        "type": "String",
+        "example": "Python"
+      }
+    }
+  },
+  "previewDeferredLargeContent": "큰 콘텐츠의 미리보기가 지연되었습니다.",
+  "@previewDeferredLargeContent": {
+    "description": "Message shown when an inline preview is delayed because content is large."
+  },
+  "openPreview": "미리보기 열기",
+  "@openPreview": {
+    "description": "Button to open a deferred preview."
+  },
+  "copiedToClipboard": "클립보드에 복사됨",
+  "@copiedToClipboard": {
+    "description": "Snackbar message after copying content to the clipboard."
+  },
+  "preview": "미리보기",
+  "@preview": {
+    "description": "Button label for opening a preview."
+  },
+  "alertTip": "팁",
+  "@alertTip": {
+    "description": "Fallback label for a tip markdown alert."
+  },
+  "alertImportant": "중요",
+  "@alertImportant": {
+    "description": "Fallback label for an important markdown alert."
+  },
+  "alertWarning": "경고",
+  "@alertWarning": {
+    "description": "Fallback label for a warning markdown alert."
+  },
+  "alertCaution": "주의",
+  "@alertCaution": {
+    "description": "Fallback label for a caution markdown alert."
+  },
+  "alertNote": "참고",
+  "@alertNote": {
+    "description": "Fallback label for a note markdown alert."
+  },
+  "markdownDetailsGroupPendingTitle": "{summary} 탐색 중",
+  "@markdownDetailsGroupPendingTitle": {
+    "description": "Title shown for a pending grouped tool-call details block.",
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "markdownDetailsGroupCompleteTitle": "{summary} 탐색 완료",
+  "@markdownDetailsGroupCompleteTitle": {
+    "description": "Title shown for a completed grouped tool-call details block.",
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "markdownDetailsGroupUnnamedTool": "도구",
+  "@markdownDetailsGroupUnnamedTool": {
+    "description": "Fallback label used when a grouped tool call has no tool name."
+  },
+  "folderIconFolder": "폴더",
+  "@folderIconFolder": {
+    "description": "Accessibility label for the folder icon option."
+  },
+  "folderIconOpenFolder": "열린 폴더",
+  "@folderIconOpenFolder": {
+    "description": "Accessibility label for the open folder icon option."
+  },
+  "folderIconBriefcase": "서류가방",
+  "@folderIconBriefcase": {
+    "description": "Accessibility label for the briefcase folder icon option."
+  },
+  "folderIconBooks": "책",
+  "@folderIconBooks": {
+    "description": "Accessibility label for the books folder icon option."
+  },
+  "folderIconMemo": "메모",
+  "@folderIconMemo": {
+    "description": "Accessibility label for the memo folder icon option."
+  },
+  "folderIconDividers": "구분자",
+  "@folderIconDividers": {
+    "description": "Accessibility label for the dividers folder icon option."
+  },
+  "folderIconTools": "도구",
+  "@folderIconTools": {
+    "description": "Accessibility label for the tools folder icon option."
+  },
+  "folderIconToolbox": "도구 상자",
+  "@folderIconToolbox": {
+    "description": "Accessibility label for the toolbox folder icon option."
+  },
+  "folderIconSparkles": "반짝임",
+  "@folderIconSparkles": {
+    "description": "Accessibility label for the sparkles folder icon option."
+  },
+  "folderIconBrain": "두뇌",
+  "@folderIconBrain": {
+    "description": "Accessibility label for the brain folder icon option."
+  },
+  "folderIconRocket": "로켓",
+  "@folderIconRocket": {
+    "description": "Accessibility label for the rocket folder icon option."
+  },
+  "folderIconTarget": "대상",
+  "@folderIconTarget": {
+    "description": "Accessibility label for the target folder icon option."
+  },
+  "folderIconGeneric": "폴더 아이콘",
+  "@folderIconGeneric": {
+    "description": "Generic accessibility label for a custom folder icon."
+  },
+  "thread": "스레드",
+  "@thread": {
+    "description": "Title and context action for a message thread."
+  },
+  "threadWithCount": "스레드 ({count})",
+  "@threadWithCount": {
+    "description": "Thread action label with reply count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "channelMembersTitle": "멤버 ({count})",
+  "@channelMembersTitle": {
+    "description": "Title for the channel members sheet.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "channelInputPlaceholder": "여기에 입력...",
+  "@channelInputPlaceholder": {
+    "description": "Placeholder for the channel message composer."
+  },
+  "channelUnknownMember": "알 수 없음",
+  "@channelUnknownMember": {
+    "description": "Fallback name for a channel member with no display name."
+  },
+  "replyInputPlaceholder": "답장...",
+  "@replyInputPlaceholder": {
+    "description": "Placeholder for the thread reply composer."
+  },
+  "editPhoto": "사진 편집",
+  "@editPhoto": {
+    "description": "Action to edit the profile photo."
+  },
+  "replyingToUser": "{name}님에게 답장 중",
+  "@replyingToUser": {
+    "description": "Label shown above the channel composer when replying to a user.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Alex"
+      }
+    }
+  },
+  "voiceCallWithModel": "{modelName}와 음성 통화",
+  "@voiceCallWithModel": {
+    "description": "Notification title for an ongoing voice call with a model.",
+    "placeholders": {
+      "modelName": {
+        "type": "String",
+        "example": "GPT-4"
+      }
+    }
+  },
+  "notificationPermissionTitle": "알림 권한",
+  "@notificationPermissionTitle": {
+    "description": "Title for the system notification permission prompt."
+  },
+  "callNotificationPermissionRationale": "통화 알림에는 알림 권한이 필요합니다.",
+  "@callNotificationPermissionRationale": {
+    "description": "Rationale shown when requesting notification permission for call alerts."
+  },
+  "callNotificationPermissionPost": "수신 통화를 표시하려면 알림을 허용하세요.",
+  "@callNotificationPermissionPost": {
+    "description": "Instruction shown when requesting notification permission for incoming calls."
+  },
+  "acceptCall": "수락",
+  "@acceptCall": {
+    "description": "Call action to accept an incoming call."
+  },
+  "declineCall": "거절",
+  "@declineCall": {
+    "description": "Call action to decline an incoming call."
+  },
+  "missedCall": "부재중 전화",
+  "@missedCall": {
+    "description": "Notification subtitle for a missed call."
+  },
+  "callBack": "다시 전화",
+  "@callBack": {
+    "description": "Notification action to call back after a missed call."
+  },
+  "calling": "전화 거는 중...",
+  "@calling": {
+    "description": "Notification subtitle while starting a call."
+  },
+  "hangUp": "끊기",
+  "@hangUp": {
+    "description": "Notification action to hang up a call."
+  },
+  "incomingCallChannelName": "수신 통화",
+  "@incomingCallChannelName": {
+    "description": "Android notification channel name for incoming calls."
+  },
+  "missedCallChannelName": "부재중 전화",
+  "@missedCallChannelName": {
+    "description": "Android notification channel name for missed calls."
+  },
+  "mute": "음소거",
+  "@mute": {
+    "description": "Notification action to mute a call."
+  },
+  "unmute": "음소거 해제",
+  "@unmute": {
+    "description": "Notification action to unmute a call."
+  },
+  "voiceCallMuted": "음소거됨",
+  "@voiceCallMuted": {
+    "description": "Status label when a voice call is muted."
+  },
+  "voiceCallChannelDescription": "진행 중인 음성 통화 알림",
+  "@voiceCallChannelDescription": {
+    "description": "Android notification channel description for ongoing voice calls."
+  },
+  "@greetingTitle": {
+    "description": "Greeting shown on the empty chat page.",
+    "placeholders": {
+      "username": {
+        "type": "String",
+        "example": "Alex"
+      }
+    }
+  },
+  "@continueWithProvider": {
+    "description": "Button text for OAuth provider sign-in.",
+    "placeholders": {
+      "provider": {
+        "type": "String",
+        "example": "Google"
+      }
+    }
+  },
+  "@channelMembers": {
+    "description": "Member count display in channel header",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@audioUploadError": {
+    "description": "Error message when audio upload fails",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "description": "The error message"
+      }
+    }
+  },
+  "@accessibleModelsCount": {
+    "description": "Subtitle showing how many accessible models are listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "@accessibleFoldersCount": {
+    "description": "Subtitle showing how many accessible folders are listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "@modelSystemPromptTitle": {
+    "description": "Title for a model system prompt editor.",
+    "placeholders": {
+      "modelName": {
+        "type": "String",
+        "example": "GPT-4"
+      }
+    }
+  },
+  "@folderSystemPromptTitle": {
+    "description": "Title for a folder system prompt editor.",
+    "placeholders": {
+      "folderName": {
+        "type": "String",
+        "example": "Work"
+      }
+    }
+  },
+  "@savedMemoriesCount": {
+    "description": "Shows how many memories are saved.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@memoryUpdatedAt": {
+    "description": "Shows when a memory was last updated.",
+    "placeholders": {
+      "formattedTime": {}
+    }
+  },
+  "@socketLastHeartbeat": {
+    "description": "Shows when the socket last received a heartbeat.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "just now"
+      }
+    }
+  },
+  "@timeSecondsAgo": {
+    "description": "Compact relative time label for seconds ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "@timeMinutesAgo": {
+    "description": "Compact relative time label for minutes ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "@timeHoursAgo": {
+    "description": "Compact relative time label for hours ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "rateLimitExceeded": "요청이 너무 많습니다. 잠시 후 다시 시도하세요.",
+  "@rateLimitExceeded": {
+    "description": "Error shown when the server rejects a request due to rate limiting."
+  },
+  "rateLimitRetryAfter": "{duration} 후 다시 시도하세요.",
+  "@rateLimitRetryAfter": {
+    "description": "Advice shown when a rate limit response includes a retry delay.",
+    "placeholders": {
+      "duration": {
+        "type": "String",
+        "example": "1m 30s"
+      }
+    }
+  },
+  "rateLimitRetrySoon": "잠시 후 다시 시도하세요.",
+  "@rateLimitRetrySoon": {
+    "description": "Advice shown when a rate limit response does not include an exact retry delay."
+  },
+  "securityCertificateError": "보안 인증서 오류입니다. 서버 ID를 확인할 수 없습니다.",
+  "@securityCertificateError": {
+    "description": "Error shown when the server TLS certificate cannot be trusted or verified."
+  },
+  "noToolsAvailable": "사용 가능한 도구가 없습니다",
+  "@noToolsAvailable": {
+    "description": "Empty state shown when no tools are available in the composer overflow menu."
+  },
+  "failedToLoadTools": "도구를 불러올 수 없습니다",
+  "@failedToLoadTools": {
+    "description": "Error shown when the composer overflow menu cannot load tools."
+  }
 }

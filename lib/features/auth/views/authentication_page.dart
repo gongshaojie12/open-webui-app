@@ -13,6 +13,7 @@ import '../../../core/services/input_validation_service.dart';
 import '../../../core/services/navigation_service.dart';
 import '../../../core/widgets/error_boundary.dart';
 import '../../../shared/theme/theme_extensions.dart';
+import '../../../shared/widgets/adaptive_route_shell.dart';
 import '../../../shared/widgets/conduit_components.dart';
 import '../../../core/auth/auth_state_manager.dart';
 import '../../../core/utils/debug_logger.dart';
@@ -129,6 +130,8 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
   }
 
   Future<void> _signIn() async {
+    if (_isSigningIn) return;
+
     final l10n = AppLocalizations.of(context)!;
     // FocusMedia mode launches WebView directly, no form validation needed
     if (_authMode == AuthMode.focusmedia) {
@@ -200,6 +203,21 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
     await storage.setActiveServerId(config.id);
     ref.invalidate(serverConfigsProvider);
     ref.invalidate(activeServerProvider);
+    ref.invalidate(apiServiceProvider);
+
+    await ref.read(activeServerProvider.future);
+    await _waitForApiService(config.id);
+  }
+
+  Future<void> _waitForApiService(String serverId) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (DateTime.now().isBefore(deadline)) {
+      final api = ref.read(apiServiceProvider);
+      if (api?.serverConfig.id == serverId) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
   }
 
   String _formatLoginError(String error) {
@@ -224,7 +242,7 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Listen for auth state changes to navigate on successful login
+    // Listen for auth state changes to run post-login side effects.
     ref.listen<AsyncValue<AuthState>>(authStateManagerProvider, (
       previous,
       next,
@@ -241,16 +259,16 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
         // Model selection will be handled by the chat page
         // to avoid widget disposal issues
 
-        DebugLogger.auth('Navigating to chat page');
-        // Navigate directly to chat page on successful authentication
-        context.go(Routes.chat);
+        // Navigation is handled automatically by the router when auth state
+        // changes to authenticated. Calling context.go() here can race with
+        // the redirect and duplicate the shell navigator during auth recovery.
       }
     });
 
     final safePadding = MediaQuery.of(context).padding;
 
     return ErrorBoundary(
-      child: Scaffold(
+      child: AdaptiveRouteShell(
         backgroundColor: context.conduitTheme.surfaceBackground,
         body: Column(
           children: [
@@ -268,31 +286,37 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
                         right: Spacing.pagePadding,
                         top: safePadding.top + Spacing.md,
                       ),
-                    child: Form(
-                      key: _formKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const SizedBox(height: Spacing.xl),
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Back button row
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: _buildBackButton(),
+                            ),
 
-                          // Brand icon + title header
-                          _buildHeader(),
+                            const SizedBox(height: Spacing.xl),
 
-                          const SizedBox(height: Spacing.xxl),
+                            // Brand icon + title header
+                            _buildHeader(),
 
-                          // Auth mode selector
-                          if (_availableAuthModes.length > 1) ...[
-                            _buildAuthModeSelector(),
-                            const SizedBox(height: Spacing.lg),
+                            const SizedBox(height: Spacing.xxl),
+
+                            // Auth mode selector
+                            if (_availableAuthModes.length > 1) ...[
+                              _buildAuthModeSelector(),
+                              const SizedBox(height: Spacing.lg),
+                            ],
+
+                            // Authentication form
+                            _buildAuthForm(),
                           ],
-
-                          // Authentication form
-                          _buildAuthForm(),
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                ),
                 ),
               ),
             ),
@@ -370,10 +394,7 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
       decoration: BoxDecoration(
         color: theme.surfaceContainer,
         borderRadius: BorderRadius.circular(AppBorderRadius.button),
-        border: Border.all(
-          color: theme.cardBorder,
-          width: BorderWidth.thin,
-        ),
+        border: Border.all(color: theme.cardBorder, width: BorderWidth.thin),
       ),
       padding: const EdgeInsets.all(3),
       child: Row(
@@ -403,8 +424,7 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
                   child: Text(
                     _authModeLabel(modes[i]),
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: AppTypography.bodySmall,
+                    style: AppTypography.bodySmallStyle.copyWith(
                       fontWeight: i == selectedIndex
                           ? FontWeight.w600
                           : FontWeight.w500,
@@ -491,9 +511,7 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
             autofillHints: const [AutofillHints.username, AutofillHints.email],
             cupertinoDecoration: BoxDecoration(
               color: CupertinoColors.tertiarySystemBackground,
-              border: Border.all(
-                color: context.conduitTheme.inputBorder,
-              ),
+              border: Border.all(color: context.conduitTheme.inputBorder),
               borderRadius: BorderRadius.circular(8),
             ),
           ),
@@ -522,24 +540,18 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
                   ? (Platform.isIOS
                         ? CupertinoIcons.eye_slash
                         : Icons.visibility_off)
-                  : (Platform.isIOS
-                        ? CupertinoIcons.eye
-                        : Icons.visibility),
+                  : (Platform.isIOS ? CupertinoIcons.eye : Icons.visibility),
               iconColor: context.conduitTheme.iconSecondary,
               onPressed: () =>
                   setState(() => _obscurePassword = !_obscurePassword),
-              tooltip: _obscurePassword
-                  ? 'Show password'
-                  : 'Hide password',
+              tooltip: _obscurePassword ? 'Show password' : 'Hide password',
               isCompact: true,
             ),
             onSubmitted: (_) => _signIn(),
             autofillHints: const [AutofillHints.password],
             cupertinoDecoration: BoxDecoration(
               color: CupertinoColors.tertiarySystemBackground,
-              border: Border.all(
-                color: context.conduitTheme.inputBorder,
-              ),
+              border: Border.all(color: context.conduitTheme.inputBorder),
               borderRadius: BorderRadius.circular(8),
             ),
           ),
@@ -569,9 +581,7 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
             autofillHints: const [AutofillHints.username],
             cupertinoDecoration: BoxDecoration(
               color: CupertinoColors.tertiarySystemBackground,
-              border: Border.all(
-                color: context.conduitTheme.inputBorder,
-              ),
+              border: Border.all(color: context.conduitTheme.inputBorder),
               borderRadius: BorderRadius.circular(8),
             ),
           ),
@@ -600,24 +610,18 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
                   ? (Platform.isIOS
                         ? CupertinoIcons.eye_slash
                         : Icons.visibility_off)
-                  : (Platform.isIOS
-                        ? CupertinoIcons.eye
-                        : Icons.visibility),
+                  : (Platform.isIOS ? CupertinoIcons.eye : Icons.visibility),
               iconColor: context.conduitTheme.iconSecondary,
               onPressed: () =>
                   setState(() => _obscurePassword = !_obscurePassword),
-              tooltip: _obscurePassword
-                  ? 'Show password'
-                  : 'Hide password',
+              tooltip: _obscurePassword ? 'Show password' : 'Hide password',
               isCompact: true,
             ),
             onSubmitted: (_) => _signIn(),
             autofillHints: const [AutofillHints.password],
             cupertinoDecoration: BoxDecoration(
               color: CupertinoColors.tertiarySystemBackground,
-              border: Border.all(
-                color: context.conduitTheme.inputBorder,
-              ),
+              border: Border.all(color: context.conduitTheme.inputBorder),
               borderRadius: BorderRadius.circular(8),
             ),
           ),
@@ -658,9 +662,7 @@ class _AuthenticationPageState extends ConsumerState<AuthenticationPage> {
       text: buttonText,
       icon: _isSigningIn
           ? null
-          : (Platform.isIOS
-                ? CupertinoIcons.arrow_right
-                : Icons.arrow_forward),
+          : (Platform.isIOS ? CupertinoIcons.arrow_right : Icons.arrow_forward),
       onPressed: _isSigningIn ? null : _signIn,
       isLoading: _isSigningIn,
       isFullWidth: true,

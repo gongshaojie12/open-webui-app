@@ -1,6 +1,6 @@
 name: conduit
 description: Open-source mobile client for Open-WebUI
-version: 2.6.4+105
+version: 3.1.0+116
 publish_to: 'none'
 
 environment:
@@ -11,9 +11,11 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
+  flutter_driver:
+    sdk: flutter
   
   # State Management
-  flutter_riverpod: ^3.0.3
+  flutter_riverpod: ^3.1.0
   
   # Navigation
   go_router: ^17.0.0
@@ -30,7 +32,6 @@ dependencies:
   shared_preferences: ^2.3.2
   
   # UI Components - Markdown Rendering
-  cached_network_image: ^3.3.1
   markdown: ^7.3.0
   webview_flutter_plus: ^0.4.20
   socket_io_client: ^3.1.2
@@ -49,7 +50,7 @@ dependencies:
   audio_session: ^0.2.2
   permission_handler: ^12.0.1
   image_picker: ^1.2.0
-  file_picker: ^10.3.7
+  file_picker: ^11.0.2
   flutter_image_compress: ^2.1.0
   path_provider: ^2.1.4
   
@@ -57,7 +58,7 @@ dependencies:
   path: ^1.9.0
   uuid: ^4.5.0
   crypto: ^3.0.3
-  package_info_plus: ^9.0.0
+  package_info_plus: ^9.0.1
   url_launcher: ^6.3.0
   intl: ^0.20.2
 
@@ -68,8 +69,8 @@ dependencies:
   wakelock_plus: ^1.4.0
   share_plus: ^12.0.0
   share_handler: ^0.0.19
-  riverpod_annotation: ^3.0.3
-  flutter_local_notifications: ^19.4.2
+  riverpod_annotation: ^4.0.0
+  flutter_local_notifications: ^21.0.0
   connectivity_plus: ^7.0.0
   flutter_cache_manager: ^3.4.1
   http: ^1.5.0
@@ -77,19 +78,16 @@ dependencies:
   quick_actions: 1.1.0
   flutter_svg: ^2.2.3
   html_unescape: ^2.0.0
-  home_widget: ^0.8.1
+  home_widget: ^0.9.1
   flutter_highlight: ^0.7.0
-  super_context_menu: ^0.9.1
-  super_drag_and_drop: ^0.9.1
   just_audio: ^0.10.5
   adaptive_platform_ui: ^0.1.103
   flutter_tex: ^5.2.6
-  super_clipboard: ^0.9.1
-  super_sliver_list: ^0.4.1
   gaimon: ^1.4.2
+  xterm: ^4.0.0
+  web_socket_channel: ^3.0.3
+  cached_network_image_ce: ^4.6.4
   
-  # Clipboard functionality is available through flutter/services (part of Flutter SDK)
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -98,21 +96,12 @@ dev_dependencies:
   freezed: ^3.2.0
   json_serializable: ^6.11.1
   flutter_native_splash: ^2.4.6
-  riverpod_generator: ^3.0.3
-  riverpod_lint: 3.0.3
+  riverpod_generator: ^4.0.0+1
+  riverpod_lint: ^3.1.0
   custom_lint: 0.8.1
   mocktail: ^1.0.4
   checks: ^0.3.1
   flutter_launcher_icons: ^0.14.4
-
-dependency_overrides:
-  riverpod_lint: 3.0.3
-  custom_lint_builder: 0.8.1
-  super_native_extensions:
-    git:
-      url: https://github.com/dilumdesilva/super_native_extensions
-      ref: main
-      path: super_native_extensions
 
 flutter:
   uses-material-design: true
@@ -126,6 +115,7 @@ flutter:
     - assets/chartjs.min.js
     - assets/flutter_tex.js
     - assets/flutter_tex.css
+    - assets/vad/
 
 flutter_native_splash:
   # Splash background matches the light theme; `color_dark` handles dark mode.

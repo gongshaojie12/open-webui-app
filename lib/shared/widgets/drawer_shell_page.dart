@@ -13,6 +13,10 @@ import 'responsive_drawer_layout.dart';
 ///
 /// Used inside a [ShellRoute] so the drawer survives navigation
 /// between chat, channel, and note-editor pages on tablets.
+///
+/// This shell intentionally does not own an `AdaptiveRouteShell` because the
+/// child routes still need route-specific app bars, native tab bars, and
+/// fullscreen overlays.
 class DrawerShellPage extends ConsumerWidget {
   final Widget child;
 
@@ -25,7 +29,6 @@ class DrawerShellPage extends ConsumerWidget {
     final scrim = Platform.isIOS
         ? context.colorTokens.scrimMedium
         : context.colorTokens.scrimStrong;
-    final theme = context.conduitTheme;
 
     return ResponsiveDrawerLayout(
       maxFraction: isTablet ? 0.42 : 1.0,
@@ -34,25 +37,17 @@ class DrawerShellPage extends ConsumerWidget {
       scrimColor: scrim,
       pushContent: true,
       contentScaleDelta: 0.0,
+      mobileBottomDragGestureExclusion: isTablet
+          ? 0.0
+          : sidebarBottomBarGestureExclusionHeight(context),
       tabletDrawerWidth: 320.0,
       onOpenStart: () {
         // Suppress composer auto-focus when drawer opens on mobile
         try {
-          ref
-              .read(composerAutofocusEnabledProvider.notifier)
-              .set(false);
+          ref.read(composerAutofocusEnabledProvider.notifier).set(false);
         } catch (_) {}
       },
-      drawer: Container(
-        color: theme.surfaceBackground,
-        child: const SafeArea(
-          top: true,
-          bottom: true,
-          left: false,
-          right: false,
-          child: SidebarPage(),
-        ),
-      ),
+      drawer: const SidebarPage(),
       child: child,
     );
   }

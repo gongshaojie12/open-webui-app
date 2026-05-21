@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_tex/flutter_tex.dart';
 
+import 'latex_rendering_server.dart';
+
 /// Extracts LaTeX expressions before markdown parsing and
 /// restores them during widget rendering.
 ///
@@ -20,13 +22,22 @@ import 'package:flutter_tex/flutter_tex.dart';
 class LatexPreprocessor {
   /// Creates a preprocessor instance for a single parse
   /// operation.
-  LatexPreprocessor();
+  LatexPreprocessor()
+    : _blockExpressions = <String, String>{},
+      _inlineExpressions = <String, String>{};
+
+  LatexPreprocessor.fromExpressions(
+    Map<String, String> blockExpressions,
+    Map<String, String> inlineExpressions,
+  ) : _blockExpressions = Map<String, String>.from(blockExpressions),
+      _inlineExpressions = Map<String, String>.from(inlineExpressions),
+      _counter = blockExpressions.length + inlineExpressions.length;
 
   /// Block-level LaTeX expressions (placeholder key to TeX).
-  final _blockExpressions = <String, String>{};
+  final Map<String, String> _blockExpressions;
 
   /// Inline LaTeX expressions (placeholder key to TeX).
-  final _inlineExpressions = <String, String>{};
+  final Map<String, String> _inlineExpressions;
 
   /// Monotonically increasing counter for unique keys.
   int _counter = 0;
@@ -73,6 +84,12 @@ class LatexPreprocessor {
   /// Whether any LaTeX was found during [extract].
   bool get hasLatex =>
       _blockExpressions.isNotEmpty || _inlineExpressions.isNotEmpty;
+
+  Map<String, String> get blockExpressions =>
+      Map<String, String>.unmodifiable(_blockExpressions);
+
+  Map<String, String> get inlineExpressions =>
+      Map<String, String>.unmodifiable(_inlineExpressions);
 
   /// Replaces LaTeX expressions with placeholder tokens.
   ///
@@ -191,23 +208,47 @@ class LatexPreprocessor {
     final color = textStyle.color ?? Colors.black;
     final fontSize = textStyle.fontSize ?? 14.0;
 
-    final math = Math2SVG(
-      math: tex,
-      formulaWidgetBuilder: (context, svg) {
-        final height = _svgExToPixels(svg, fontSize);
-        return ColorFiltered(
-          colorFilter: ColorFilter.mode(color, BlendMode.srcATop),
-          child: SvgPicture.string(svg, height: height),
-        );
-      },
-    );
+    Widget buildMath() {
+      return Math2SVG(
+        math: tex,
+        loadingWidgetBuilder: (_) => _buildLatexFallback(tex, textStyle),
+        errorWidgetBuilder: (_, _) => _buildLatexFallback(tex, textStyle),
+        formulaWidgetBuilder: (context, svg) {
+          final height = _svgExToPixels(svg, fontSize);
+          return ColorFiltered(
+            colorFilter: ColorFilter.mode(color, BlendMode.srcATop),
+            child: SvgPicture.string(svg, height: height),
+          );
+        },
+      );
+    }
 
-    if (!isBlock) return math;
+    final math = LatexRenderingServer.isStarted
+        ? buildMath()
+        : FutureBuilder<void>(
+            future: LatexRenderingServer.ensureStarted(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done ||
+                  snapshot.hasError) {
+                return _buildLatexFallback(tex, textStyle);
+              }
+              return buildMath();
+            },
+          );
+
+    return _wrapLatexWidget(math, isBlock: isBlock);
+  }
+
+  static Widget _wrapLatexWidget(Widget child, {required bool isBlock}) {
+    if (!isBlock) return child;
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      child: math,
+      child: child,
     );
   }
+
+  static Widget _buildLatexFallback(String tex, TextStyle textStyle) =>
+      Text(tex, style: textStyle);
 
   /// Converts MathJax's SVG `ex`-unit height to logical pixels.
   ///

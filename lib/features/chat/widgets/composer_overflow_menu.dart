@@ -9,11 +9,13 @@ import '../../../shared/theme/theme_extensions.dart';
 import '../../../shared/widgets/sheet_handle.dart';
 import '../../../shared/widgets/conduit_components.dart';
 import '../../../shared/widgets/modal_safe_area.dart';
-import '../../../core/models/tool.dart';
+import '../../../shared/widgets/model_avatar.dart';
 import '../../../core/models/toggle_filter.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../tools/providers/tools_providers.dart';
+import '../../terminal/providers/terminal_providers.dart';
 import '../providers/chat_providers.dart';
+import 'composer_overflow_items.dart';
 import 'package:conduit/l10n/app_localizations.dart';
 
 /// A reusable toggle tile widget used in the composer overflow sheet.
@@ -59,7 +61,7 @@ class ToggleTile extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: theme.bodySmall?.copyWith(
+                    style: AppTypography.bodyMediumStyle.copyWith(
                       color: theme.sidebarForeground,
                       fontWeight: FontWeight.w600,
                     ),
@@ -72,7 +74,7 @@ class ToggleTile extends StatelessWidget {
                       subtitle!,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: AppTypography.captionStyle.copyWith(
+                      style: AppTypography.bodySmallStyle.copyWith(
                         color: theme.sidebarForeground.withValues(alpha: 0.75),
                       ),
                     ),
@@ -128,12 +130,14 @@ class ComposerOverflowSheet extends ConsumerStatefulWidget {
   const ComposerOverflowSheet({
     super.key,
     this.onFileAttachment,
+    this.onServerFileAttachment,
     this.onImageAttachment,
     this.onCameraCapture,
     this.onWebAttachment,
   });
 
   final VoidCallback? onFileAttachment;
+  final VoidCallback? onServerFileAttachment;
   final VoidCallback? onImageAttachment;
   final VoidCallback? onCameraCapture;
   final VoidCallback? onWebAttachment;
@@ -144,100 +148,95 @@ class ComposerOverflowSheet extends ConsumerStatefulWidget {
 }
 
 class _ComposerOverflowSheetState extends ConsumerState<ComposerOverflowSheet> {
+  Future<Map<String, dynamic>?>? _userSettingsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _userSettingsFuture = _loadUserSettings();
+  }
+
+  Future<Map<String, dynamic>?> _loadUserSettings() async {
+    final api = ref.read(apiServiceProvider);
+    if (api == null) {
+      return null;
+    }
+
+    try {
+      return await api.getUserSettings();
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final theme = context.conduitTheme;
+    final attachmentItems = buildComposerOverflowAttachmentItems(
+      l10n: l10n,
+      attachmentAvailability: ComposerOverflowAttachmentAvailability(
+        file: widget.onFileAttachment != null,
+        serverFile: widget.onServerFileAttachment != null,
+        photo: widget.onImageAttachment != null,
+        camera: widget.onCameraCapture != null,
+        web: widget.onWebAttachment != null,
+      ),
+    );
 
-    final attachments = <Widget>[
-      _buildAction(
-        icon: Platform.isIOS ? CupertinoIcons.doc : Icons.attach_file,
-        label: l10n.file,
-        onTap: widget.onFileAttachment == null
-            ? null
-            : () {
-                ConduitHaptics.lightImpact();
-                widget.onFileAttachment!();
-              },
-      ),
-      _buildAction(
-        icon: Platform.isIOS ? CupertinoIcons.photo : Icons.image,
-        label: l10n.photo,
-        onTap: widget.onImageAttachment == null
-            ? null
-            : () {
-                ConduitHaptics.lightImpact();
-                widget.onImageAttachment!();
-              },
-      ),
-      _buildAction(
-        icon: Platform.isIOS ? CupertinoIcons.camera : Icons.camera_alt,
-        label: l10n.camera,
-        onTap: widget.onCameraCapture == null
-            ? null
-            : () {
-                ConduitHaptics.lightImpact();
-                widget.onCameraCapture!();
-              },
-      ),
-      _buildAction(
-        icon: Icons.public,
-        label: l10n.webPage,
-        onTap: widget.onWebAttachment == null
-            ? null
-            : () {
-                ConduitHaptics.lightImpact();
-                widget.onWebAttachment!();
-              },
-      ),
-    ];
+    final attachments = attachmentItems
+        .map(
+          (item) =>
+              _buildAction(item: item, onTap: _attachmentHandlerFor(item.id)),
+        )
+        .toList();
 
-    final featureTiles = <Widget>[];
     final webSearchAvailable = ref.watch(webSearchAvailableProvider);
     final webSearchEnabled = ref.watch(webSearchEnabledProvider);
-    if (webSearchAvailable) {
-      featureTiles.add(
-        _buildToggleTile(
-          icon: Platform.isIOS ? CupertinoIcons.search : Icons.search,
-          title: l10n.webSearch,
-          subtitle: l10n.webSearchDescription,
-          value: webSearchEnabled,
-          onChanged: (v) => ref.read(webSearchEnabledProvider.notifier).set(v),
-        ),
-      );
-    }
-
     final imageGenAvailable = ref.watch(imageGenerationAvailableProvider);
     final imageGenEnabled = ref.watch(imageGenerationEnabledProvider);
-    if (imageGenAvailable) {
-      featureTiles.add(
-        _buildToggleTile(
-          icon: Platform.isIOS ? CupertinoIcons.photo : Icons.image,
-          title: l10n.imageGeneration,
-          subtitle: l10n.imageGenerationDescription,
-          value: imageGenEnabled,
-          onChanged: (v) =>
-              ref.read(imageGenerationEnabledProvider.notifier).set(v),
-        ),
-      );
-    }
+    final featureTiles =
+        buildComposerOverflowFeatureItems(
+          l10n: l10n,
+          webSearchAvailable: webSearchAvailable,
+          webSearchEnabled: webSearchEnabled,
+          imageGenerationAvailable: imageGenAvailable,
+          imageGenerationEnabled: imageGenEnabled,
+        ).map((item) {
+          return _buildOverflowItemTile(
+            item: item,
+            onChanged: (selected) {
+              setComposerOverflowSelection(
+                ref,
+                actionId: item.id,
+                selected: selected,
+              );
+            },
+          );
+        }).toList();
 
     final selectedToolIds = ref.watch(selectedToolIdsProvider);
+    final selectedTerminalId = ref.watch(selectedTerminalIdProvider);
+    final availableTerminalServersAsync = ref.watch(
+      terminalAvailableServersProvider,
+    );
     final toolsAsync = ref.watch(toolsListProvider);
     final toolsSection = toolsAsync.when(
       data: (tools) {
-        if (tools.isEmpty) return _buildInfoCard('No tools available');
-        final tiles = tools.map((tool) {
-          final isSelected = selectedToolIds.contains(tool.id);
-          return _buildToolTile(
-            tool: tool,
-            selected: isSelected,
-            onToggle: () {
-              final current = List<String>.from(
-                ref.read(selectedToolIdsProvider),
+        final toolItems = buildComposerOverflowToolItems(
+          availableTools: tools,
+          selectedToolIds: selectedToolIds,
+        );
+        if (toolItems.isEmpty) return _buildInfoCard(l10n.noToolsAvailable);
+        final tiles = toolItems.map((item) {
+          return _buildOverflowItemTile(
+            item: item,
+            onChanged: (selected) {
+              setComposerOverflowSelection(
+                ref,
+                actionId: item.id,
+                selected: selected,
               );
-              isSelected ? current.remove(tool.id) : current.add(tool.id);
-              ref.read(selectedToolIdsProvider.notifier).set(current);
             },
           );
         }).toList();
@@ -250,7 +249,99 @@ class _ComposerOverflowSheetState extends ConsumerState<ComposerOverflowSheet> {
           child: CircularProgressIndicator(strokeWidth: BorderWidth.thin),
         ),
       ),
-      error: (_, _) => _buildInfoCard('Failed to load tools'),
+      error: (_, _) => _buildInfoCard(l10n.failedToLoadTools),
+    );
+    final integrationsSection = FutureBuilder<Map<String, dynamic>?>(
+      future: _userSettingsFuture,
+      builder: (context, snapshot) {
+        final settings = snapshot.data;
+        final directToolServers = _extractConfiguredServers(
+          settings,
+          'toolServers',
+        );
+        final directToolTiles = <Widget>[];
+        for (var index = 0; index < directToolServers.length; index++) {
+          final server = directToolServers[index];
+          if (!_isServerEnabled(server)) {
+            continue;
+          }
+
+          final selectionId = _directServerSelectionId(server, index);
+          final isSelected = selectedToolIds.contains(selectionId);
+          directToolTiles.add(
+            _buildToggleTile(
+              icon: Platform.isIOS
+                  ? CupertinoIcons.square_stack_3d_down_right
+                  : Icons.hub_outlined,
+              title: _serverTitle(server, fallbackPrefix: l10n.toolServer),
+              subtitle: _serverSubtitle(server),
+              value: isSelected,
+              onChanged: (_) {
+                final current = List<String>.from(
+                  ref.read(selectedToolIdsProvider),
+                );
+                if (isSelected) {
+                  current.remove(selectionId);
+                } else {
+                  current.add(selectionId);
+                }
+                ref.read(selectedToolIdsProvider.notifier).set(current);
+              },
+            ),
+          );
+        }
+
+        final terminalTiles = availableTerminalServersAsync.maybeWhen(
+          data: (servers) {
+            return servers
+                .map((server) {
+                  final isSelected = selectedTerminalId == server.selectionId;
+                  return _buildToggleTile(
+                    icon: Platform.isIOS
+                        ? CupertinoIcons.chevron_left_slash_chevron_right
+                        : Icons.terminal_rounded,
+                    title: server.displayName,
+                    subtitle: server.subtitle,
+                    value: isSelected,
+                    onChanged: (_) async {
+                      await ref
+                          .read(terminalSelectionControllerProvider)
+                          .toggle(server);
+                    },
+                  );
+                })
+                .toList(growable: false);
+          },
+          orElse: () => const <Widget>[],
+        );
+
+        if (directToolTiles.isEmpty && terminalTiles.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        final children = <Widget>[];
+        if (directToolTiles.isNotEmpty) {
+          children
+            ..add(_buildSectionLabel(l10n.toolServers))
+            ..add(
+              Column(
+                children: withVerticalSpacing(directToolTiles, Spacing.xxs),
+              ),
+            );
+        }
+        if (terminalTiles.isNotEmpty) {
+          if (children.isNotEmpty) {
+            children.add(const SizedBox(height: Spacing.sm));
+          }
+          children
+            ..add(_buildSectionLabel(l10n.terminal))
+            ..add(
+              Column(children: withVerticalSpacing(terminalTiles, Spacing.xxs)),
+            );
+        }
+
+        return Column(children: children);
+      },
     );
 
     final listItems = <Widget>[
@@ -279,6 +370,7 @@ class _ComposerOverflowSheetState extends ConsumerState<ComposerOverflowSheet> {
       const SizedBox(height: Spacing.sm),
       _buildSectionLabel(l10n.tools),
       toolsSection,
+      integrationsSection,
     ];
 
     final selectedModel = ref.watch(selectedModelProvider);
@@ -370,16 +462,116 @@ class _ComposerOverflowSheetState extends ConsumerState<ComposerOverflowSheet> {
       padding: const EdgeInsets.all(Spacing.md),
       child: Text(
         message,
-        style: theme.bodySmall?.copyWith(
+        style: AppTypography.bodyMediumStyle.copyWith(
           color: theme.sidebarForeground.withValues(alpha: 0.75),
         ),
       ),
     );
   }
 
+  List _extractConfiguredServers(Map<String, dynamic>? settings, String key) {
+    if (settings == null) {
+      return const [];
+    }
+
+    final rootValue = settings[key];
+    if (rootValue is List) {
+      return rootValue;
+    }
+
+    final uiValue = settings['ui'];
+    if (uiValue is Map && uiValue[key] is List) {
+      return uiValue[key] as List;
+    }
+
+    return const [];
+  }
+
+  bool _isServerEnabled(dynamic server) {
+    if (server is! Map) {
+      return false;
+    }
+
+    final config = server['config'];
+    if (config is Map && config.containsKey('enable')) {
+      return config['enable'] == true;
+    }
+
+    final enabled = server['enabled'];
+    if (enabled is bool) {
+      return enabled;
+    }
+
+    return true;
+  }
+
+  String _directServerSelectionId(dynamic server, int index) {
+    final serverId = server is Map ? server['id']?.toString().trim() : null;
+    final suffix = serverId != null && serverId.isNotEmpty
+        ? serverId
+        : index.toString();
+    return 'direct_server:$suffix';
+  }
+
+  String _serverTitle(dynamic server, {required String fallbackPrefix}) {
+    if (server is Map) {
+      final values = <dynamic>[
+        server['name'],
+        server['title'],
+        server['info'] is Map ? (server['info'] as Map)['title'] : null,
+        server['id'],
+        server['url'],
+      ];
+      for (final value in values) {
+        final text = value?.toString().trim();
+        if (text != null && text.isNotEmpty) {
+          return text;
+        }
+      }
+    }
+
+    return fallbackPrefix;
+  }
+
+  String? _serverSubtitle(dynamic server) {
+    if (server is! Map) {
+      return null;
+    }
+
+    final values = <dynamic>[
+      server['description'],
+      server['url'],
+      server['path'],
+    ];
+    for (final value in values) {
+      final text = value?.toString().trim();
+      if (text != null && text.isNotEmpty) {
+        return text;
+      }
+    }
+
+    return null;
+  }
+
+  VoidCallback? _attachmentHandlerFor(String actionId) {
+    switch (actionId) {
+      case ComposerOverflowActionIds.file:
+        return widget.onFileAttachment;
+      case ComposerOverflowActionIds.serverFile:
+        return widget.onServerFileAttachment;
+      case ComposerOverflowActionIds.photo:
+        return widget.onImageAttachment;
+      case ComposerOverflowActionIds.camera:
+        return widget.onCameraCapture;
+      case ComposerOverflowActionIds.web:
+        return widget.onWebAttachment;
+      default:
+        return null;
+    }
+  }
+
   Widget _buildAction({
-    required IconData icon,
-    required String label,
+    required ComposerOverflowItem item,
     VoidCallback? onTap,
   }) {
     final theme = context.conduitTheme;
@@ -399,6 +591,7 @@ class _ComposerOverflowSheetState extends ConsumerState<ComposerOverflowSheet> {
         onTap: onTap == null
             ? null
             : () {
+                ConduitHaptics.lightImpact();
                 Navigator.of(context).pop();
                 Future.microtask(onTap);
               },
@@ -421,16 +614,17 @@ class _ComposerOverflowSheetState extends ConsumerState<ComposerOverflowSheet> {
                 ),
               ),
               alignment: Alignment.center,
-              child: Icon(icon, color: iconColor, size: IconSize.medium),
+              child: Icon(
+                item.iconFor(useCupertino: Platform.isIOS),
+                color: iconColor,
+                size: IconSize.medium,
+              ),
             ),
             const SizedBox(height: Spacing.xs),
             Text(
-              label,
+              item.label,
               textAlign: TextAlign.center,
-              style: AppTypography.captionStyle.copyWith(
-                fontWeight: FontWeight.w600,
-                color: textColor,
-              ),
+              style: AppTypography.labelMediumStyle.copyWith(color: textColor),
             ),
           ],
         ),
@@ -460,23 +654,16 @@ class _ComposerOverflowSheetState extends ConsumerState<ComposerOverflowSheet> {
     );
   }
 
-  Widget _buildToolTile({
-    required Tool tool,
-    required bool selected,
-    required VoidCallback onToggle,
+  Widget _buildOverflowItemTile({
+    required ComposerOverflowItem item,
+    required ValueChanged<bool> onChanged,
   }) {
-    final theme = context.conduitTheme;
-    return ToggleTile(
-      glyph: _buildIconGlyph(
-        icon: _iconFor(tool),
-        selected: selected,
-        theme: theme,
-      ),
-      title: tool.name,
-      subtitle: _descriptionFor(tool),
-      selected: selected,
-      onToggle: onToggle,
-      theme: theme,
+    return _buildToggleTile(
+      icon: item.iconFor(useCupertino: Platform.isIOS),
+      title: item.label,
+      subtitle: item.subtitle,
+      value: item.selected,
+      onChanged: onChanged,
     );
   }
 
@@ -546,72 +733,8 @@ class _ComposerOverflowSheetState extends ConsumerState<ComposerOverflowSheet> {
       ),
       alignment: Alignment.center,
       child: iconUrl != null && iconUrl.isNotEmpty
-          ? ClipRRect(
-              borderRadius: BorderRadius.circular(AppBorderRadius.small),
-              child: Image.network(
-                iconUrl,
-                width: 40,
-                height: 40,
-                fit: BoxFit.cover,
-                color: iconUrl.endsWith('.svg') ? color : null,
-                colorBlendMode: BlendMode.srcIn,
-                errorBuilder: (_, _, _) => fallback,
-              ),
-            )
+          ? ModelAvatar(size: 40, imageUrl: iconUrl, label: null)
           : fallback,
     );
-  }
-
-  IconData _iconFor(Tool tool) {
-    final name = tool.name.toLowerCase();
-    if (name.contains('image') || name.contains('vision')) {
-      return Platform.isIOS ? CupertinoIcons.photo : Icons.image;
-    }
-    if (name.contains('code') || name.contains('python')) {
-      return Platform.isIOS
-          ? CupertinoIcons.chevron_left_slash_chevron_right
-          : Icons.code;
-    }
-    if (name.contains('calculator') || name.contains('math')) {
-      return Icons.calculate;
-    }
-    if (name.contains('file') || name.contains('document')) {
-      return Platform.isIOS ? CupertinoIcons.doc : Icons.description;
-    }
-    if (name.contains('api') || name.contains('request')) return Icons.cloud;
-    if (name.contains('search')) {
-      return Platform.isIOS ? CupertinoIcons.search : Icons.search;
-    }
-    return Platform.isIOS ? CupertinoIcons.square_grid_2x2 : Icons.extension;
-  }
-
-  String _descriptionFor(Tool tool) {
-    final meta = tool.meta;
-    if (meta != null) {
-      final v = meta['description'];
-      if (v is String && v.trim().isNotEmpty) return v.trim();
-    }
-    final custom = tool.description?.trim();
-    if (custom != null && custom.isNotEmpty) return custom;
-    final name = tool.name.toLowerCase();
-    if (name.contains('search') || name.contains('browse')) {
-      return 'Search the web for fresh context to improve answers.';
-    }
-    if (name.contains('image') || name.contains('vision')) {
-      return 'Understand or generate imagery alongside your conversation.';
-    }
-    if (name.contains('code') || name.contains('python')) {
-      return 'Execute code snippets and return computed results inline.';
-    }
-    if (name.contains('calc') || name.contains('math')) {
-      return 'Perform precise math and calculations on demand.';
-    }
-    if (name.contains('file') || name.contains('document')) {
-      return 'Access and summarize your uploaded files during chat.';
-    }
-    if (name.contains('api') || name.contains('request')) {
-      return 'Trigger API requests and bring external data into the chat.';
-    }
-    return 'Enhance responses with specialized capabilities from this tool.';
   }
 }

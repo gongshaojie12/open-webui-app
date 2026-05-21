@@ -3,6 +3,8 @@ import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:conduit/l10n/app_localizations.dart';
+
 import '../../../core/models/channel_message.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/services/api_service.dart';
@@ -10,11 +12,14 @@ import '../../../core/utils/model_icon_utils.dart';
 import '../../../core/utils/user_avatar_utils.dart'
     show resolveUserProfileImageUrl;
 import '../../../shared/theme/theme_extensions.dart';
+import '../../../shared/widgets/chrome_gradient_fade.dart';
+import '../../../shared/widgets/measure_size.dart';
 import '../../../shared/widgets/model_avatar.dart';
 import '../../../shared/widgets/user_avatar.dart';
 import '../../chat/widgets/modern_chat_input.dart';
 import '../providers/channel_providers.dart';
 import '../utils/mention_utils.dart';
+import 'channel_message_content.dart';
 
 /// Side panel (tablet) or bottom sheet (mobile) for
 /// viewing and replying to a message thread.
@@ -46,6 +51,7 @@ class ThreadPanel extends ConsumerStatefulWidget {
 }
 
 class _ThreadPanelState extends ConsumerState<ThreadPanel> {
+  double _composerHeight = 0;
   bool _isSending = false;
 
   Future<void> _sendReply(String text) async {
@@ -87,7 +93,9 @@ class _ThreadPanelState extends ConsumerState<ThreadPanel> {
   @override
   Widget build(BuildContext context) {
     final theme = context.conduitTheme;
+    final l10n = AppLocalizations.of(context)!;
     final api = ref.read(apiServiceProvider);
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final threadAsync = ref.watch(
       threadMessagesProvider(widget.channelId, widget.parentMessage.id),
     );
@@ -108,30 +116,68 @@ class _ThreadPanelState extends ConsumerState<ThreadPanel> {
           ),
           const Divider(height: 1),
           Expanded(
-            child: threadAsync.when(
-              data: (messages) => _ThreadReplies(
-                messages: messages
-                    .where((m) => m.id != widget.parentMessage.id)
-                    .toList(),
-                api: api,
-                theme: theme,
-              ),
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(
-                child: Text(e.toString(), style: TextStyle(color: theme.error)),
-              ),
-            ),
-          ),
-          RepaintBoundary(
-            child: Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom,
-              ),
-              child: ModernChatInput(
-                onSendMessage: _sendReply,
-                placeholder: 'Reply...',
-                overflowButtonBuilder: widget.overflowButtonBuilder,
-              ),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: threadAsync.when(
+                    data: (messages) => _ThreadReplies(
+                      messages: messages
+                          .where((m) => m.id != widget.parentMessage.id)
+                          .toList(),
+                      api: api,
+                      theme: theme,
+                      bottomPadding: _composerHeight + bottomInset,
+                    ),
+                    loading: () =>
+                        const Center(child: CircularProgressIndicator()),
+                    error: (e, _) => Center(
+                      child: Text(
+                        e.toString(),
+                        style: AppTypography.bodyMediumStyle.copyWith(
+                          color: theme.error,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: bottomInset,
+                  child: ConduitChromeGradientFade.bottom(
+                    contentHeight: (_composerHeight - Spacing.xl).clamp(
+                      0.0,
+                      double.infinity,
+                    ),
+                    fadeHeight: Spacing.md,
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: bottomInset,
+                  child: RepaintBoundary(
+                    child: MeasureSize(
+                      onChange: (size) {
+                        if (!mounted) return;
+                        setState(() => _composerHeight = size.height);
+                      },
+                      child: SafeArea(
+                        top: false,
+                        left: false,
+                        right: false,
+                        minimum: const EdgeInsets.only(bottom: Spacing.sm),
+                        child: ModernChatInput(
+                          onSendMessage: _sendReply,
+                          placeholder: l10n.replyInputPlaceholder,
+                          overflowButtonBuilder: widget.overflowButtonBuilder,
+                          bottomPadding: 0,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -154,11 +200,10 @@ class _ThreadHeader extends StatelessWidget {
       child: Row(
         children: [
           Text(
-            'Thread',
-            style: TextStyle(
+            AppLocalizations.of(context)!.thread,
+            style: AppTypography.titleMediumStyle.copyWith(
               color: theme.textPrimary,
               fontWeight: FontWeight.w600,
-              fontSize: 16,
             ),
           ),
           const Spacer(),
@@ -200,22 +245,16 @@ class _ParentMessageTile extends StatelessWidget {
               children: [
                 Text(
                   messageDisplayName(message),
-                  style: TextStyle(
+                  style: AppTypography.bodySmallStyle.copyWith(
                     color: theme.textSecondary,
                     fontWeight: FontWeight.w500,
-                    fontSize: AppTypography.bodySmall,
                     letterSpacing: 0.1,
                   ),
                 ),
                 const SizedBox(height: Spacing.xxs),
-                RichText(
-                  text: buildMentionSpan(
-                    content: message.content,
-                    baseStyle: AppTypography.chatMessageStyle.copyWith(
-                      color: theme.textPrimary,
-                    ),
-                    mentionColor: Theme.of(context).colorScheme.primary,
-                  ),
+                ChannelMessageContent(
+                  content: message.content,
+                  stateScopeId: 'channel-thread-parent:${message.id}',
                 ),
               ],
             ),
@@ -244,11 +283,17 @@ class _ParentMessageTile extends StatelessWidget {
 
 /// Scrollable list of thread replies.
 class _ThreadReplies extends StatelessWidget {
-  const _ThreadReplies({required this.messages, this.api, required this.theme});
+  const _ThreadReplies({
+    required this.messages,
+    this.api,
+    required this.theme,
+    this.bottomPadding = 0,
+  });
 
   final List<ChannelMessage> messages;
   final ApiService? api;
   final ConduitThemeExtension theme;
+  final double bottomPadding;
 
   @override
   Widget build(BuildContext context) {
@@ -256,13 +301,20 @@ class _ThreadReplies extends StatelessWidget {
       return Center(
         child: Text(
           'No replies yet',
-          style: TextStyle(color: theme.textSecondary),
+          style: AppTypography.bodyMediumStyle.copyWith(
+            color: theme.textSecondary,
+          ),
         ),
       );
     }
     return ListView.builder(
       reverse: false,
-      padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
+      padding: EdgeInsets.fromLTRB(
+        0,
+        Spacing.sm,
+        0,
+        Spacing.sm + bottomPadding,
+      ),
       itemCount: messages.length,
       itemBuilder: (context, index) {
         final message = messages[index];
@@ -299,22 +351,16 @@ class _ThreadReplies extends StatelessWidget {
                   children: [
                     Text(
                       messageDisplayName(message),
-                      style: TextStyle(
+                      style: AppTypography.bodySmallStyle.copyWith(
                         color: theme.textSecondary,
                         fontWeight: FontWeight.w500,
-                        fontSize: AppTypography.bodySmall,
                         letterSpacing: 0.1,
                       ),
                     ),
                     const SizedBox(height: 2),
-                    RichText(
-                      text: buildMentionSpan(
-                        content: message.content,
-                        baseStyle: AppTypography.chatMessageStyle.copyWith(
-                          color: theme.textPrimary,
-                        ),
-                        mentionColor: Theme.of(context).colorScheme.primary,
-                      ),
+                    ChannelMessageContent(
+                      content: message.content,
+                      stateScopeId: 'channel-thread:${message.id}',
                     ),
                   ],
                 ),

@@ -31,6 +31,28 @@ class SourceReferenceHelper {
         'Source ${index + 1}';
   }
 
+  /// Returns the compact label used by inline citation chips.
+  ///
+  /// OpenWebUI prefers a stripped URL/domain for inline source chips whenever
+  /// a canonical URL is available, even if the expanded source list uses a
+  /// richer title.
+  static String getInlineSourceLabel(ChatSourceReference source, int index) {
+    final title = source.title;
+    final url = getSourceUrl(source);
+    if (title != null &&
+        !looksLikeUrl(title) &&
+        url == source.url &&
+        _looksLikeDomain(title)) {
+      return source.title!;
+    }
+
+    if (url != null) {
+      return extractDomain(url);
+    }
+
+    return getSourceLabel(source, index);
+  }
+
   /// Returns the best launchable URL for a source, if any.
   ///
   /// Canonical URLs are preferred over metadata fallback fields like
@@ -119,6 +141,12 @@ class SourceReferenceHelper {
       return false;
     }
     return value.startsWith('http://') || value.startsWith('https://');
+  }
+
+  static bool _looksLikeDomain(String value) {
+    final trimmed = value.trim();
+    if (trimmed.contains(' ')) return false;
+    return RegExp(r'^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$').hasMatch(trimmed);
   }
 
   static String? _firstNonEmpty(Iterable<dynamic> values) {

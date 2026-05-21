@@ -34,17 +34,13 @@ void main() {
 
   group('transformError - DioException timeout types', () {
     test('connectionTimeout maps to ApiErrorType.timeout', () {
-      final error = makeDioException(
-        DioExceptionType.connectionTimeout,
-      );
+      final error = makeDioException(DioExceptionType.connectionTimeout);
       final result = handler.transformError(error);
       check(result.type).equals(ApiErrorType.timeout);
     });
 
     test('receiveTimeout maps to ApiErrorType.timeout', () {
-      final error = makeDioException(
-        DioExceptionType.receiveTimeout,
-      );
+      final error = makeDioException(DioExceptionType.receiveTimeout);
       final result = handler.transformError(error);
       check(result.type).equals(ApiErrorType.timeout);
     });
@@ -58,9 +54,7 @@ void main() {
 
   group('transformError - DioException connection/cancel types', () {
     test('connectionError maps to ApiErrorType.network', () {
-      final error = makeDioException(
-        DioExceptionType.connectionError,
-      );
+      final error = makeDioException(DioExceptionType.connectionError);
       final result = handler.transformError(error);
       check(result.type).equals(ApiErrorType.network);
     });
@@ -72,9 +66,7 @@ void main() {
     });
 
     test('badCertificate maps to ApiErrorType.security', () {
-      final error = makeDioException(
-        DioExceptionType.badCertificate,
-      );
+      final error = makeDioException(DioExceptionType.badCertificate);
       final result = handler.transformError(error);
       check(result.type).equals(ApiErrorType.security);
     });
@@ -172,9 +164,7 @@ void main() {
 
   group('transformError - non-Dio exceptions', () {
     test('plain Exception maps to ApiErrorType.unknown', () {
-      final result = handler.transformError(
-        Exception('something broke'),
-      );
+      final result = handler.transformError(Exception('something broke'));
       check(result.type).equals(ApiErrorType.unknown);
     });
 
@@ -184,10 +174,7 @@ void main() {
     });
 
     test('passes through existing ApiError unchanged', () {
-      const original = ApiError.notFound(
-        message: 'not here',
-        endpoint: '/foo',
-      );
+      const original = ApiError.notFound(message: 'not here', endpoint: '/foo');
       final result = handler.transformError(original);
       check(result.type).equals(ApiErrorType.notFound);
       check(result.message).equals('not here');
@@ -196,9 +183,7 @@ void main() {
 
   group('transformError - preserves endpoint and method', () {
     test('uses provided endpoint and method', () {
-      final error = makeDioException(
-        DioExceptionType.connectionTimeout,
-      );
+      final error = makeDioException(DioExceptionType.connectionTimeout);
       final result = handler.transformError(
         error,
         endpoint: '/api/chat',
@@ -221,10 +206,7 @@ void main() {
     });
 
     test('server error is retryable', () {
-      const error = ApiError.server(
-        message: 'internal error',
-        statusCode: 500,
-      );
+      const error = ApiError.server(message: 'internal error', statusCode: 500);
       check(handler.isRetryable(error)).isTrue();
     });
 
@@ -285,17 +267,13 @@ void main() {
     });
 
     test('returns Duration for server errors', () {
-      const error = ApiError.server(
-        message: 'down',
-        statusCode: 500,
-      );
+      const error = ApiError.server(message: 'down', statusCode: 500);
       final delay = handler.getRetryDelay(error);
       check(delay).isNotNull();
       check(delay!.inSeconds).equals(10);
     });
 
-    test('returns retryAfter duration for rateLimit with retryAfter',
-        () {
+    test('returns retryAfter duration for rateLimit with retryAfter', () {
       const error = ApiError.rateLimit(
         message: 'rate limited',
         retryAfter: Duration(seconds: 30),
@@ -305,8 +283,7 @@ void main() {
       check(delay!.inSeconds).equals(30);
     });
 
-    test('returns default 1 minute for rateLimit without retryAfter',
-        () {
+    test('returns default 1 minute for rateLimit without retryAfter', () {
       const error = ApiError.rateLimit(message: 'rate limited');
       final delay = handler.getRetryDelay(error);
       check(delay).isNotNull();
@@ -331,14 +308,14 @@ void main() {
       const error = ApiError.network(message: 'Connection failed');
       final msg = handler.getUserMessage(error);
       check(msg).isNotEmpty();
-      check(msg).contains('internet connection');
+      check(msg).contains('check your connection');
     });
 
     test('returns non-empty string for timeout error', () {
       const error = ApiError.timeout(message: 'Timed out');
       final msg = handler.getUserMessage(error);
       check(msg).isNotEmpty();
-      check(msg).contains('slow connection');
+      check(msg).contains('request timed out');
     });
 
     test('returns non-empty string for authentication error', () {
@@ -352,14 +329,14 @@ void main() {
       const error = ApiError.authorization(message: 'Forbidden');
       final msg = handler.getUserMessage(error);
       check(msg).isNotEmpty();
-      check(msg).contains('support');
+      check(msg).contains('permission');
     });
 
     test('returns non-empty string for validation error', () {
       const error = ApiError.validation(message: 'Invalid data');
       final msg = handler.getUserMessage(error);
       check(msg).isNotEmpty();
-      check(msg).contains('correct');
+      check(msg).contains('input');
     });
 
     test('returns non-empty string for rateLimit error', () {
@@ -386,7 +363,7 @@ void main() {
       );
       final msg = handler.getUserMessage(error);
       check(msg).isNotEmpty();
-      check(msg).contains('servers');
+      check(msg).contains('Server is having problems');
     });
 
     test('returns base message for unknown error type', () {

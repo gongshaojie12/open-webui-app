@@ -11,49 +11,446 @@ import '../../features/auth/providers/unified_auth_providers.dart';
 import '../services/navigation_service.dart';
 import '../services/app_intents_service.dart';
 import '../services/home_widget_service.dart';
+import '../services/api_service.dart';
 import '../models/conversation.dart';
 import '../services/background_streaming_handler.dart';
 import '../services/socket_service.dart';
 import '../services/connectivity_service.dart';
+import '../services/share_receiver_service.dart';
 import '../utils/debug_logger.dart';
 import '../models/server_config.dart';
+import '../../shared/widgets/markdown/renderer/latex_rendering_server.dart';
+import '../../features/tools/providers/tools_providers.dart';
 
 part 'app_startup_providers.g.dart';
 
+/// Clears keepAlive user-scoped providers after auth leaves the authenticated
+/// state. This lives outside [AuthStateManager] because many of these providers
+/// depend on auth state, and invalidating them from inside the auth notifier
+/// trips Riverpod's circular dependency guard.
+final userScopedProviderCleanupProvider = Provider<void>((ref) {
+  ref.listen<String?>(authTokenProvider3, (previous, next) {
+    if (previous != null && next == null) {
+      _cleanupUserScopedProvidersAfterSignOut(ref);
+    }
+  });
+
+  ref.listen<AuthNavigationState>(authNavigationStateProvider, (
+    previous,
+    next,
+  ) {
+    if (previous != AuthNavigationState.authenticated ||
+        next == AuthNavigationState.authenticated) {
+      return;
+    }
+
+    _cleanupUserScopedProvidersAfterSignOut(ref);
+  });
+});
+
+Future<void> _cleanupUserScopedProvidersAfterSignOut(Ref ref) async {
+  const attempts = 40;
+  for (var attempt = 0; attempt < attempts; attempt++) {
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    if (!ref.mounted) {
+      return;
+    }
+    if (ref.read(authNavigationStateProvider) ==
+        AuthNavigationState.authenticated) {
+      return;
+    }
+    if (ref.read(authTokenProvider3) == null &&
+        !ref.read(isAuthLoadingProvider2)) {
+      break;
+    }
+    if (attempt == attempts - 1) {
+      return;
+    }
+  }
+
+  if (!ref.mounted) {
+    return;
+  }
+  try {
+    ref.invalidate(conversationsProvider);
+    ref.invalidate(activeConversationProvider);
+    ref.invalidate(foldersProvider);
+    ref.invalidate(modelsProvider);
+    ref.invalidate(selectedModelProvider);
+    ref.invalidate(currentUserProvider);
+    ref.invalidate(userSettingsProvider);
+    ref.invalidate(rawUserSettingsProvider);
+    ref.invalidate(personalizationSettingsProvider);
+    ref.invalidate(userMemoriesProvider);
+    ref.invalidate(accountProfileProvider);
+    ref.invalidate(serverAboutInfoProvider);
+    ref.invalidate(userPermissionsProvider);
+    ref.invalidate(toolsListProvider);
+    ref.invalidate(selectedToolIdsProvider);
+    ref.invalidate(selectedTerminalIdProvider);
+    ref.invalidate(selectedFilterIdsProvider);
+    ref.invalidate(knowledgeBasesProvider);
+    ref.invalidate(availableVoicesProvider);
+    ref.invalidate(imageModelsProvider);
+    ref.invalidate(defaultModelProvider);
+    ref.invalidate(backendConfigProvider);
+    ref.invalidate(socketServiceManagerProvider);
+  } catch (error, stackTrace) {
+    DebugLogger.error(
+      'user-scoped-provider-cleanup-failed',
+      scope: 'startup',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+}
+
 enum _ConversationWarmupStatus { idle, warming, complete }
 
-final _conversationWarmupStatusProvider =
-    NotifierProvider<
-      _ConversationWarmupStatusNotifier,
-      _ConversationWarmupStatus
-    >(_ConversationWarmupStatusNotifier.new);
-
-final _conversationWarmupLastAttemptProvider =
-    NotifierProvider<_ConversationWarmupLastAttemptNotifier, DateTime?>(
-      _ConversationWarmupLastAttemptNotifier.new,
+final _conversationWarmupControllerProvider =
+    NotifierProvider<_ConversationWarmupController, _ConversationWarmupState>(
+      _ConversationWarmupController.new,
     );
 
-class _ConversationWarmupStatusNotifier
-    extends Notifier<_ConversationWarmupStatus> {
-  @override
-  _ConversationWarmupStatus build() => _ConversationWarmupStatus.idle;
+class _ConversationWarmupState {
+  const _ConversationWarmupState({
+    this.status = _ConversationWarmupStatus.idle,
+    this.lastAttempt,
+    this.queuedForcedRefresh = false,
+  });
 
-  void set(_ConversationWarmupStatus status) => state = status;
+  final _ConversationWarmupStatus status;
+  final DateTime? lastAttempt;
+  final bool queuedForcedRefresh;
+
+  _ConversationWarmupState copyWith({
+    _ConversationWarmupStatus? status,
+    DateTime? lastAttempt,
+    bool? queuedForcedRefresh,
+  }) {
+    return _ConversationWarmupState(
+      status: status ?? this.status,
+      lastAttempt: lastAttempt ?? this.lastAttempt,
+      queuedForcedRefresh: queuedForcedRefresh ?? this.queuedForcedRefresh,
+    );
+  }
 }
 
-class _ConversationWarmupLastAttemptNotifier extends Notifier<DateTime?> {
+class _ConversationWarmupController extends Notifier<_ConversationWarmupState> {
   @override
-  DateTime? build() => null;
+  _ConversationWarmupState build() => const _ConversationWarmupState();
 
-  void set(DateTime? value) => state = value;
+  void setStatus(_ConversationWarmupStatus status) {
+    if (state.status == status) {
+      return;
+    }
+    state = state.copyWith(status: status);
+  }
+
+  void beginAttempt(DateTime attemptedAt) {
+    state = state.copyWith(
+      status: _ConversationWarmupStatus.warming,
+      lastAttempt: attemptedAt,
+    );
+  }
+
+  void queueForcedRefresh() {
+    if (state.queuedForcedRefresh) {
+      return;
+    }
+    state = state.copyWith(queuedForcedRefresh: true);
+  }
+
+  void clearQueuedForcedRefresh() {
+    if (!state.queuedForcedRefresh) {
+      return;
+    }
+    state = state.copyWith(queuedForcedRefresh: false);
+  }
+
+  bool takeQueuedForcedRefresh() {
+    final queued = state.queuedForcedRefresh;
+    clearQueuedForcedRefresh();
+    return queued;
+  }
 }
 
-void _scheduleConversationWarmup(Ref ref, {bool force = false}) {
+class _QueuedLatestRunner {
+  bool _inFlight = false;
+  bool _queued = false;
+
+  void clearQueued() => _queued = false;
+
+  void schedule({
+    required Future<void> Function() run,
+    required void Function(Object error, StackTrace stackTrace) onError,
+  }) {
+    _queued = true;
+    if (_inFlight) {
+      return;
+    }
+
+    Future.microtask(() async {
+      if (_inFlight) {
+        return;
+      }
+      _inFlight = true;
+      try {
+        while (_queued) {
+          _queued = false;
+          try {
+            await run();
+          } catch (error, stackTrace) {
+            onError(error, stackTrace);
+          }
+        }
+      } finally {
+        _inFlight = false;
+      }
+    });
+  }
+}
+
+class _QueuedStartupTask {
+  const _QueuedStartupTask({
+    required this.label,
+    required this.readyAt,
+    required this.run,
+  });
+
+  final String label;
+  final DateTime readyAt;
+  final FutureOr<void> Function() run;
+}
+
+typedef _PostFrameScheduler = void Function(FrameCallback callback);
+
+class _FrameBudgetedStartupQueue {
+  _FrameBudgetedStartupQueue({
+    _PostFrameScheduler? addPostFrameCallback,
+    VoidCallback? ensureVisualUpdate,
+  }) : _addPostFrameCallback =
+           addPostFrameCallback ??
+           SchedulerBinding.instance.addPostFrameCallback,
+       _ensureVisualUpdate =
+           ensureVisualUpdate ?? SchedulerBinding.instance.ensureVisualUpdate;
+
+  bool _disposed = false;
+  bool _frameScheduled = false;
+  bool _running = false;
+  Timer? _waitTimer;
+  final List<_QueuedStartupTask> _tasks = <_QueuedStartupTask>[];
+  final _PostFrameScheduler _addPostFrameCallback;
+  final VoidCallback _ensureVisualUpdate;
+
+  void schedule({
+    required String label,
+    required Duration delay,
+    required FutureOr<void> Function() run,
+    required void Function(Object error, StackTrace stackTrace) onError,
+  }) {
+    if (_disposed) {
+      return;
+    }
+
+    _tasks.add(
+      _QueuedStartupTask(
+        label: label,
+        readyAt: DateTime.now().add(delay),
+        run: run,
+      ),
+    );
+    _tasks.sort((a, b) => a.readyAt.compareTo(b.readyAt));
+    _pump(onError);
+  }
+
+  void dispose() {
+    _disposed = true;
+    _waitTimer?.cancel();
+    _tasks.clear();
+  }
+
+  void _pump(void Function(Object error, StackTrace stackTrace) onError) {
+    if (_disposed || _running || _frameScheduled || _tasks.isEmpty) {
+      return;
+    }
+
+    final now = DateTime.now();
+    final nextReadyAt = _tasks.first.readyAt;
+    if (nextReadyAt.isAfter(now)) {
+      _waitTimer?.cancel();
+      _waitTimer = Timer(nextReadyAt.difference(now), () => _pump(onError));
+      return;
+    }
+
+    _frameScheduled = true;
+    _addPostFrameCallback((_) {
+      _frameScheduled = false;
+      if (_disposed || _running || _tasks.isEmpty) {
+        return;
+      }
+
+      final readyIndex = _tasks.indexWhere(
+        (task) => !task.readyAt.isAfter(DateTime.now()),
+      );
+      if (readyIndex == -1) {
+        _pump(onError);
+        return;
+      }
+
+      final task = _tasks.removeAt(readyIndex);
+      _running = true;
+      Future<void>.microtask(() async {
+        try {
+          await task.run();
+        } catch (error, stackTrace) {
+          onError(error, stackTrace);
+          DebugLogger.warning(
+            'startup-queue-task-failed',
+            scope: 'startup',
+            data: {'task': task.label, 'error': error.toString()},
+          );
+        } finally {
+          _running = false;
+          _pump(onError);
+        }
+      });
+    });
+    _ensureVisualUpdate();
+  }
+}
+
+@visibleForTesting
+void debugScheduleReadyStartupQueueTaskForTesting({
+  required VoidCallback onEnsureVisualUpdate,
+  required void Function(FrameCallback callback) onAddPostFrameCallback,
+  required FutureOr<void> Function() run,
+}) {
+  final queue = _FrameBudgetedStartupQueue(
+    addPostFrameCallback: onAddPostFrameCallback,
+    ensureVisualUpdate: onEnsureVisualUpdate,
+  );
+  queue.schedule(
+    label: 'debug-startup-task',
+    delay: Duration.zero,
+    run: run,
+    onError: (error, stackTrace) {},
+  );
+}
+
+Future<bool> _warmFoldersIfNeeded(Ref ref) async {
+  try {
+    await ref.read(foldersProvider.notifier).warmIfNeeded();
+    return ref.read(foldersProvider).hasValue;
+  } catch (error) {
+    DebugLogger.warning(
+      'folders-warmup-failed',
+      scope: 'startup',
+      data: {'error': error.toString()},
+    );
+    return false;
+  }
+}
+
+Duration _conversationWarmupDelay(ConnectivityService connectivity) {
+  final latency = connectivity.lastLatencyMs;
+  final extraDelayMs = latency > 800
+      ? 400
+      : latency > 400
+      ? 200
+      : 0;
+  return Duration(milliseconds: extraDelayMs);
+}
+
+typedef _ConversationWarmupOutcome = ({
+  String? completedLog,
+  _ConversationWarmupStatus status,
+});
+
+Future<_ConversationWarmupOutcome> _runConversationWarmup(
+  Ref ref, {
+  required bool force,
+  required bool refreshConversations,
+}) async {
+  if (!ref.read(connectivityServiceProvider).isAppForeground) {
+    return (completedLog: null, status: _ConversationWarmupStatus.idle);
+  }
+
+  final existing = ref.read(conversationsProvider);
+  if (existing.hasValue) {
+    final foldersReadyFuture = _warmFoldersIfNeeded(ref);
+    if (force && refreshConversations) {
+      await ref.read(conversationsProvider.notifier).refresh(forceFresh: true);
+      final foldersReady = await foldersReadyFuture;
+      final refreshed = ref.read(conversationsProvider);
+      if (!foldersReady || !refreshed.hasValue) {
+        return (completedLog: null, status: _ConversationWarmupStatus.idle);
+      }
+      final conversations = refreshed.asData?.value ?? const <Conversation>[];
+      return (
+        completedLog:
+            'Background chats warmup refreshed ${conversations.length} conversations',
+        status: _ConversationWarmupStatus.complete,
+      );
+    }
+
+    final foldersReady = await foldersReadyFuture;
+    return (
+      completedLog: null,
+      status: foldersReady
+          ? _ConversationWarmupStatus.complete
+          : _ConversationWarmupStatus.idle,
+    );
+  }
+
+  if (existing.hasError && refreshConversations) {
+    refreshConversationsCache(ref, includeFolders: true);
+  }
+
+  final foldersReadyFuture = _warmFoldersIfNeeded(ref);
+  final conversations = await ref.read(conversationsProvider.future);
+  final foldersReady = await foldersReadyFuture;
+  if (!foldersReady) {
+    return (completedLog: null, status: _ConversationWarmupStatus.idle);
+  }
+  return (
+    completedLog:
+        'Background chats warmup fetched ${conversations.length} conversations',
+    status: _ConversationWarmupStatus.complete,
+  );
+}
+
+void _resetConversationWarmup(Ref ref) {
+  ref
+      .read(_conversationWarmupControllerProvider.notifier)
+      .setStatus(_ConversationWarmupStatus.idle);
+}
+
+void _scheduleForcedConversationWarmup(
+  Ref ref, {
+  bool refreshConversations = true,
+}) {
+  Future.microtask(() {
+    if (!ref.mounted) return;
+    _scheduleConversationWarmup(
+      ref,
+      force: true,
+      refreshConversations: refreshConversations,
+    );
+  });
+}
+
+void _scheduleConversationWarmup(
+  Ref ref, {
+  bool force = false,
+  bool refreshConversations = true,
+}) {
   final navState = ref.read(authNavigationStateProvider);
+  final warmupController = ref.read(
+    _conversationWarmupControllerProvider.notifier,
+  );
   if (navState != AuthNavigationState.authenticated) {
-    ref
-        .read(_conversationWarmupStatusProvider.notifier)
-        .set(_ConversationWarmupStatus.idle);
+    _resetConversationWarmup(ref);
     return;
   }
 
@@ -66,64 +463,50 @@ void _scheduleConversationWarmup(Ref ref, {bool force = false}) {
   if (!isOnline) {
     return;
   }
-
-  // If network latency is high, delay warmup further to reduce contention
-  final latency = connectivity.lastLatencyMs;
-  final extraDelay = latency > 800
-      ? 400
-      : latency > 400
-      ? 200
-      : 0;
-
-  final statusController = ref.read(_conversationWarmupStatusProvider.notifier);
-  final status = ref.read(_conversationWarmupStatusProvider);
+  final delay = _conversationWarmupDelay(connectivity);
+  final warmupState = ref.read(_conversationWarmupControllerProvider);
 
   if (!force) {
-    if (status == _ConversationWarmupStatus.warming ||
-        status == _ConversationWarmupStatus.complete) {
+    if (warmupState.status == _ConversationWarmupStatus.warming ||
+        warmupState.status == _ConversationWarmupStatus.complete) {
       return;
     }
-  } else if (status == _ConversationWarmupStatus.warming) {
+  } else if (warmupState.status == _ConversationWarmupStatus.warming) {
+    if (refreshConversations) {
+      warmupController.queueForcedRefresh();
+    }
     return;
   }
 
   final now = DateTime.now();
-  final lastAttempt = ref.read(_conversationWarmupLastAttemptProvider);
   if (!force &&
-      lastAttempt != null &&
-      now.difference(lastAttempt) < const Duration(seconds: 30)) {
+      warmupState.lastAttempt != null &&
+      now.difference(warmupState.lastAttempt!) < const Duration(seconds: 30)) {
     return;
   }
-  ref.read(_conversationWarmupLastAttemptProvider.notifier).set(now);
-
-  statusController.set(_ConversationWarmupStatus.warming);
+  warmupController.beginAttempt(now);
 
   Future.microtask(() async {
-    if (extraDelay > 0) {
-      await Future.delayed(Duration(milliseconds: extraDelay));
+    if (delay > Duration.zero) {
+      await Future.delayed(delay);
     }
     try {
-      if (!ref.read(connectivityServiceProvider).isAppForeground) {
-        statusController.set(_ConversationWarmupStatus.idle);
-        return;
-      }
-
-      final existing = ref.read(conversationsProvider);
-      if (existing.hasValue) {
-        statusController.set(_ConversationWarmupStatus.complete);
-        return;
-      }
-      if (existing.hasError) {
-        refreshConversationsCache(ref);
-      }
-      final conversations = await ref.read(conversationsProvider.future);
-      statusController.set(_ConversationWarmupStatus.complete);
-      DebugLogger.info(
-        'Background chats warmup fetched ${conversations.length} conversations',
+      final outcome = await _runConversationWarmup(
+        ref,
+        force: force,
+        refreshConversations: refreshConversations,
       );
+      warmupController.setStatus(outcome.status);
+      if (outcome.completedLog != null) {
+        DebugLogger.info(outcome.completedLog!);
+      }
     } catch (error) {
       DebugLogger.warning('Background chats warmup failed: $error');
-      statusController.set(_ConversationWarmupStatus.idle);
+      _resetConversationWarmup(ref);
+    } finally {
+      if (ref.mounted && warmupController.takeQueuedForcedRefresh()) {
+        _scheduleForcedConversationWarmup(ref);
+      }
     }
   });
 }
@@ -235,89 +618,137 @@ Future<void> _initializeBackgroundStreaming(Ref ref) async {
 class AppStartupFlow extends _$AppStartupFlow {
   bool _started = false;
   ProviderSubscription<SocketService?>? _socketSubscription;
+  ProviderSubscription<void>? _defaultModelAutoSelectionSubscription;
+  Timer? _defaultModelPreloadTimer;
+  final _postAuthStartupRunner = _QueuedLatestRunner();
+  final _startupTaskQueue = _FrameBudgetedStartupQueue();
 
-  @override
-  FutureOr<void> build() {}
+  bool _hasAuthenticatedSession() =>
+      ref.mounted &&
+      ref.read(authNavigationStateProvider) ==
+          AuthNavigationState.authenticated;
 
-  void start() {
-    if (_started) return;
-    _started = true;
-    state = const AsyncValue<void>.data(null);
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (!ref.mounted) return;
-      _activate();
+  void _cancelDefaultModelPreload() {
+    _defaultModelPreloadTimer?.cancel();
+    _defaultModelPreloadTimer = null;
+  }
+
+  void _keepAlive<T>(ProviderListenable<T> provider) {
+    ref.listen<T>(provider, (previous, value) {});
+  }
+
+  void _keepDefaultModelAutoSelectionAlive() {
+    _defaultModelAutoSelectionSubscription ??= ref.listen<void>(
+      defaultModelAutoSelectionProvider,
+      (previous, value) {},
+    );
+  }
+
+  void _disposeStartupResources() {
+    _socketSubscription?.close();
+    _socketSubscription = null;
+    _defaultModelAutoSelectionSubscription?.close();
+    _defaultModelAutoSelectionSubscription = null;
+    _cancelDefaultModelPreload();
+    _startupTaskQueue.dispose();
+  }
+
+  void _clearQueuedAuthenticatedStartupWork() {
+    _postAuthStartupRunner.clearQueued();
+    _cancelDefaultModelPreload();
+    ref
+        .read(_conversationWarmupControllerProvider.notifier)
+        .clearQueuedForcedRefresh();
+  }
+
+  void _applyCurrentAuthTokenToApi(ApiService api) {
+    final authToken = ref.read(authTokenProvider3);
+    if (authToken == null || authToken.isEmpty) {
+      return;
+    }
+    api.updateAuthToken(authToken);
+    DebugLogger.auth('StartupFlow: Applied auth token to API');
+  }
+
+  Duration _defaultModelPreloadDelay() {
+    final latency = ref.read(connectivityServiceProvider).lastLatencyMs;
+    final delayMs = latency < 0
+        ? 300
+        : latency > 800
+        ? 600
+        : 200 + (latency ~/ 2);
+    return Duration(milliseconds: delayMs);
+  }
+
+  void _scheduleDefaultModelPreload({
+    bool keepDefaultModelAutoSelectionAlive = true,
+  }) {
+    _cancelDefaultModelPreload();
+    _defaultModelPreloadTimer = Timer(_defaultModelPreloadDelay(), () async {
+      _defaultModelPreloadTimer = null;
+      if (!_hasAuthenticatedSession()) {
+        return;
+      }
+      try {
+        await ref.read(defaultModelProvider.future);
+      } catch (e) {
+        DebugLogger.warning(
+          'model-preload-failed',
+          scope: 'startup',
+          data: {'error': e},
+        );
+      } finally {
+        if (_hasAuthenticatedSession() && keepDefaultModelAutoSelectionAlive) {
+          _keepDefaultModelAutoSelectionAlive();
+        }
+      }
     });
   }
 
-  void _activate() {
-    final ref = this.ref;
+  void _scheduleAfterDelay(
+    Duration delay,
+    FutureOr<void> Function() action, {
+    required String label,
+  }) {
+    _startupTaskQueue.schedule(
+      label: label,
+      delay: delay,
+      run: () async {
+        if (!ref.mounted) {
+          return;
+        }
+        await action();
+      },
+      onError: _logStartupFlowFailure,
+    );
+  }
 
-    ref.onDispose(() {
-      _socketSubscription?.close();
-      _socketSubscription = null;
-    });
+  void _scheduleDeferredKeepAlive<T>(
+    Duration delay,
+    ProviderListenable<T> provider, {
+    required String label,
+  }) {
+    _scheduleAfterDelay(delay, () => _keepAlive(provider), label: label);
+  }
 
-    void keepAlive<T>(ProviderListenable<T> provider) {
-      ref.listen<T>(provider, (previous, value) {});
+  void _scheduleInitialConversationWarmup() {
+    if (!ref.read(isOnlineProvider)) {
+      return;
     }
 
-    // Ensure token integration listeners are active
-    keepAlive(authApiIntegrationProvider);
-    keepAlive(apiTokenUpdaterProvider);
-    keepAlive(silentLoginCoordinatorProvider);
-    keepAlive(appIntentCoordinatorProvider);
-    keepAlive(homeWidgetCoordinatorProvider);
+    final jitter = Duration(
+      milliseconds: 150 + (DateTime.now().millisecond % 200),
+    );
+    _scheduleAfterDelay(jitter, () {
+      if (!ref.read(isOnlineProvider)) {
+        return;
+      }
+      _scheduleConversationWarmup(ref);
+    }, label: 'conversation-warmup');
+  }
 
-    // Kick background model loading flow (non-blocking)
-    Future<void>.delayed(const Duration(milliseconds: 120), () {
-      if (!ref.mounted) return;
-      ref.read(backgroundModelLoadProvider);
-    });
-
-    // If authenticated, keep socket service alive and connected
-    final navState = ref.read(authNavigationStateProvider);
-    if (navState == AuthNavigationState.authenticated) {
-      _ensureSocketAttached();
-    }
-
-    // Ensure resume-triggered foreground refresh is active
-    Future<void>.delayed(const Duration(milliseconds: 48), () {
-      if (!ref.mounted) return;
-      keepAlive(foregroundRefreshProvider);
-    });
-
-    // Keep Socket.IO connection alive in background within platform limits
-    Future<void>.delayed(const Duration(milliseconds: 96), () {
-      if (!ref.mounted) return;
-      keepAlive(socketPersistenceProvider);
-    });
-
-    // Initialize background streaming handler with error callbacks
-    Future<void>.delayed(const Duration(milliseconds: 64), () {
-      if (!ref.mounted) return;
-      _initializeBackgroundStreaming(ref);
-    });
-
-    // Warm the conversations list in the background as soon as possible,
-    // but avoid doing so on poor connectivity to reduce startup load.
-    // Apply a small randomized delay to smooth load spikes across app wakes.
-    Future.microtask(() async {
-      final online = ref.read(isOnlineProvider);
-      if (!online) return;
-      // Slightly increase jitter to reduce contention on startup
-      final jitter = Duration(
-        milliseconds: 150 + (DateTime.now().millisecond % 200),
-      );
-      // Defer until after first frame to keep first paint smooth
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        await Future.delayed(jitter);
-        _scheduleConversationWarmup(ref);
-      });
-    });
-
-    // One-time, post-frame system UI polish: set status bar icon brightness to
-    // match theme after the first frame. Avoids flicker at startup.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+  void _scheduleSystemUiPolish() {
+    _scheduleAfterDelay(Duration.zero, () {
       try {
         final context = NavigationService.context;
         final view = context != null ? View.maybeOf(context) : null;
@@ -337,93 +768,271 @@ class AppStartupFlow extends _$AppStartupFlow {
           ),
         );
       } catch (_) {}
+    }, label: 'system-ui-polish');
+  }
+
+  void _scheduleStartupProviderKeepAlives() {
+    _scheduleDeferredKeepAlive(
+      Duration.zero,
+      authApiIntegrationProvider,
+      label: 'auth-api-integration',
+    );
+    _scheduleDeferredKeepAlive(
+      const Duration(milliseconds: 16),
+      apiTokenUpdaterProvider,
+      label: 'api-token-updater',
+    );
+    _scheduleDeferredKeepAlive(
+      const Duration(milliseconds: 32),
+      silentLoginCoordinatorProvider,
+      label: 'silent-login',
+    );
+    _scheduleDeferredKeepAlive(
+      const Duration(milliseconds: 48),
+      appIntentCoordinatorProvider,
+      label: 'app-intents',
+    );
+    _scheduleDeferredKeepAlive(
+      const Duration(milliseconds: 64),
+      homeWidgetCoordinatorProvider,
+      label: 'home-widget',
+    );
+    _scheduleAfterDelay(
+      const Duration(milliseconds: 80),
+      () => ref.read(shareReceiverInitializerProvider),
+      label: 'share-receiver',
+    );
+    _scheduleAfterDelay(
+      const Duration(milliseconds: 180),
+      LatexRenderingServer.prewarm,
+      label: 'latex-prewarm',
+    );
+  }
+
+  void _scheduleStartupTasks() {
+    _scheduleStartupProviderKeepAlives();
+    _scheduleAfterDelay(
+      const Duration(milliseconds: 120),
+      () => ref.read(backgroundModelLoadProvider),
+      label: 'background-model-load',
+    );
+    _scheduleDeferredKeepAlive(
+      const Duration(milliseconds: 48),
+      foregroundRefreshProvider,
+      label: 'foreground-refresh',
+    );
+    _scheduleDeferredKeepAlive(
+      const Duration(milliseconds: 96),
+      socketPersistenceProvider,
+      label: 'socket-persistence',
+    );
+    _scheduleAfterDelay(
+      const Duration(milliseconds: 64),
+      () => _initializeBackgroundStreaming(ref),
+      label: 'background-streaming',
+    );
+    _scheduleInitialConversationWarmup();
+    _scheduleSystemUiPolish();
+  }
+
+  void _logStartupFlowFailure(Object error, StackTrace stackTrace) {
+    DebugLogger.error(
+      'startup-flow-failed',
+      scope: 'startup',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+
+  @override
+  FutureOr<void> build() {}
+
+  void start() {
+    if (_started) return;
+    _started = true;
+    state = const AsyncValue<void>.data(null);
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!ref.mounted) return;
+      _activate();
     });
+  }
 
-    // Watch for auth transitions to trigger warmup and other background work
-    ref.listen<AuthNavigationState>(authNavigationStateProvider, (prev, next) {
-      if (next == AuthNavigationState.authenticated) {
-        // Schedule microtask so we don't perform side-effects inside build
-        Future.microtask(() async {
-          try {
-            final api = ref.read(apiServiceProvider);
-            if (api == null) {
-              DebugLogger.warning('API service not available for startup flow');
-              return;
-            }
+  @visibleForTesting
+  void scheduleConversationWarmup({
+    bool force = false,
+    bool refreshConversations = true,
+  }) {
+    _scheduleConversationWarmup(
+      ref,
+      force: force,
+      refreshConversations: refreshConversations,
+    );
+  }
 
-            _ensureSocketAttached();
+  Future<ApiService?> _waitForApiService({
+    Duration timeout = const Duration(seconds: 1),
+  }) async {
+    if (!_hasAuthenticatedSession()) {
+      return null;
+    }
 
-            // Ensure API has the latest token immediately
-            final authToken = ref.read(authTokenProvider3);
-            if (authToken != null && authToken.isNotEmpty) {
-              api.updateAuthToken(authToken);
-              DebugLogger.auth('StartupFlow: Applied auth token to API');
-            }
+    final currentApi = ref.read(apiServiceProvider);
+    if (currentApi != null) {
+      return currentApi;
+    }
 
-            // Preload default model in background (best-effort) with an adaptive
-            // delay based on network latency to avoid hammering poor networks.
-            final latency = ref.read(connectivityServiceProvider).lastLatencyMs;
-            final delayMs = latency < 0
-                ? 300
-                : latency > 800
-                ? 600
-                : 200 + (latency ~/ 2);
-            Future.delayed(Duration(milliseconds: delayMs), () async {
-              try {
-                await ref.read(defaultModelProvider.future);
-              } catch (e) {
-                DebugLogger.warning(
-                  'model-preload-failed',
-                  scope: 'startup',
-                  data: {'error': e},
-                );
-              } finally {
-                // Ensure model tools auto-selection is active AFTER model load attempt
-                // This guarantees tools are applied for the restored model
-                if (ref.mounted) {
-                  keepAlive(defaultModelAutoSelectionProvider);
-                }
-              }
-            });
+    final completer = Completer<ApiService?>();
+    ProviderSubscription<ApiService?>? apiSubscription;
+    ProviderSubscription<AuthNavigationState>? authSubscription;
+    Timer? timeoutTimer;
 
-            // Kick background chat warmup now that we're authenticated
-            _scheduleConversationWarmup(ref, force: true);
-          } catch (e) {
-            DebugLogger.error(
-              'startup-flow-failed',
-              scope: 'startup',
-              error: e,
-            );
+    void complete(ApiService? api) {
+      if (completer.isCompleted) {
+        return;
+      }
+      timeoutTimer?.cancel();
+      apiSubscription?.close();
+      authSubscription?.close();
+      completer.complete(api);
+    }
+
+    apiSubscription = ref.listen<ApiService?>(apiServiceProvider, (
+      previous,
+      next,
+    ) {
+      if (next != null) {
+        complete(next);
+      }
+    }, fireImmediately: true);
+    if (!completer.isCompleted) {
+      authSubscription = ref.listen<AuthNavigationState>(
+        authNavigationStateProvider,
+        (previous, next) {
+          if (next != AuthNavigationState.authenticated) {
+            complete(null);
           }
-        });
-      } else {
-        // Reset warmup state when leaving authenticated flow
-        ref
-            .read(_conversationWarmupStatusProvider.notifier)
-            .set(_ConversationWarmupStatus.idle);
+        },
+      );
+    }
+    if (!completer.isCompleted) {
+      timeoutTimer = Timer(timeout, () {
+        if (!_hasAuthenticatedSession()) {
+          complete(null);
+          return;
+        }
+        complete(ref.read(apiServiceProvider));
+      });
+    }
+
+    return completer.future;
+  }
+
+  Future<void> _runPostAuthenticationStartup({
+    Duration apiWaitTimeout = const Duration(seconds: 1),
+    bool keepDefaultModelAutoSelectionAlive = true,
+  }) async {
+    final api = await _waitForApiService(timeout: apiWaitTimeout);
+    if (!_hasAuthenticatedSession()) {
+      return;
+    }
+    if (api == null) {
+      DebugLogger.warning(
+        'API service not available for startup flow',
+        scope: 'startup',
+      );
+      return;
+    }
+
+    _ensureSocketAttached();
+    _applyCurrentAuthTokenToApi(api);
+    _scheduleDefaultModelPreload(
+      keepDefaultModelAutoSelectionAlive: keepDefaultModelAutoSelectionAlive,
+    );
+
+    // Kick background chat warmup now that we're authenticated
+    _scheduleConversationWarmup(ref, force: true);
+  }
+
+  void _requestPostAuthenticationStartup({
+    Duration apiWaitTimeout = const Duration(seconds: 1),
+  }) {
+    _postAuthStartupRunner.schedule(
+      run: () => _runPostAuthenticationStartup(apiWaitTimeout: apiWaitTimeout),
+      onError: _logStartupFlowFailure,
+    );
+  }
+
+  void _installStartupListeners({
+    Duration apiWaitTimeout = const Duration(seconds: 1),
+  }) {
+    // Retry authenticated startup work if the API becomes available after the
+    // initial startup/auth transition request.
+    ref.listen<ApiService?>(apiServiceProvider, (previous, next) {
+      if (next != null && _hasAuthenticatedSession()) {
+        _requestPostAuthenticationStartup(apiWaitTimeout: apiWaitTimeout);
       }
     });
 
-    // Retry warmup when connectivity is restored
+    // Watch for auth transitions to trigger warmup and other background work.
+    ref.listen<AuthNavigationState>(authNavigationStateProvider, (prev, next) {
+      if (next == AuthNavigationState.authenticated) {
+        _requestPostAuthenticationStartup(apiWaitTimeout: apiWaitTimeout);
+      } else {
+        _clearQueuedAuthenticatedStartupWork();
+        _resetConversationWarmup(ref);
+      }
+    });
+
+    // Retry warmup when connectivity is restored.
     ref.listen<bool>(isOnlineProvider, (prev, next) {
       if (next == true) {
         _scheduleConversationWarmup(ref);
       }
     });
 
-    // When conversations reload (e.g., manual refresh), ensure warmup runs again
+    // When conversations reload (e.g., manual refresh), ensure warmup runs again.
     ref.listen<AsyncValue<List<Conversation>>>(conversationsProvider, (
       previous,
       next,
     ) {
       final wasReady = previous?.hasValue == true || previous?.hasError == true;
       if (wasReady && next.isLoading) {
-        ref
-            .read(_conversationWarmupStatusProvider.notifier)
-            .set(_ConversationWarmupStatus.idle);
-        Future.microtask(() => _scheduleConversationWarmup(ref, force: true));
+        _resetConversationWarmup(ref);
+        _scheduleForcedConversationWarmup(ref);
       }
     });
+  }
+
+  @visibleForTesting
+  Future<void> runPostAuthenticationStartup({
+    Duration apiWaitTimeout = const Duration(seconds: 1),
+  }) {
+    return _runPostAuthenticationStartup(
+      apiWaitTimeout: apiWaitTimeout,
+      keepDefaultModelAutoSelectionAlive: false,
+    );
+  }
+
+  @visibleForTesting
+  void activateForTesting({
+    Duration apiWaitTimeout = const Duration(seconds: 1),
+  }) {
+    _started = true;
+    state = const AsyncValue<void>.data(null);
+    _activate(apiWaitTimeout: apiWaitTimeout);
+  }
+
+  void _activate({Duration apiWaitTimeout = const Duration(seconds: 1)}) {
+    ref.onDispose(_disposeStartupResources);
+    _scheduleStartupTasks();
+
+    // If the session is already authenticated before startup flow attaches,
+    // run the same post-auth startup path the auth transition listener uses.
+    if (_hasAuthenticatedSession()) {
+      _requestPostAuthenticationStartup(apiWaitTimeout: apiWaitTimeout);
+    }
+
+    _installStartupListeners(apiWaitTimeout: apiWaitTimeout);
   }
 
   void _ensureSocketAttached() {
@@ -515,130 +1124,43 @@ class _ForegroundRefreshObserver extends WidgetsBindingObserver {
       Future.microtask(() {
         try {
           refreshConversationsCache(_ref);
-          _ref
-              .read(_conversationWarmupStatusProvider.notifier)
-              .set(_ConversationWarmupStatus.idle);
+          _resetConversationWarmup(_ref);
         } catch (_) {}
-        _scheduleConversationWarmup(_ref, force: true);
+        // Resume already kicked off a forced conversations refresh above; only
+        // finish the warmup work that should run alongside it.
+        _scheduleForcedConversationWarmup(_ref, refreshConversations: false);
       });
     }
   }
 }
 
-/// Attempts to keep the realtime socket connection alive while the app is
-/// backgrounded using BackgroundStreamingHandler for platform-specific handling.
+/// Reconciles realtime socket state after the app returns from background.
 ///
 /// Notes:
-/// - iOS: limited to short background task windows; we send periodic keepAlive.
-/// - Android: uses existing foreground service notification.
+/// - Idle socket persistence intentionally does not use native background
+///   execution. iOS and Android both treat that as expensive background work.
+/// - Missed socket events are reconciled by refreshing foreground state on
+///   resume.
 final socketPersistenceProvider = Provider<void>((ref) {
-  final observer = _SocketPersistenceObserver(ref);
+  final observer = _SocketPersistenceObserver();
   WidgetsBinding.instance.addObserver(observer);
-  // React to active conversation changes while backgrounded
-  final sub = ref.listen<Conversation?>(
-    activeConversationProvider,
-    (prev, next) => observer.onActiveConversationChanged(),
-  );
   ref.onDispose(() => WidgetsBinding.instance.removeObserver(observer));
-  ref.onDispose(sub.close);
 });
 
 class _SocketPersistenceObserver extends WidgetsBindingObserver {
-  final Ref _ref;
-  _SocketPersistenceObserver(this._ref);
-
-  static const String _socketId = BackgroundStreamingHandler.socketKeepaliveId;
-  Timer? _heartbeat;
-  bool _bgActive = false;
-  bool _isBackgrounded = false;
-
-  bool _shouldKeepAlive() {
-    final authed =
-        _ref.read(authNavigationStateProvider) ==
-        AuthNavigationState.authenticated;
-    final hasConversation = _ref.read(activeConversationProvider) != null;
-    return authed && hasConversation;
-  }
-
-  void _startBackground() {
-    if (_bgActive) return;
-    if (!_shouldKeepAlive()) return;
-
-    // Mark as active immediately to prevent duplicate attempts
-    _bgActive = true;
-
-    BackgroundStreamingHandler.instance
-        .startBackgroundExecution([_socketId])
-        .then((_) {
-          // Guard: if background was stopped while awaiting, don't create timer
-          if (!_bgActive) return;
-
-          // Periodic keep-alive for iOS background task management.
-          // On Android, foreground service keeps app alive without frequent pings.
-          // 5-minute interval is sufficient and matches wakelock timeout buffer.
-          _heartbeat?.cancel();
-          _heartbeat = Timer.periodic(const Duration(minutes: 5), (_) async {
-            final success = await BackgroundStreamingHandler.instance
-                .keepAlive();
-            if (!success) {
-              DebugLogger.warning(
-                'socket-keepalive-failed',
-                scope: 'background',
-              );
-              // Keep-alive failed but don't stop - the service may still be running
-            }
-          });
-        })
-        .catchError((Object e) {
-          _bgActive = false; // Rollback on failure
-          DebugLogger.error(
-            'socket-bg-start-failed',
-            scope: 'background',
-            error: e,
-          );
-        });
-  }
-
-  void _stopBackground() {
-    if (!_bgActive) return;
-
-    // Mark as inactive immediately to prevent race conditions
-    _bgActive = false;
-    _heartbeat?.cancel();
-    _heartbeat = null;
-
-    // Fire-and-forget with proper error handling
-    // We don't await because lifecycle callbacks should return quickly
-    BackgroundStreamingHandler.instance
-        .stopBackgroundExecution([_socketId])
-        .catchError((Object e) {
-          DebugLogger.error(
-            'socket-bg-stop-failed',
-            scope: 'background',
-            error: e,
-          );
-        });
-  }
-
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
-        _isBackgrounded = true;
-        _startBackground();
         break;
       case AppLifecycleState.resumed:
-        _isBackgrounded = false;
-        _stopBackground();
         // Reconcile background state on resume to detect orphaned services
         // or stale Flutter state from native service crashes
         _reconcileOnResume();
         break;
       case AppLifecycleState.detached:
       case AppLifecycleState.hidden:
-        _isBackgrounded = false;
-        _stopBackground();
         break;
     }
   }
@@ -653,15 +1175,5 @@ class _SocketPersistenceObserver extends WidgetsBindingObserver {
       );
       return false; // Return false to satisfy Future<bool> type
     });
-  }
-
-  // Called when active conversation changes; only acts during background
-  void onActiveConversationChanged() {
-    if (!_isBackgrounded) return;
-    if (_shouldKeepAlive()) {
-      _startBackground();
-    } else {
-      _stopBackground();
-    }
   }
 }

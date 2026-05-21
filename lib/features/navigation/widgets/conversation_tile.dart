@@ -4,7 +4,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../../shared/theme/theme_extensions.dart';
-import '../../../shared/widgets/middle_ellipsis_text.dart';
 
 /// Drag feedback widget shown while dragging a conversation tile.
 class ConversationDragFeedback extends StatelessWidget {
@@ -30,27 +29,30 @@ class ConversationDragFeedback extends StatelessWidget {
     final borderRadius = BorderRadius.circular(AppBorderRadius.small);
     final borderColor = theme.surfaceContainerHighest.withValues(alpha: 0.40);
 
-    return Material(
-      color: Colors.transparent,
-      elevation: Elevation.low,
-      borderRadius: borderRadius,
-      child: Container(
-        constraints: const BoxConstraints(minHeight: TouchTarget.listItem),
-        padding: const EdgeInsets.symmetric(
-          horizontal: Spacing.md,
-          vertical: Spacing.xs,
-        ),
-        decoration: BoxDecoration(
-          color: theme.surfaceContainer,
-          borderRadius: borderRadius,
-          border: Border.all(color: borderColor, width: BorderWidth.thin),
-        ),
-        child: ConversationTileContent(
-          title: title,
-          pinned: pinned,
-          selected: false,
-          isLoading: false,
-        ),
+    return Container(
+      constraints: const BoxConstraints(minHeight: TouchTarget.listItem),
+      padding: const EdgeInsets.symmetric(
+        horizontal: Spacing.md,
+        vertical: Spacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: theme.surfaceContainer,
+        borderRadius: borderRadius,
+        border: Border.all(color: borderColor, width: BorderWidth.thin),
+        boxShadow: [
+          BoxShadow(
+            color: theme.cardShadow.withValues(alpha: 0.12),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ConversationTileContent(
+        title: title,
+        pinned: pinned,
+        selected: false,
+        isLoading: false,
+        shrinkWrap: true,
       ),
     );
   }
@@ -70,6 +72,9 @@ class ConversationTileContent extends StatelessWidget {
   /// Whether the conversation is loading.
   final bool isLoading;
 
+  /// Whether the row should size itself to its contents instead of filling width.
+  final bool shrinkWrap;
+
   /// Creates the content layout for a conversation tile.
   const ConversationTileContent({
     super.key,
@@ -77,6 +82,7 @@ class ConversationTileContent extends StatelessWidget {
     required this.pinned,
     required this.selected,
     required this.isLoading,
+    this.shrinkWrap = false,
   });
 
   @override
@@ -84,76 +90,69 @@ class ConversationTileContent extends StatelessWidget {
     final theme = context.conduitTheme;
 
     // Enhanced typography with better visual hierarchy
-    final textStyle = AppTypography.standard.copyWith(
+    final textStyle = AppTypography.sidebarTitleStyle.copyWith(
       color: selected ? theme.textPrimary : theme.textSecondary,
       fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
       height: 1.4,
     );
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final hasFiniteWidth = constraints.maxWidth.isFinite;
-        final textFit = hasFiniteWidth ? FlexFit.tight : FlexFit.loose;
+    final trailingWidgets = <Widget>[];
 
-        final trailingWidgets = <Widget>[];
+    if (pinned) {
+      trailingWidgets.addAll([
+        const SizedBox(width: Spacing.sm),
+        Container(
+          padding: const EdgeInsets.all(Spacing.xxs),
+          decoration: BoxDecoration(
+            color: theme.buttonPrimary.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(AppBorderRadius.xs),
+          ),
+          child: Icon(
+            Platform.isIOS ? CupertinoIcons.pin_fill : Icons.push_pin_rounded,
+            color: theme.buttonPrimary.withValues(alpha: 0.7),
+            size: IconSize.xs,
+          ),
+        ),
+      ]);
+    }
 
-        if (pinned) {
-          trailingWidgets.addAll([
-            const SizedBox(width: Spacing.sm),
-            Container(
-              padding: const EdgeInsets.all(Spacing.xxs),
-              decoration: BoxDecoration(
-                color: theme.buttonPrimary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(AppBorderRadius.xs),
-              ),
-              child: Icon(
-                Platform.isIOS
-                    ? CupertinoIcons.pin_fill
-                    : Icons.push_pin_rounded,
-                color: theme.buttonPrimary.withValues(alpha: 0.7),
-                size: IconSize.xs,
-              ),
-            ),
-          ]);
-        }
+    if (isLoading) {
+      trailingWidgets.addAll([
+        const SizedBox(width: Spacing.sm),
+        SizedBox(
+          width: IconSize.sm,
+          height: IconSize.sm,
+          child: CircularProgressIndicator(
+            strokeWidth: BorderWidth.medium,
+            valueColor: AlwaysStoppedAnimation<Color>(theme.loadingIndicator),
+          ),
+        ),
+      ]);
+    }
 
-        if (isLoading) {
-          trailingWidgets.addAll([
-            const SizedBox(width: Spacing.sm),
-            SizedBox(
-              width: IconSize.sm,
-              height: IconSize.sm,
-              child: CircularProgressIndicator(
-                strokeWidth: BorderWidth.medium,
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  theme.loadingIndicator,
-                ),
-              ),
-            ),
-          ]);
-        }
+    final titleWidget = Text(
+      title,
+      style: textStyle,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      semanticsLabel: title,
+    );
 
-        return Row(
-          mainAxisSize: hasFiniteWidth ? MainAxisSize.max : MainAxisSize.min,
-          children: [
-            Flexible(
-              fit: textFit,
-              child: MiddleEllipsisText(
-                title,
-                style: textStyle,
-                semanticsLabel: title,
-              ),
-            ),
-            ...trailingWidgets,
-          ],
-        );
-      },
+    return Row(
+      mainAxisSize: shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
+      children: [
+        if (shrinkWrap)
+          Flexible(fit: FlexFit.loose, child: titleWidget)
+        else
+          Expanded(child: titleWidget),
+        ...trailingWidgets,
+      ],
     );
   }
 }
 
 /// A tappable conversation tile with hover and selection states.
-class ConversationTile extends StatefulWidget {
+class ConversationTile extends StatelessWidget {
   /// The conversation title.
   final String title;
 
@@ -180,80 +179,50 @@ class ConversationTile extends StatefulWidget {
   });
 
   @override
-  State<ConversationTile> createState() => _ConversationTileState();
-}
-
-class _ConversationTileState extends State<ConversationTile> {
-  bool _isHovered = false;
-
-  @override
   Widget build(BuildContext context) {
     final theme = context.conduitTheme;
-    final sidebarTheme = context.sidebarTheme;
     final borderRadius = BorderRadius.circular(AppBorderRadius.card);
 
-    // Use opaque backgrounds for proper context menu snapshot rendering
-    final Color baseBackground = sidebarTheme.background;
+    // Match the chats drawer scroll surface (surfaceBackground), not
+    // sidebarTheme.background, so tiles align in light and dark.
+    final Color baseBackground = theme.surfaceBackground;
 
-    final Color background = widget.selected
+    final Color background = selected
         ? Color.alphaBlend(
             theme.buttonPrimary.withValues(alpha: 0.1),
             baseBackground,
           )
-        : (_isHovered
-              ? Color.alphaBlend(
-                  theme.buttonPrimary.withValues(alpha: 0.05),
-                  baseBackground,
-                )
-              : baseBackground);
-
-    Color? overlayForStates(Set<WidgetState> states) {
-      if (states.contains(WidgetState.pressed)) {
-        return theme.buttonPrimary.withValues(alpha: Alpha.buttonPressed);
-      }
-      return Colors.transparent;
-    }
+        : baseBackground;
 
     return Semantics(
-      selected: widget.selected,
+      selected: selected,
       button: true,
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _isHovered = true),
-        onExit: (_) => setState(() => _isHovered = false),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-          margin: const EdgeInsets.symmetric(
-            horizontal: Spacing.xs,
-            vertical: Spacing.xxs,
-          ),
-          decoration: BoxDecoration(
-            color: background,
-            borderRadius: borderRadius,
-          ),
-          child: Material(
-            color: Colors.transparent,
-            borderRadius: borderRadius,
-            child: InkWell(
-              borderRadius: borderRadius,
-              onTap: widget.isLoading ? null : widget.onTap,
-              overlayColor: WidgetStateProperty.resolveWith(overlayForStates),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  minHeight: TouchTarget.listItem,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: Spacing.md,
-                    vertical: Spacing.sm,
-                  ),
-                  child: ConversationTileContent(
-                    title: widget.title,
-                    pinned: widget.pinned,
-                    selected: widget.selected,
-                    isLoading: widget.isLoading,
-                  ),
-                ),
+      child: Container(
+        margin: const EdgeInsets.only(
+          left: 0,
+          right: Spacing.xs,
+          top: Spacing.xxs,
+          bottom: Spacing.xxs,
+        ),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: borderRadius,
+        ),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: isLoading ? null : onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: TouchTarget.listItem),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: Spacing.md,
+                vertical: Spacing.sm,
+              ),
+              child: ConversationTileContent(
+                title: title,
+                pinned: pinned,
+                selected: selected,
+                isLoading: isLoading,
               ),
             ),
           ),

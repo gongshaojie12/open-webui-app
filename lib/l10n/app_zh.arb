@@ -27,9 +27,11 @@
   "autoSelect": "服务器默认",
   "loadingModels": "加载模型中...",
   "failedToLoadModels": "无法加载模型",
+  "failedToLoadFiles": "无法加载文件",
   "availableModels": "可用模型",
   "noResults": "无结果",
   "searchModels": "搜索模型...",
+  "searchFiles": "搜索文件...",
   "errorMessage": "出了点问题。请重试。",
   "closeButtonSemantic": "关闭",
   "loadingContent": "加载内容中",
@@ -37,13 +39,14 @@
   "noItemsToDisplay": "无可显示的项目",
   "knowledgeBase": "知识库",
   "attachments": "附件",
+  "files": "文件",
   "takePhoto": "拍照",
   "document": "文档",
   "backToServerSetup": "返回服务器设置",
   "connectedToServer": "已连接到服务器",
   "signIn": "登录",
   "enterCredentials": "输入您的凭据以访问您的 AI 对话",
-  "credentials": "邮箱",
+  "credentials": "凭据",
   "apiKey": "API 密钥",
   "token": "令牌",
   "usernameOrEmail": "用户名或电子邮件",
@@ -85,6 +88,9 @@
   "genericSignInFailed": "我们无法让您登录。请检查您的凭据和服务器设置。",
   "attachmentLabel": "附件",
   "tools": "工具",
+  "toolServer": "工具服务器",
+  "toolServers": "工具服务器",
+  "terminal": "终端",
   "filters": "过滤器",
   "voiceInput": "语音输入",
   "voice": "语音",
@@ -162,6 +168,7 @@
   "chineseSimplified": "简体中文",
   "chineseTraditional": "繁體中文",
   "korean": "한국어",
+  "japanese": "日本語",
   "deleteMessagesTitle": "删除消息",
   "deleteMessagesMessage": "删除 {count} 条消息？",
   "@deleteMessagesMessage": {
@@ -310,11 +317,11 @@
   "sendOnEnterDescription": "回车发送（软键盘）。Cmd/Ctrl+Enter 也可用",
   "disableHapticsWhileStreaming": "流式输出时禁用触觉反馈",
   "disableHapticsWhileStreamingDescription": "仅关闭实时回复的触觉反馈，不影响应用的其他反馈",
-  "androidAssistantTitle": "Android digital assistant",
-  "androidAssistantDescription": "Choose what happens when you trigger the Android digital assistant.",
-  "androidAssistantOverlayOption": "Show quick overlay (default)",
-  "androidAssistantNewChatOption": "Open 众小智AI with a new chat",
-  "androidAssistantVoiceCallOption": "Start a voice call",
+  "androidAssistantTitle": "Android 数字助理",
+  "androidAssistantDescription": "选择触发 Android 数字助理时要执行的操作。",
+  "androidAssistantOverlayOption": "显示快速浮层（默认）",
+  "androidAssistantNewChatOption": "打开 众小智AI 并新建聊天",
+  "androidAssistantVoiceCallOption": "开始语音通话",
   "sttSettings": "语音转文字",
   "sttEngineLabel": "识别引擎",
   "sttEngineDevice": "本机",
@@ -762,7 +769,8 @@
   "@deleteNoteMessage": {
     "placeholders": {
       "title": {
-        "type": "String"
+        "type": "String",
+        "example": "My Note"
       }
     }
   },
@@ -795,7 +803,8 @@
   "@wordCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "150"
       }
     }
   },
@@ -803,7 +812,8 @@
   "@charCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "500"
       }
     }
   },
@@ -813,7 +823,8 @@
   "@promptVariableNumberMin": {
     "placeholders": {
       "min": {
-        "type": "double"
+        "type": "double",
+        "example": "0"
       }
     }
   },
@@ -821,7 +832,8 @@
   "@promptVariableNumberMax": {
     "placeholders": {
       "max": {
-        "type": "double"
+        "type": "double",
+        "example": "100"
       }
     }
   },
@@ -850,7 +862,8 @@
   "@usageTokensPerSecond": {
     "placeholders": {
       "speed": {
-        "type": "String"
+        "type": "String",
+        "example": "45.2"
       }
     }
   },
@@ -858,7 +871,8 @@
   "@usageTokenCount": {
     "placeholders": {
       "count": {
-        "type": "int"
+        "type": "int",
+        "example": "128"
       }
     }
   },
@@ -866,7 +880,8 @@
   "@usageSecondsFormat": {
     "placeholders": {
       "seconds": {
-        "type": "String"
+        "type": "String",
+        "example": "2.34"
       }
     }
   },
@@ -917,9 +932,113 @@
   "chatSaved": "聊天已保存到历史记录",
   "chatSaveFailed": "无法保存聊天",
   "sidebarChatsTab": "聊天",
+  "sidebarTerminalTab": "终端",
+  "@sidebarTerminalTab": {
+    "description": "Label for the Terminal tab in the sidebar"
+  },
   "sidebarNotesTab": "笔记",
   "sidebarChannelsTab": "频道",
   "closeSidebar": "关闭侧边栏",
+  "terminalSelectServer": "选择终端服务器",
+  "@terminalSelectServer": {
+    "description": "Prompt shown when the user needs to choose a terminal server."
+  },
+  "terminalNoServersConfigured": "没有可用的终端服务器。",
+  "@terminalNoServersConfigured": {
+    "description": "Empty state shown when there are no terminal servers configured."
+  },
+  "terminalConnectAction": "连接",
+  "@terminalConnectAction": {
+    "description": "Button label used to connect to a terminal session."
+  },
+  "terminalDisconnectAction": "断开连接",
+  "@terminalDisconnectAction": {
+    "description": "Button label used to disconnect from a terminal session."
+  },
+  "terminalConnectedStatus": "已连接",
+  "@terminalConnectedStatus": {
+    "description": "Status label shown when the terminal is connected."
+  },
+  "terminalDisconnectedStatus": "已断开",
+  "@terminalDisconnectedStatus": {
+    "description": "Status label shown when the terminal is disconnected."
+  },
+  "terminalConnectingStatus": "正在连接...",
+  "@terminalConnectingStatus": {
+    "description": "Status label shown while the terminal connection is being established."
+  },
+  "terminalUploadAction": "上传",
+  "@terminalUploadAction": {
+    "description": "Action label for uploading a file into the terminal workspace."
+  },
+  "terminalOpenInBrowserAction": "在浏览器中打开",
+  "@terminalOpenInBrowserAction": {
+    "description": "Action label for opening a forwarded port in the browser."
+  },
+  "terminalHomeAction": "主目录",
+  "@terminalHomeAction": {
+    "description": "Tooltip for navigating back to the terminal home directory."
+  },
+  "terminalCurrentPathLabel": "当前路径",
+  "@terminalCurrentPathLabel": {
+    "description": "Label displayed above the current terminal working directory."
+  },
+  "terminalPortsSectionLabel": "监听端口",
+  "@terminalPortsSectionLabel": {
+    "description": "Section title for ports discovered in the terminal environment."
+  },
+  "terminalNoFiles": "此目录中没有文件。",
+  "@terminalNoFiles": {
+    "description": "Empty state shown when the current terminal directory has no files."
+  },
+  "terminalNoPorts": "未检测到监听端口。",
+  "@terminalNoPorts": {
+    "description": "Empty state shown when the terminal server reports no listening ports."
+  },
+  "terminalPreviewUnavailable": "预览不可用。请改用下载。",
+  "@terminalPreviewUnavailable": {
+    "description": "Message shown when a terminal file cannot be previewed inline."
+  },
+  "terminalFeatureDisabled": "此终端服务器未提供交互式 shell。",
+  "@terminalFeatureDisabled": {
+    "description": "Message shown when the selected terminal server disables interactive terminal sessions."
+  },
+  "terminalFolderNameHint": "文件夹名称",
+  "@terminalFolderNameHint": {
+    "description": "Hint text used when creating a new folder in the terminal workspace."
+  },
+  "terminalFailedToLoadFiles": "无法加载终端文件。",
+  "@terminalFailedToLoadFiles": {
+    "description": "Error message shown when the terminal file list cannot be loaded."
+  },
+  "terminalFailedToLoadPorts": "无法加载监听端口。",
+  "@terminalFailedToLoadPorts": {
+    "description": "Error message shown when terminal port discovery fails."
+  },
+  "terminalFailedToConnect": "无法连接到终端。",
+  "@terminalFailedToConnect": {
+    "description": "Error message shown when the terminal websocket session cannot be opened."
+  },
+  "terminalDownloadFailed": "无法下载所选文件。",
+  "@terminalDownloadFailed": {
+    "description": "Error message shown when downloading a terminal file fails."
+  },
+  "terminalUploadFailed": "无法上传所选文件。",
+  "@terminalUploadFailed": {
+    "description": "Error message shown when uploading a terminal file fails."
+  },
+  "terminalRenameFailed": "无法重命名所选项目。",
+  "@terminalRenameFailed": {
+    "description": "Error message shown when renaming a file or folder in the terminal workspace fails."
+  },
+  "terminalDeleteFailed": "无法删除所选项目。",
+  "@terminalDeleteFailed": {
+    "description": "Error message shown when deleting a file or folder in the terminal workspace fails."
+  },
+  "terminalFolderCreateFailed": "无法创建文件夹。",
+  "@terminalFolderCreateFailed": {
+    "description": "Error message shown when creating a new terminal folder fails."
+  },
   "channelCreateTitle": "创建频道",
   "channelName": "频道名称",
   "channelDescription": "描述",
@@ -943,5 +1062,718 @@
   "searchChannels": "搜索频道...",
   "channelCreateError": "无法创建频道",
   "channelMessageHint": "消息...",
-  "audioUploadError": "无法上传音频：{error}"
+  "audioUploadError": "无法上传音频：{error}",
+  "shareChat": "分享聊天",
+  "@shareChat": {
+    "description": "Dialog title and action label for sharing a chat."
+  },
+  "shareChatDescription": "创建链接后发送的消息不会被分享。拥有该 URL 的用户可以查看已分享的聊天。",
+  "@shareChatDescription": {
+    "description": "Explains that a shared chat link is a snapshot."
+  },
+  "shareChatExisting": "你之前已分享过此聊天。",
+  "@shareChatExisting": {
+    "description": "Explains that the chat already has an existing shared link."
+  },
+  "shareChatDeleteLink": "删除此链接",
+  "@shareChatDeleteLink": {
+    "description": "Action label to delete the current shared chat link."
+  },
+  "shareChatDeleteAndCreate": "并创建新的分享链接。",
+  "@shareChatDeleteAndCreate": {
+    "description": "Continuation text after the delete shared link action."
+  },
+  "copyLink": "复制链接",
+  "@copyLink": {
+    "description": "Button label to copy a newly created shared chat URL."
+  },
+  "updateAndCopyLink": "更新并复制链接",
+  "@updateAndCopyLink": {
+    "description": "Button label to refresh a shared chat snapshot and copy the URL."
+  },
+  "sharedChatCopied": "已将分享聊天 URL 复制到剪贴板。",
+  "@sharedChatCopied": {
+    "description": "Snackbar shown after copying a shared chat URL."
+  },
+  "shareSystemSheet": "分享...",
+  "@shareSystemSheet": {
+    "description": "Button label to open the platform share sheet."
+  },
+  "chatShareFailed": "分享聊天失败",
+  "@chatShareFailed": {
+    "description": "Snackbar shown when chat sharing fails."
+  },
+  "sharedLinkDeleted": "已删除分享聊天链接",
+  "@sharedLinkDeleted": {
+    "description": "Snackbar shown after deleting a shared chat link."
+  },
+  "deleteSharedLinkFailed": "删除分享链接失败",
+  "@deleteSharedLinkFailed": {
+    "description": "Snackbar shown when deleting a shared chat link fails."
+  },
+  "systemPrompts": "系统提示词",
+  "globalSystemPrompt": "全局系统提示词",
+  "modelSystemPrompts": "模型系统提示词",
+  "folderSystemPrompts": "文件夹系统提示词",
+  "openWebuiModelSettings": "OpenWebUI 模型设置",
+  "openWebuiFolderSettings": "OpenWebUI 文件夹设置",
+  "accessibleModelsCount": "{count} 个可访问模型",
+  "accessibleFoldersCount": "{count} 个可访问文件夹",
+  "unableToLoadOpenWebuiSettings": "无法加载 OpenWebUI 设置。",
+  "unableToLoadModels": "无法加载模型。",
+  "unableToLoadFolders": "无法加载文件夹。",
+  "noAccessibleModelsFound": "未找到可访问的模型。",
+  "noAccessibleFoldersFound": "未找到可访问的文件夹。",
+  "tapToLoadServerPromptSettings": "点按以加载服务器提示词设置。",
+  "loadingFromOpenWebui": "正在从 OpenWebUI 加载...",
+  "globalSystemPromptEditorDescription": "保存到你的 OpenWebUI 用户设置，并用作默认聊天系统提示词。",
+  "modelNoEditableServerRecord": "此模型没有可编辑的服务器记录。",
+  "modelSystemPromptTitle": "{modelName} 系统提示词",
+  "modelSystemPromptEditorDescription": "保存到 OpenWebUI 模型 params.system。",
+  "modelNoWriteAccessDescription": "你没有此模型的写入权限。",
+  "unableToLoadFolder": "无法加载此文件夹。",
+  "folderSystemPromptTitle": "{folderName} 系统提示词",
+  "folderSystemPromptEditorDescription": "保存到 OpenWebUI 文件夹 data.system_prompt。",
+  "notSet": "未设置",
+  "enterSystemPrompt": "输入系统提示词",
+  "close": "关闭",
+  "connectionHealth": "连接状态",
+  "personalization": "个性化",
+  "personalizationSubtitle": "默认模型、个人提示词和记忆",
+  "yourSystemPrompt": "你的系统提示词",
+  "yourSystemPromptDescription": "设置 OpenWebUI 将应用到你聊天的个人系统提示词。",
+  "memoryTitle": "记忆",
+  "memoryEnabledDescription": "允许服务器在未来聊天中使用你保存的记忆。",
+  "memoryDisabledDescription": "保存的记忆会保留在服务器上，但不会注入到聊天中。",
+  "manageMemories": "管理记忆",
+  "manageMemoriesDescription": "添加、编辑和删除服务器记住的关于你的事实。",
+  "savedMemoriesCount": "{count} 条已保存记忆",
+  "memoryEditorDescription": "让记忆保持简短具体，以便服务器稳定应用。",
+  "memoryHint": "示例：我偏好带代码示例的简洁回答。",
+  "addMemory": "添加记忆",
+  "editMemory": "编辑记忆",
+  "deleteMemory": "删除记忆",
+  "deleteMemoryConfirm": "从服务器删除这条已保存记忆？",
+  "clearAllMemories": "清除所有记忆",
+  "clearAllMemoriesDescription": "这会永久删除你账户的所有已保存记忆。",
+  "noMemoriesSaved": "还没有保存的记忆。",
+  "memoryUpdatedAt": "更新于 {formattedTime}",
+  "advancedPromptOverrides": "高级提示词覆盖",
+  "advancedPromptOverridesDescription": "模型级提示词覆盖位于 App 与聊天。",
+  "audioSettingsTitle": "音频",
+  "audioSettingsSubtitle": "语音转文字和文字转语音",
+  "appAndChat": "App 与聊天",
+  "appAndChatSubtitle": "主题、语言、聊天行为和高级覆盖",
+  "accountSettingsTitle": "账户",
+  "accountSettingsSubtitle": "个人资料详情和密码管理",
+  "accountDetails": "账户详情",
+  "signInToManageAccount": "登录以管理账户详情。",
+  "emailLabel": "电子邮件",
+  "roleLabel": "角色",
+  "accountStatus": "状态",
+  "profileDetails": "个人资料详情",
+  "name": "姓名",
+  "avatarUrl": "头像 URL",
+  "avatarUrlHint": "https://example.com/avatar.png",
+  "bioLabel": "简介",
+  "bioHint": "关于你的简短描述。",
+  "genderLabel": "性别",
+  "genderPreferNotToSay": "不愿透露",
+  "genderMale": "男",
+  "genderFemale": "女",
+  "genderCustom": "自定义",
+  "customGenderLabel": "自定义性别",
+  "customGenderHint": "输入你的性别",
+  "customGenderRequired": "请输入自定义性别或选择其他选项。",
+  "birthDateLabel": "出生日期",
+  "selectBirthDate": "选择日期",
+  "birthDateHint": "YYYY-MM-DD",
+  "currentAvatar": "当前头像",
+  "uploadFromDevice": "从设备上传",
+  "useInitials": "首字母",
+  "removeAvatar": "移除",
+  "avatarUploadFailed": "无法更新头像。",
+  "timezoneLabel": "时区",
+  "timezoneHint": "Asia/Shanghai",
+  "saveProfile": "保存个人资料",
+  "changePasswordTitle": "更改密码",
+  "passwordChangeUnavailable": "此服务器已禁用密码更改。",
+  "currentPassword": "当前密码",
+  "newPassword": "新密码",
+  "confirmNewPassword": "确认新密码",
+  "nameRequired": "保存前请输入姓名。",
+  "profileUpdated": "个人资料已更新。",
+  "passwordFieldsRequired": "请输入当前密码和新密码。",
+  "passwordsDoNotMatch": "新密码不匹配。",
+  "passwordUpdated": "密码已更新。",
+  "activeStatus": "活跃",
+  "inactiveStatus": "未活跃",
+  "appInformation": "众小智AI 应用",
+  "appVersion": "版本",
+  "serverInformation": "服务器信息",
+  "serverInfoUnavailable": "服务器信息暂不可用。",
+  "serverNameLabel": "服务器名称",
+  "serverVersionLabel": "服务器版本",
+  "latestVersionLabel": "最新版本",
+  "deploymentIdLabel": "部署 ID",
+  "defaultLocaleLabel": "默认语言",
+  "userCountLabel": "用户数",
+  "serverDefaultModelsLabel": "默认模型",
+  "loginFormLabel": "登录表单",
+  "passwordChangesLabel": "密码更改",
+  "apiKeysLabel": "API 密钥",
+  "audioInputLabel": "音频输入",
+  "audioOutputLabel": "音频输出",
+  "speechToTextEngineLabel": "语音转文字引擎",
+  "textToSpeechEngineLabel": "文字转语音引擎",
+  "licenseMetadataLabel": "许可证元数据",
+  "enabledLabel": "已启用",
+  "disabledLabel": "已禁用",
+  "noEmailLabel": "无电子邮件",
+  "userFallbackName": "用户",
+  "unknownLabel": "未知",
+  "socketNotConnected": "未连接",
+  "socketConnected": "已连接",
+  "socketDisconnected": "已断开",
+  "socketLatencyLabel": "延迟",
+  "socketReconnectsLabel": "重连",
+  "socketLastHeartbeat": "上次心跳：{time}",
+  "socketTransportWebSocket": "WebSocket 传输",
+  "socketTransportPolling": "HTTP 轮询传输",
+  "socketTransportUnknown": "未知传输",
+  "socketQualityExcellent": "极佳",
+  "socketQualityGood": "良好",
+  "socketQualityFair": "一般",
+  "socketQualityPoor": "较差",
+  "timeJustNow": "刚刚",
+  "timeSecondsAgo": "{count} 秒前",
+  "timeMinutesAgo": "{count} 分钟前",
+  "timeHoursAgo": "{count} 小时前",
+  "attach": "附加",
+  "@attach": {
+    "description": "Button label to attach content to the current chat or folder chat."
+  },
+  "attachWebpageDescription": "粘贴 URL，将其内容提取到聊天中。",
+  "@attachWebpageDescription": {
+    "description": "Description shown in the web page attachment dialog."
+  },
+  "webpageUrlLabel": "网页 URL",
+  "@webpageUrlLabel": {
+    "description": "Label for the URL field in the web page attachment dialog."
+  },
+  "invalidHttpUrl": "请输入有效的 http(s) URL。",
+  "@invalidHttpUrl": {
+    "description": "Validation message when a URL is missing or not HTTP/HTTPS."
+  },
+  "youtubeTranscriptFetchFailed": "无法获取 YouTube 转录。",
+  "@youtubeTranscriptFetchFailed": {
+    "description": "Error shown when a YouTube transcript cannot be fetched."
+  },
+  "webpageNoReadableContent": "该页面没有可读内容。",
+  "@webpageNoReadableContent": {
+    "description": "Error shown when a fetched webpage has no readable text content."
+  },
+  "failedToAttachContent": "无法附加内容。",
+  "@failedToAttachContent": {
+    "description": "Generic error shown when attaching web content fails."
+  },
+  "scrollToBottom": "滚动到底部",
+  "@scrollToBottom": {
+    "description": "Tooltip for the button that scrolls a chat to the newest message."
+  },
+  "editFolder": "编辑文件夹",
+  "@editFolder": {
+    "description": "Title and menu label for editing a folder."
+  },
+  "editFolderDescription": "在服务器上更新文件夹名称和图标。",
+  "@editFolderDescription": {
+    "description": "Description shown in the folder edit sheet."
+  },
+  "icon": "图标",
+  "@icon": {
+    "description": "Label for selecting an icon."
+  },
+  "folderIconDescription": "选择文件夹图标。",
+  "@folderIconDescription": {
+    "description": "Subtitle for the folder icon picker."
+  },
+  "defaultLabel": "默认",
+  "@defaultLabel": {
+    "description": "Generic label for the default option."
+  },
+  "systemPrompt": "系统提示词",
+  "@systemPrompt": {
+    "description": "Singular label for a system prompt field or menu item."
+  },
+  "move": "移动",
+  "@move": {
+    "description": "Context action to move an item."
+  },
+  "moveToFolder": "移动到文件夹",
+  "@moveToFolder": {
+    "description": "Title for choosing a destination folder for a chat."
+  },
+  "moveFolder": "移动文件夹",
+  "@moveFolder": {
+    "description": "Title for choosing a destination parent for a folder."
+  },
+  "noFolder": "无文件夹",
+  "@noFolder": {
+    "description": "Option to remove a chat from any folder."
+  },
+  "topLevel": "顶层",
+  "@topLevel": {
+    "description": "Option to move a folder to the top level."
+  },
+  "failedToMoveFolder": "移动文件夹失败",
+  "@failedToMoveFolder": {
+    "description": "Error shown when moving a folder fails."
+  },
+  "failedToRenameFolder": "重命名文件夹失败",
+  "@failedToRenameFolder": {
+    "description": "Error shown when renaming a folder fails."
+  },
+  "browseKnowledgeBase": "浏览知识库",
+  "@browseKnowledgeBase": {
+    "description": "Title for opening the knowledge base picker."
+  },
+  "knowledgePickerHint": "按 Enter 选择文档",
+  "@knowledgePickerHint": {
+    "description": "Hint shown for keyboard selection in the knowledge base picker."
+  },
+  "execution": "执行",
+  "@execution": {
+    "description": "Fallback label for an unnamed code execution."
+  },
+  "codeExecutionTitle": "代码执行",
+  "@codeExecutionTitle": {
+    "description": "Fallback title for a code execution details sheet."
+  },
+  "codeExecutionFailed": "{label} 失败",
+  "@codeExecutionFailed": {
+    "description": "Title shown when a named code execution fails.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Execution"
+      }
+    }
+  },
+  "codeExecutionRunning": "{label}…",
+  "@codeExecutionRunning": {
+    "description": "Title shown while a named code execution is still running.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Execution"
+      }
+    }
+  },
+  "language": "语言",
+  "@language": {
+    "description": "Label for a programming language field."
+  },
+  "code": "代码",
+  "@code": {
+    "description": "Label for source code content."
+  },
+  "output": "输出",
+  "@output": {
+    "description": "Label for execution output."
+  },
+  "download": "下载",
+  "@download": {
+    "description": "Fallback label for a downloadable file."
+  },
+  "languageWithValue": "语言：{language}",
+  "@languageWithValue": {
+    "description": "Label and value for a programming language.",
+    "placeholders": {
+      "language": {
+        "type": "String",
+        "example": "Python"
+      }
+    }
+  },
+  "previewDeferredLargeContent": "大型内容的预览已延后。",
+  "@previewDeferredLargeContent": {
+    "description": "Message shown when an inline preview is delayed because content is large."
+  },
+  "openPreview": "打开预览",
+  "@openPreview": {
+    "description": "Button to open a deferred preview."
+  },
+  "copiedToClipboard": "已复制到剪贴板",
+  "@copiedToClipboard": {
+    "description": "Snackbar message after copying content to the clipboard."
+  },
+  "preview": "预览",
+  "@preview": {
+    "description": "Button label for opening a preview."
+  },
+  "alertTip": "提示",
+  "@alertTip": {
+    "description": "Fallback label for a tip markdown alert."
+  },
+  "alertImportant": "重要",
+  "@alertImportant": {
+    "description": "Fallback label for an important markdown alert."
+  },
+  "alertWarning": "警告",
+  "@alertWarning": {
+    "description": "Fallback label for a warning markdown alert."
+  },
+  "alertCaution": "注意",
+  "@alertCaution": {
+    "description": "Fallback label for a caution markdown alert."
+  },
+  "alertNote": "备注",
+  "@alertNote": {
+    "description": "Fallback label for a note markdown alert."
+  },
+  "markdownDetailsGroupPendingTitle": "正在探索 {summary}",
+  "@markdownDetailsGroupPendingTitle": {
+    "description": "Title shown for a pending grouped tool-call details block.",
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "markdownDetailsGroupCompleteTitle": "已探索 {summary}",
+  "@markdownDetailsGroupCompleteTitle": {
+    "description": "Title shown for a completed grouped tool-call details block.",
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "markdownDetailsGroupUnnamedTool": "工具",
+  "@markdownDetailsGroupUnnamedTool": {
+    "description": "Fallback label used when a grouped tool call has no tool name."
+  },
+  "folderIconFolder": "文件夹",
+  "@folderIconFolder": {
+    "description": "Accessibility label for the folder icon option."
+  },
+  "folderIconOpenFolder": "打开的文件夹",
+  "@folderIconOpenFolder": {
+    "description": "Accessibility label for the open folder icon option."
+  },
+  "folderIconBriefcase": "公文包",
+  "@folderIconBriefcase": {
+    "description": "Accessibility label for the briefcase folder icon option."
+  },
+  "folderIconBooks": "书籍",
+  "@folderIconBooks": {
+    "description": "Accessibility label for the books folder icon option."
+  },
+  "folderIconMemo": "备忘录",
+  "@folderIconMemo": {
+    "description": "Accessibility label for the memo folder icon option."
+  },
+  "folderIconDividers": "分隔页",
+  "@folderIconDividers": {
+    "description": "Accessibility label for the dividers folder icon option."
+  },
+  "folderIconTools": "工具",
+  "@folderIconTools": {
+    "description": "Accessibility label for the tools folder icon option."
+  },
+  "folderIconToolbox": "工具箱",
+  "@folderIconToolbox": {
+    "description": "Accessibility label for the toolbox folder icon option."
+  },
+  "folderIconSparkles": "闪光",
+  "@folderIconSparkles": {
+    "description": "Accessibility label for the sparkles folder icon option."
+  },
+  "folderIconBrain": "大脑",
+  "@folderIconBrain": {
+    "description": "Accessibility label for the brain folder icon option."
+  },
+  "folderIconRocket": "火箭",
+  "@folderIconRocket": {
+    "description": "Accessibility label for the rocket folder icon option."
+  },
+  "folderIconTarget": "目标",
+  "@folderIconTarget": {
+    "description": "Accessibility label for the target folder icon option."
+  },
+  "folderIconGeneric": "文件夹图标",
+  "@folderIconGeneric": {
+    "description": "Generic accessibility label for a custom folder icon."
+  },
+  "thread": "话题串",
+  "@thread": {
+    "description": "Title and context action for a message thread."
+  },
+  "threadWithCount": "话题串 ({count})",
+  "@threadWithCount": {
+    "description": "Thread action label with reply count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "channelMembersTitle": "成员 ({count})",
+  "@channelMembersTitle": {
+    "description": "Title for the channel members sheet.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "channelInputPlaceholder": "在此输入...",
+  "@channelInputPlaceholder": {
+    "description": "Placeholder for the channel message composer."
+  },
+  "channelUnknownMember": "未知",
+  "@channelUnknownMember": {
+    "description": "Fallback name for a channel member with no display name."
+  },
+  "replyInputPlaceholder": "回复...",
+  "@replyInputPlaceholder": {
+    "description": "Placeholder for the thread reply composer."
+  },
+  "editPhoto": "编辑照片",
+  "@editPhoto": {
+    "description": "Action to edit the profile photo."
+  },
+  "replyingToUser": "正在回复 {name}",
+  "@replyingToUser": {
+    "description": "Label shown above the channel composer when replying to a user.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Alex"
+      }
+    }
+  },
+  "voiceCallWithModel": "与 {modelName} 进行语音通话",
+  "@voiceCallWithModel": {
+    "description": "Notification title for an ongoing voice call with a model.",
+    "placeholders": {
+      "modelName": {
+        "type": "String",
+        "example": "GPT-4"
+      }
+    }
+  },
+  "notificationPermissionTitle": "通知权限",
+  "@notificationPermissionTitle": {
+    "description": "Title for the system notification permission prompt."
+  },
+  "callNotificationPermissionRationale": "通话提醒需要通知权限。",
+  "@callNotificationPermissionRationale": {
+    "description": "Rationale shown when requesting notification permission for call alerts."
+  },
+  "callNotificationPermissionPost": "允许通知以显示来电。",
+  "@callNotificationPermissionPost": {
+    "description": "Instruction shown when requesting notification permission for incoming calls."
+  },
+  "acceptCall": "接听",
+  "@acceptCall": {
+    "description": "Call action to accept an incoming call."
+  },
+  "declineCall": "拒绝",
+  "@declineCall": {
+    "description": "Call action to decline an incoming call."
+  },
+  "missedCall": "未接来电",
+  "@missedCall": {
+    "description": "Notification subtitle for a missed call."
+  },
+  "callBack": "回拨",
+  "@callBack": {
+    "description": "Notification action to call back after a missed call."
+  },
+  "calling": "正在呼叫...",
+  "@calling": {
+    "description": "Notification subtitle while starting a call."
+  },
+  "hangUp": "挂断",
+  "@hangUp": {
+    "description": "Notification action to hang up a call."
+  },
+  "incomingCallChannelName": "来电",
+  "@incomingCallChannelName": {
+    "description": "Android notification channel name for incoming calls."
+  },
+  "missedCallChannelName": "未接来电",
+  "@missedCallChannelName": {
+    "description": "Android notification channel name for missed calls."
+  },
+  "mute": "静音",
+  "@mute": {
+    "description": "Notification action to mute a call."
+  },
+  "unmute": "取消静音",
+  "@unmute": {
+    "description": "Notification action to unmute a call."
+  },
+  "voiceCallMuted": "已静音",
+  "@voiceCallMuted": {
+    "description": "Status label when a voice call is muted."
+  },
+  "voiceCallChannelDescription": "正在进行的语音通话通知",
+  "@voiceCallChannelDescription": {
+    "description": "Android notification channel description for ongoing voice calls."
+  },
+  "@greetingTitle": {
+    "description": "Greeting shown on the empty chat page.",
+    "placeholders": {
+      "username": {
+        "type": "String",
+        "example": "Alex"
+      }
+    }
+  },
+  "@continueWithProvider": {
+    "description": "Button text for OAuth provider sign-in.",
+    "placeholders": {
+      "provider": {
+        "type": "String",
+        "example": "Google"
+      }
+    }
+  },
+  "@channelMembers": {
+    "description": "Member count display in channel header",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@audioUploadError": {
+    "description": "Error message when audio upload fails",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "description": "The error message"
+      }
+    }
+  },
+  "@accessibleModelsCount": {
+    "description": "Subtitle showing how many accessible models are listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "@accessibleFoldersCount": {
+    "description": "Subtitle showing how many accessible folders are listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "@modelSystemPromptTitle": {
+    "description": "Title for a model system prompt editor.",
+    "placeholders": {
+      "modelName": {
+        "type": "String",
+        "example": "GPT-4"
+      }
+    }
+  },
+  "@folderSystemPromptTitle": {
+    "description": "Title for a folder system prompt editor.",
+    "placeholders": {
+      "folderName": {
+        "type": "String",
+        "example": "Work"
+      }
+    }
+  },
+  "@savedMemoriesCount": {
+    "description": "Shows how many memories are saved.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@memoryUpdatedAt": {
+    "description": "Shows when a memory was last updated.",
+    "placeholders": {
+      "formattedTime": {}
+    }
+  },
+  "@socketLastHeartbeat": {
+    "description": "Shows when the socket last received a heartbeat.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "just now"
+      }
+    }
+  },
+  "@timeSecondsAgo": {
+    "description": "Compact relative time label for seconds ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "@timeMinutesAgo": {
+    "description": "Compact relative time label for minutes ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "@timeHoursAgo": {
+    "description": "Compact relative time label for hours ago.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "rateLimitExceeded": "请求过多。请稍后再试。",
+  "@rateLimitExceeded": {
+    "description": "Error shown when the server rejects a request due to rate limiting."
+  },
+  "rateLimitRetryAfter": "请等待 {duration} 后再试。",
+  "@rateLimitRetryAfter": {
+    "description": "Advice shown when a rate limit response includes a retry delay.",
+    "placeholders": {
+      "duration": {
+        "type": "String",
+        "example": "1m 30s"
+      }
+    }
+  },
+  "rateLimitRetrySoon": "请稍等片刻后再试。",
+  "@rateLimitRetrySoon": {
+    "description": "Advice shown when a rate limit response does not include an exact retry delay."
+  },
+  "securityCertificateError": "安全证书错误。无法验证服务器身份。",
+  "@securityCertificateError": {
+    "description": "Error shown when the server TLS certificate cannot be trusted or verified."
+  },
+  "noToolsAvailable": "没有可用工具",
+  "@noToolsAvailable": {
+    "description": "Empty state shown when no tools are available in the composer overflow menu."
+  },
+  "failedToLoadTools": "无法加载工具",
+  "@failedToLoadTools": {
+    "description": "Error shown when the composer overflow menu cannot load tools."
+  }
 }

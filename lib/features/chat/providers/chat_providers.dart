@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:uuid/uuid.dart';
@@ -9,14 +10,17 @@ import 'package:yaml/yaml.dart' as yaml;
 
 import '../../../core/auth/auth_state_manager.dart';
 import '../../../core/models/chat_message.dart';
+import '../../../core/models/model.dart';
 import '../../../core/models/conversation.dart';
 import '../../../core/providers/app_providers.dart';
 
 import '../../../core/services/settings_service.dart';
 import '../../../core/services/socket_service.dart';
 import '../../../core/services/streaming_response_controller.dart';
+import '../../../core/services/performance_profiler.dart';
 import '../../../core/services/worker_manager.dart';
 import '../../../core/utils/debug_logger.dart';
+import '../../../core/utils/message_tree_utils.dart' as message_tree;
 import '../../../core/utils/tool_calls_parser.dart';
 import '../models/chat_context_attachment.dart';
 import '../providers/context_attachments_provider.dart';
@@ -46,6 +50,19 @@ final isChatStreamingProvider = Provider<bool>((ref) {
     }),
   );
 });
+
+String? _connectedSocketSessionId(SocketService? socketService) {
+  if (socketService?.isConnected != true) {
+    return null;
+  }
+
+  final sessionId = socketService!.sessionId;
+  if (sessionId == null || sessionId.isEmpty) {
+    return null;
+  }
+
+  return sessionId;
+}
 
 /// The content of the currently streaming assistant message.
 /// Only the actively streaming message widget should watch this.
@@ -115,9 +132,6 @@ class ComposerAutofocusEnabled extends _$ComposerAutofocusEnabled {
 
 // Chat messages notifier class
 class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
-  /// Interval for syncing the streaming buffer into the message list state.
-  /// Per-chunk updates go through [streamingContentProvider] instead.
-  static const _streamingSyncInterval = Duration(milliseconds: 500);
   static const _passiveRefreshDebounce = Duration(milliseconds: 350);
 
   StreamingResponseController? _messageStream;
@@ -129,6 +143,9 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
   DateTime? _lastStreamingActivity;
   StringBuffer? _streamingBuffer;
   Timer? _streamingSyncTimer;
+  Timer? _streamingContentTimer;
+  bool _streamingContentFrameScheduled = false;
+  DateTime? _lastStreamingContentFlushAt;
   Timer? _taskStatusTimer;
   Timer? _passiveConversationRefreshTimer;
   bool _taskStatusCheckInFlight = false;
@@ -137,8 +154,14 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
   bool _queuedPassiveConversationRefresh = false;
   String? _passiveConversationId;
   String? _activeStreamingTransportMessageId;
+  String? _streamingProfileTaskKey;
+  String? _streamingProfileMessageId;
+  DateTime? _streamingProfileStartedAt;
+  int _streamingProfileChunkCount = 0;
+  int _streamingProfileBytes = 0;
 
   bool _initialized = false;
+  bool _disposed = false;
 
   @override
   List<ChatMessage> build() {
@@ -173,6 +196,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
 
         if (next != null) {
           state = next.messages;
+          _syncStreamingProfileWithState();
 
           // Update selected model if conversation has a different model
           _updateModelForConversation(next);
@@ -182,11 +206,13 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
           }
         } else {
           state = [];
+          _finishStreamingProfile(reason: 'conversation_cleared');
           _stopRemoteTaskMonitor();
         }
       });
 
       ref.onDispose(() {
+        _disposed = true;
         for (final subscription in _subscriptions) {
           subscription.cancel();
         }
@@ -197,6 +223,8 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
         _stopRemoteTaskMonitor();
         _streamingSyncTimer?.cancel();
         _streamingSyncTimer = null;
+        _streamingContentTimer?.cancel();
+        _streamingContentTimer = null;
 
         _conversationListener?.close();
         _conversationListener = null;
@@ -212,7 +240,35 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     if (serverMessages.isEmpty && state.isNotEmpty) {
       return false;
     }
+    if (_messagesDifferByCoreFields(serverMessages, state)) {
+      return true;
+    }
+    if (_hasStreamingAssistant ||
+        (serverMessages.lastOrNull?.role == 'assistant' &&
+            serverMessages.lastOrNull?.isStreaming == true)) {
+      return false;
+    }
     return !listEquals(serverMessages, state);
+  }
+
+  bool _messagesDifferByCoreFields(
+    List<ChatMessage> left,
+    List<ChatMessage> right,
+  ) {
+    if (left.length != right.length) {
+      return true;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      final leftMessage = left[index];
+      final rightMessage = right[index];
+      if (leftMessage.id != rightMessage.id ||
+          leftMessage.role != rightMessage.role ||
+          leftMessage.isStreaming != rightMessage.isStreaming ||
+          leftMessage.content != rightMessage.content) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void _adoptServerMessages(
@@ -237,11 +293,14 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     _streamingBuffer = null;
     _streamingSyncTimer?.cancel();
     _streamingSyncTimer = null;
+    _streamingContentTimer?.cancel();
+    _streamingContentTimer = null;
     _clearStreamingContent();
     if (_hasTrackedStreamingTransport) {
       _dropStreamingTransportState(source: 'server adoption from $source');
     }
     state = serverMessages;
+    _syncStreamingProfileWithState();
 
     if (needsCleanup) {
       _cancelMessageStream();
@@ -427,7 +486,12 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
         try {
           ref
               .read(conversationsProvider.notifier)
-              .upsertConversation(refreshed.copyWith(messages: const []));
+              .upsertConversation(
+                refreshed.copyWith(messages: const []),
+                trustFolderConversation:
+                    refreshed.folderId != null &&
+                    refreshed.folderId!.isNotEmpty,
+              );
         } catch (_) {}
       }
 
@@ -455,12 +519,130 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
   /// Safely clears the streaming content provider, tolerating disposal
   /// races during conversation transitions.
   void _clearStreamingContent() {
+    _streamingContentTimer?.cancel();
+    _streamingContentTimer = null;
+    _streamingContentFrameScheduled = false;
+    _lastStreamingContentFlushAt = null;
     try {
       ref.read(streamingContentProvider.notifier).set(null);
     } on Object catch (_) {
       // Provider may be disposing or unavailable during conversation
       // transitions / notifier teardown.
     }
+  }
+
+  void _beginStreamingProfile(ChatMessage message) {
+    if (message.role != 'assistant' || !message.isStreaming) {
+      return;
+    }
+    if (_streamingProfileMessageId == message.id &&
+        _streamingProfileTaskKey != null) {
+      return;
+    }
+
+    _finishStreamingProfile(reason: 'replaced');
+    _streamingProfileMessageId = message.id;
+    _streamingProfileStartedAt = DateTime.now();
+    _streamingProfileChunkCount = 0;
+    _streamingProfileBytes = message.content.length;
+    _streamingProfileTaskKey = PerformanceProfiler.instance.startTask(
+      'chat_stream',
+      scope: 'chat',
+      key: 'chat-stream:${message.id}',
+      data: {
+        'messageId': message.id,
+        'conversationId': ref.read(activeConversationProvider)?.id ?? 'none',
+        'initialLength': message.content.length,
+      },
+    );
+  }
+
+  void _recordStreamingChunk(String content) {
+    if (content.isEmpty || state.isEmpty) {
+      return;
+    }
+    final lastMessage = state.last;
+    if (lastMessage.role != 'assistant' || !lastMessage.isStreaming) {
+      return;
+    }
+
+    _beginStreamingProfile(lastMessage);
+    _streamingProfileChunkCount += 1;
+    _streamingProfileBytes += content.length;
+    if (_streamingProfileChunkCount == 1 ||
+        _streamingProfileChunkCount % 25 == 0) {
+      PerformanceProfiler.instance.instant(
+        'chat_stream_chunk',
+        scope: 'chat',
+        data: {
+          'messageId': lastMessage.id,
+          'chunkCount': _streamingProfileChunkCount,
+          'chunkBytes': content.length,
+          'bufferBytes': _streamingProfileBytes,
+        },
+      );
+    }
+  }
+
+  void _syncStreamingProfileWithState() {
+    final lastMessage = state.lastOrNull;
+    if (lastMessage == null ||
+        lastMessage.role != 'assistant' ||
+        !lastMessage.isStreaming) {
+      _finishStreamingProfile(reason: 'state_sync');
+      return;
+    }
+
+    _beginStreamingProfile(lastMessage);
+    _streamingProfileBytes = lastMessage.content.length;
+  }
+
+  void _syncStreamingProfileWithBufferedContent() {
+    final lastMessage = state.lastOrNull;
+    if (lastMessage == null ||
+        lastMessage.role != 'assistant' ||
+        !lastMessage.isStreaming) {
+      _finishStreamingProfile(reason: 'buffer_sync');
+      return;
+    }
+
+    _beginStreamingProfile(lastMessage);
+    _streamingProfileBytes =
+        _streamingBuffer?.length ?? lastMessage.content.length;
+  }
+
+  void _finishStreamingProfile({required String reason, ChatMessage? message}) {
+    final taskKey = _streamingProfileTaskKey;
+    final messageId = _streamingProfileMessageId;
+    if (taskKey == null || messageId == null) {
+      _streamingProfileTaskKey = null;
+      _streamingProfileMessageId = null;
+      _streamingProfileStartedAt = null;
+      _streamingProfileChunkCount = 0;
+      _streamingProfileBytes = 0;
+      return;
+    }
+
+    final elapsed = _streamingProfileStartedAt == null
+        ? null
+        : DateTime.now().difference(_streamingProfileStartedAt!);
+    final finalMessage = message ?? state.lastOrNull;
+    PerformanceProfiler.instance.finishTask(
+      taskKey,
+      data: {
+        'messageId': messageId,
+        'reason': reason,
+        'chunkCount': _streamingProfileChunkCount,
+        'bufferBytes': _streamingProfileBytes,
+        'elapsedMs': elapsed?.inMilliseconds ?? 0,
+        'finalLength': finalMessage?.content.length ?? 0,
+      },
+    );
+    _streamingProfileTaskKey = null;
+    _streamingProfileMessageId = null;
+    _streamingProfileStartedAt = null;
+    _streamingProfileChunkCount = 0;
+    _streamingProfileBytes = 0;
   }
 
   void _cancelMessageStream({bool clearStreamingContent = true}) {
@@ -474,10 +656,13 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     _streamingBuffer = null;
     _streamingSyncTimer?.cancel();
     _streamingSyncTimer = null;
+    _streamingContentTimer?.cancel();
+    _streamingContentTimer = null;
     if (clearStreamingContent) {
       _clearStreamingContent();
     }
     _stopRemoteTaskMonitor();
+    _finishStreamingProfile(reason: 'cancelled');
   }
 
   /// Checks if streaming cleanup is needed when adopting server messages.
@@ -575,6 +760,8 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     _streamingBuffer = null;
     _streamingSyncTimer?.cancel();
     _streamingSyncTimer = null;
+    _streamingContentTimer?.cancel();
+    _streamingContentTimer = null;
     _clearStreamingContent();
     _stopRemoteTaskMonitor();
   }
@@ -777,9 +964,13 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
 
     // If the conversation's model is different from the currently selected one
     if (currentSelectedModel?.id != conversation.model) {
-      // Get available models to find the matching one
+      // Existing chats must keep using their saved model, even if an admin
+      // later hides it from selectors.
       try {
-        final models = await ref.read(modelsProvider.future);
+        final api = ref.read(apiServiceProvider);
+        final models = api != null
+            ? await api.getModels(includeHidden: true)
+            : await ref.read(modelsProvider.future);
 
         if (models.isEmpty) {
           return;
@@ -792,7 +983,9 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
 
         if (conversationModel != null) {
           // Update the selected model
-          ref.read(selectedModelProvider.notifier).set(conversationModel);
+          ref
+              .read(selectedModelProvider.notifier)
+              .set(conversationModel, allowHidden: true);
         } else {
           // Model not found in available models - silently continue
         }
@@ -841,6 +1034,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
   void addMessage(ChatMessage message) {
     state = [...state, message];
     if (message.role == 'assistant' && message.isStreaming) {
+      _beginStreamingProfile(message);
       _touchStreamingActivity();
     }
   }
@@ -848,15 +1042,18 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
   void removeLastMessage() {
     if (state.isNotEmpty) {
       state = state.sublist(0, state.length - 1);
+      _syncStreamingProfileWithState();
     }
   }
 
   void clearMessages() {
     state = [];
+    _finishStreamingProfile(reason: 'cleared');
   }
 
   void setMessages(List<ChatMessage> messages) {
     state = messages;
+    _syncStreamingProfileWithState();
   }
 
   void updateLastMessage(String content) {
@@ -869,6 +1066,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
       ...state.sublist(0, state.length - 1),
       lastMessage.copyWith(content: _stripStreamingPlaceholders(content)),
     ];
+    _syncStreamingProfileWithState();
     _touchStreamingActivity();
   }
 
@@ -882,7 +1080,13 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     final updated = updater(lastMessage);
     state = [...state.sublist(0, state.length - 1), updated];
     if (updated.isStreaming) {
+      _syncStreamingProfileWithState();
       _touchStreamingActivity();
+    } else {
+      _finishStreamingProfile(
+        reason: 'updated_non_streaming',
+        message: updated,
+      );
     }
   }
 
@@ -911,21 +1115,6 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     // Do not archive if it's already streaming (nothing final to archive)
     if (last.isStreaming) return;
 
-    final snapshot = ChatMessageVersion(
-      id: last.id,
-      content: last.content,
-      timestamp: last.timestamp,
-      model: last.model,
-      files: last.files == null
-          ? null
-          : List<Map<String, dynamic>>.from(last.files!),
-      sources: List<ChatSourceReference>.from(last.sources),
-      followUps: List<String>.from(last.followUps),
-      codeExecutions: List<ChatCodeExecution>.from(last.codeExecutions),
-      usage: last.usage == null ? null : Map<String, dynamic>.from(last.usage!),
-      error: last.error, // Preserve error in version snapshot
-    );
-
     final updated = last.copyWith(
       // Start a fresh stream for the new generation
       isStreaming: true,
@@ -936,10 +1125,11 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
       sources: const [],
       usage: null,
       error: null, // Clear error for new generation
-      versions: [...last.versions, snapshot],
+      versions: _buildReplayVersions(last),
     );
 
     state = [...state.sublist(0, state.length - 1), updated];
+    _beginStreamingProfile(updated);
     _touchStreamingActivity();
   }
 
@@ -1023,39 +1213,106 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     // Initialize buffer with existing content on first chunk
     _streamingBuffer ??= StringBuffer(lastMessage.content);
     _streamingBuffer!.write(content);
+    _recordStreamingChunk(content);
 
-    // Update streaming content provider per-chunk so only the streaming
-    // widget re-parses. Note: .toString() materializes the full string each
-    // time (O(n) per chunk), but the StringBuffer avoids creating intermediate
-    // concatenation objects that pressure GC. The alternative of exposing the
-    // StringBuffer directly would leak mutable state into the widget layer.
-    final accumulated = _streamingBuffer!.toString();
-    ref.read(streamingContentProvider.notifier).set(accumulated);
-
-    // Throttle message list state updates to every 500ms.
-    // This prevents rebuilding ALL visible messages on
-    // every chunk.
-    _streamingSyncTimer ??= Timer.periodic(
-      _streamingSyncInterval,
-      (_) => _syncStreamingBufferToState(),
-    );
-
+    _scheduleStreamingContentUpdate();
+    _syncStreamingProfileWithBufferedContent();
     _touchStreamingActivity();
+  }
+
+  void _scheduleStreamingContentUpdate() {
+    if (_disposed || _streamingBuffer == null) {
+      return;
+    }
+    final currentVisible = ref.read(streamingContentProvider);
+    if (currentVisible == null || currentVisible.isEmpty) {
+      _scheduleStreamingContentFrame();
+      return;
+    }
+    if (_streamingContentFrameScheduled || _streamingContentTimer != null) {
+      return;
+    }
+    final interval = _streamingContentUpdateIntervalForBuffer(
+      _streamingBuffer!.length,
+    );
+    final lastFlushAt = _lastStreamingContentFlushAt;
+    if (lastFlushAt == null) {
+      _scheduleStreamingContentFrame();
+      return;
+    }
+    final elapsed = DateTime.now().difference(lastFlushAt);
+    final remaining = interval - elapsed;
+    if (remaining <= Duration.zero) {
+      _scheduleStreamingContentFrame();
+      return;
+    }
+    _streamingContentTimer = Timer(remaining, _scheduleStreamingContentFrame);
+  }
+
+  Duration _streamingContentUpdateIntervalForBuffer(int length) {
+    final isMobileTarget =
+        !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS);
+    if (length >= 16000) {
+      return isMobileTarget
+          ? const Duration(milliseconds: 220)
+          : const Duration(milliseconds: 180);
+    }
+    if (length >= 8000) {
+      return isMobileTarget
+          ? const Duration(milliseconds: 180)
+          : const Duration(milliseconds: 140);
+    }
+    if (length >= 4000) {
+      return isMobileTarget
+          ? const Duration(milliseconds: 140)
+          : const Duration(milliseconds: 110);
+    }
+    return isMobileTarget
+        ? const Duration(milliseconds: 100)
+        : const Duration(milliseconds: 80);
+  }
+
+  void _scheduleStreamingContentFrame() {
+    _streamingContentTimer?.cancel();
+    _streamingContentTimer = null;
+    if (_disposed || _streamingContentFrameScheduled) {
+      return;
+    }
+    _streamingContentFrameScheduled = true;
+    SchedulerBinding.instance.scheduleFrame();
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _streamingContentFrameScheduled = false;
+      if (_disposed) {
+        return;
+      }
+      _flushStreamingContentUpdate();
+    });
+  }
+
+  void _flushStreamingContentUpdate() {
+    if (_disposed) {
+      return;
+    }
+    final buffer = _streamingBuffer;
+    if (buffer == null) return;
+    final nextContent = buffer.toString();
+    if (ref.read(streamingContentProvider) == nextContent) {
+      return;
+    }
+    _lastStreamingContentFlushAt = DateTime.now();
+    ref.read(streamingContentProvider.notifier).set(nextContent);
   }
 
   /// Syncs the accumulated streaming buffer content into
   /// the message list state.
   void _syncStreamingBufferToState() {
     if (_streamingBuffer == null || state.isEmpty) {
-      // Streaming ended but timer still fired — cancel it.
-      _streamingSyncTimer?.cancel();
-      _streamingSyncTimer = null;
       return;
     }
     final lastMessage = state.last;
     if (lastMessage.role != 'assistant' || !lastMessage.isStreaming) {
-      _streamingSyncTimer?.cancel();
-      _streamingSyncTimer = null;
       return;
     }
 
@@ -1066,6 +1323,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
       ...state.sublist(0, state.length - 1),
       lastMessage.copyWith(content: accumulated),
     ];
+    _syncStreamingProfileWithState();
   }
 
   /// Flushes any pending streaming buffer content into the
@@ -1076,22 +1334,46 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
   /// Riverpod state.
   void syncStreamingBuffer() => _syncStreamingBufferToState();
 
+  /// Buffers a full replacement for the active streaming assistant message.
+  ///
+  /// This is used for generated content that must replace the visible
+  /// streaming text, such as an in-progress reasoning block. The live widget
+  /// still receives frequent updates through [streamingContentProvider]. The
+  /// canonical message list is updated only when the stream is explicitly
+  /// flushed or completed.
+  void bufferLastMessageContent(String content) {
+    if (state.isEmpty) return;
+
+    final lastMessage = state.last;
+    if (lastMessage.role != 'assistant' || !lastMessage.isStreaming) return;
+
+    final sanitized = _stripStreamingPlaceholders(content);
+    _streamingBuffer = StringBuffer(sanitized);
+    _scheduleStreamingContentUpdate();
+    _touchStreamingActivity();
+    _syncStreamingProfileWithBufferedContent();
+  }
+
   void replaceLastMessageContent(String content) {
-    _streamingBuffer = null;
-    _streamingSyncTimer?.cancel();
-    _streamingSyncTimer = null;
-    _clearStreamingContent();
     if (state.isEmpty) return;
 
     final lastMessage = state.last;
     if (lastMessage.role != 'assistant') return;
 
     final sanitized = _stripStreamingPlaceholders(content);
-    state = [
-      ...state.sublist(0, state.length - 1),
-      lastMessage.copyWith(content: sanitized),
-    ];
+    if (!lastMessage.isStreaming) {
+      state = [
+        ...state.sublist(0, state.length - 1),
+        lastMessage.copyWith(content: sanitized),
+      ];
+      _syncStreamingProfileWithState();
+      _touchStreamingActivity();
+      return;
+    }
+    _streamingBuffer = StringBuffer(sanitized);
+    _scheduleStreamingContentUpdate();
     _touchStreamingActivity();
+    _syncStreamingProfileWithBufferedContent();
   }
 
   ChatMessage _buildCompletedAssistantMessage(ChatMessage lastMessage) {
@@ -1111,19 +1393,8 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
           prev.role == 'assistant' &&
           (prev.metadata?['archivedVariant'] == true);
       if (isArchivedAssistant) {
-        final snapshot = ChatMessageVersion(
-          id: prev.id,
-          content: prev.content,
-          timestamp: prev.timestamp,
-          model: prev.model,
-          files: prev.files,
-          sources: prev.sources,
-          followUps: prev.followUps,
-          codeExecutions: prev.codeExecutions,
-          usage: prev.usage,
-        );
         updatedLast = updatedLast.copyWith(
-          versions: [...updatedLast.versions, snapshot],
+          versions: _buildReplayVersions(prev),
         );
       }
     }
@@ -1178,6 +1449,9 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
 
   void _completeStreamingMessage({required bool releaseTransport}) {
     // Sync final buffer content to state before clearing
+    _streamingContentTimer?.cancel();
+    _streamingContentTimer = null;
+    _flushStreamingContentUpdate();
     _syncStreamingBufferToState();
     _streamingBuffer = null;
     _streamingSyncTimer?.cancel();
@@ -1185,6 +1459,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     _clearStreamingContent();
 
     if (state.isEmpty) {
+      _finishStreamingProfile(reason: 'empty_state');
       if (releaseTransport) {
         _messageStream = null;
         _activeStreamingTransportMessageId = null;
@@ -1196,6 +1471,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
 
     final lastMessage = state.last;
     if (lastMessage.role != 'assistant' || !lastMessage.isStreaming) {
+      _finishStreamingProfile(reason: 'not_streaming', message: lastMessage);
       if (releaseTransport) {
         _messageStream = null;
         _activeStreamingTransportMessageId = null;
@@ -1209,6 +1485,10 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
       ...state.sublist(0, state.length - 1),
       _buildCompletedAssistantMessage(lastMessage),
     ];
+    _finishStreamingProfile(
+      reason: releaseTransport ? 'completed' : 'ui_completed',
+      message: state.lastOrNull,
+    );
 
     if (releaseTransport) {
       _messageStream = null;
@@ -1229,13 +1509,48 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
   }
 }
 
-// Pre-seed an assistant skeleton message (with a given id or a new one),
-// persist it to the server to establish the message structure, and return the id.
+bool _isArchivedAssistantVariant(ChatMessage message) {
+  return message.role == 'assistant' &&
+      message.metadata?['archivedVariant'] == true;
+}
+
+ChatMessageVersion _buildAssistantVersionSnapshot(ChatMessage message) {
+  return ChatMessageVersion(
+    id: message.id,
+    content: message.content,
+    timestamp: message.timestamp,
+    model: message.model,
+    files: message.files == null
+        ? null
+        : List<Map<String, dynamic>>.from(message.files!),
+    output: message.output == null
+        ? null
+        : List<Map<String, dynamic>>.from(message.output!),
+    embeds: message.embeds == null
+        ? null
+        : List<Map<String, dynamic>>.from(message.embeds!),
+    sources: List<ChatSourceReference>.from(message.sources),
+    followUps: List<String>.from(message.followUps),
+    codeExecutions: List<ChatCodeExecution>.from(message.codeExecutions),
+    usage: message.usage == null
+        ? null
+        : Map<String, dynamic>.from(message.usage!),
+    error: message.error,
+  );
+}
+
+List<ChatMessageVersion> _buildReplayVersions(ChatMessage message) {
+  return [...message.versions, _buildAssistantVersionSnapshot(message)];
+}
+
+// Pre-seed an assistant skeleton message (with a given id or a new one) and
+// return the id. Persisted chats rely on `/api/chat/completions` to update the
+// server-side history; pushing the local buffer back first can truncate chats
+// when the client has only partially loaded history.
 Future<String> _preseedAssistantAndPersist(
   dynamic ref, {
   String? existingAssistantId,
   required String modelId,
-  String? systemPrompt,
 }) async {
   // Choose id: reuse existing if provided, else create new
   final String assistantMessageId =
@@ -1270,31 +1585,6 @@ Future<String> _preseedAssistantAndPersist(
             );
       }
     } catch (_) {}
-  }
-
-  // Sync conversation state to establish the full message structure on the server.
-  // The server's upsert only sets parentId and model - we need to set role,
-  // timestamp, childrenIds, etc. for proper message rendering.
-  // Streaming placeholders are intentionally persisted without `done:true`
-  // so the backend can finish them in place, matching OpenWebUI's flow.
-  try {
-    final api = ref.read(apiServiceProvider);
-    final activeConv = ref.read(activeConversationProvider);
-    if (api != null && activeConv != null && !isTemporaryChat(activeConv.id)) {
-      final resolvedSystemPrompt =
-          (systemPrompt != null && systemPrompt.trim().isNotEmpty)
-          ? systemPrompt.trim()
-          : activeConv.systemPrompt;
-      final current = ref.read(chatMessagesProvider);
-      await api.syncConversationMessages(
-        activeConv.id,
-        current,
-        model: modelId,
-        systemPrompt: resolvedSystemPrompt,
-      );
-    }
-  } catch (_) {
-    // Non-critical - continue if sync fails
   }
 
   return assistantMessageId;
@@ -1444,40 +1734,52 @@ Map<String, dynamic> _buildOpenWebUiPromptVariables({
   };
 }
 
-Map<String, dynamic>? _buildOpenWebUiParentMessage({
+String? _resolveOpenWebUiParentIdForNewUserMessage(List<ChatMessage> messages) {
+  for (var index = messages.length - 1; index >= 0; index--) {
+    final messageId = messages[index].id.trim();
+    if (messageId.isNotEmpty) {
+      return messageId;
+    }
+  }
+  return null;
+}
+
+Map<String, dynamic>? _buildOpenWebUiUserMessage({
   required List<ChatMessage> messages,
-  required String? parentMessageId,
+  required String? userMessageId,
   required String modelId,
-  String? childMessageId,
+  String? assistantChildMessageId,
 }) {
-  if (parentMessageId == null || parentMessageId.isEmpty) {
+  if (userMessageId == null || userMessageId.isEmpty) {
     return null;
   }
 
-  ChatMessage? parentMessage;
-  for (final message in messages) {
-    if (message.id == parentMessageId) {
-      parentMessage = message;
+  ChatMessage? userMessage;
+  ChatMessage? previousMessage;
+  for (var index = 0; index < messages.length; index++) {
+    final message = messages[index];
+    if (message.id == userMessageId) {
+      userMessage = message;
+      if (index > 0) {
+        previousMessage = messages[index - 1];
+      }
       break;
     }
   }
-  if (parentMessage == null) {
+  if (userMessage == null) {
     return null;
   }
 
-  final metadata = parentMessage.metadata;
-  final parentId = metadata?['parentId']?.toString();
-  final rawChildren = metadata?['childrenIds'];
-  final childrenIds = rawChildren is List
-      ? rawChildren
-            .map((child) => child?.toString() ?? '')
-            .where((child) => child.isNotEmpty)
-            .toList(growable: true)
-      : <String>[];
-  if (childMessageId != null &&
-      childMessageId.isNotEmpty &&
-      !childrenIds.contains(childMessageId)) {
-    childrenIds.add(childMessageId);
+  final metadata = userMessage.metadata;
+  final parentId =
+      message_tree.chatMessageParentId(userMessage) ?? previousMessage?.id;
+  final childrenIds = message_tree
+      .chatMessageChildrenIds(userMessage)
+      .toList(growable: true);
+  if (assistantChildMessageId != null &&
+      assistantChildMessageId.isNotEmpty &&
+      !childrenIds.contains(assistantChildMessageId)) {
+    childrenIds.add(assistantChildMessageId);
   }
 
   final rawModels = metadata?['models'];
@@ -1489,20 +1791,259 @@ Map<String, dynamic>? _buildOpenWebUiParentMessage({
       : <String>[];
 
   return <String, dynamic>{
-    'id': parentMessage.id,
+    'id': userMessage.id,
     'parentId': parentId,
     'childrenIds': childrenIds,
-    'role': parentMessage.role,
-    'content': parentMessage.content,
-    if (parentMessage.role == 'user')
+    'role': userMessage.role,
+    'content': userMessage.content,
+    if (userMessage.role == 'user')
       'models': models.isNotEmpty ? models : <String>[modelId],
-    'timestamp': parentMessage.timestamp.millisecondsSinceEpoch ~/ 1000,
-    if (parentMessage.files != null && parentMessage.files!.isNotEmpty)
-      'files': parentMessage.files,
-    if (parentMessage.attachmentIds != null &&
-        parentMessage.attachmentIds!.isNotEmpty)
-      'attachment_ids': List<String>.from(parentMessage.attachmentIds!),
+    'timestamp': userMessage.timestamp.millisecondsSinceEpoch ~/ 1000,
+    if (userMessage.files != null && userMessage.files!.isNotEmpty)
+      'files': userMessage.files,
+    if (userMessage.attachmentIds != null &&
+        userMessage.attachmentIds!.isNotEmpty)
+      'attachment_ids': List<String>.from(userMessage.attachmentIds!),
   };
+}
+
+List<Map<String, dynamic>>? _extractTopLevelRequestFiles(
+  Map<String, dynamic>? userMessage,
+) {
+  final rawFiles = userMessage?['files'];
+  if (rawFiles is! List) {
+    return null;
+  }
+
+  final files = rawFiles
+      .whereType<Map>()
+      .map((file) => file.map((key, value) => MapEntry(key.toString(), value)))
+      .toList(growable: false);
+  return files.isEmpty ? null : files;
+}
+
+bool _isDirectServerToolSelection(String id) {
+  return id.startsWith('direct_server:');
+}
+
+List<String> _extractToolIdsForApi(Iterable<String> selectedToolIds) {
+  return selectedToolIds
+      .where((id) => !_isDirectServerToolSelection(id))
+      .toList(growable: false);
+}
+
+List _extractConfiguredServerList(Map<String, dynamic>? settings, String key) {
+  if (settings == null) {
+    return const [];
+  }
+
+  final rootValue = settings[key];
+  if (rootValue is List) {
+    return rootValue;
+  }
+
+  final uiValue = settings['ui'];
+  if (uiValue is Map && uiValue[key] is List) {
+    return uiValue[key] as List;
+  }
+
+  return const [];
+}
+
+List _extractConfiguredToolServers(Map<String, dynamic>? settings) {
+  return _extractConfiguredServerList(settings, 'toolServers');
+}
+
+List _extractConfiguredTerminalServers(Map<String, dynamic>? settings) {
+  return _extractConfiguredServerList(settings, 'terminalServers');
+}
+
+bool _isConfiguredServerEnabled(dynamic server) {
+  if (server is! Map) {
+    return false;
+  }
+
+  final config = server['config'];
+  if (config is Map && config.containsKey('enable')) {
+    return config['enable'] == true;
+  }
+
+  final enabled = server['enabled'];
+  if (enabled is bool) {
+    return enabled;
+  }
+
+  return true;
+}
+
+List _filterSelectedConfiguredToolServers(
+  List rawServers,
+  Iterable<String> selectedToolIds,
+) {
+  final selectedServerIds = selectedToolIds
+      .where(_isDirectServerToolSelection)
+      .map((id) => id.substring('direct_server:'.length).trim())
+      .where((id) => id.isNotEmpty)
+      .toSet();
+  if (selectedServerIds.isEmpty) {
+    return const [];
+  }
+
+  final filtered = <dynamic>[];
+  for (var index = 0; index < rawServers.length; index++) {
+    final server = rawServers[index];
+    if (server is! Map || !_isConfiguredServerEnabled(server)) {
+      continue;
+    }
+
+    final serverId = server['id']?.toString().trim();
+    final matchesSelection =
+        selectedServerIds.contains(index.toString()) ||
+        (serverId != null &&
+            serverId.isNotEmpty &&
+            selectedServerIds.contains(serverId));
+    if (matchesSelection) {
+      filtered.add(server);
+    }
+  }
+
+  return filtered;
+}
+
+List _filterEnabledDirectTerminalServers(List rawServers) {
+  final filtered = <dynamic>[];
+  for (final server in rawServers) {
+    if (server is! Map || !_isConfiguredServerEnabled(server)) {
+      continue;
+    }
+
+    final serverId = server['id']?.toString().trim();
+    final url = server['url']?.toString().trim() ?? '';
+    if ((serverId == null || serverId.isEmpty) && url.isNotEmpty) {
+      filtered.add(server);
+    }
+  }
+
+  return filtered;
+}
+
+Future<List<Map<String, dynamic>>?> _resolveToolServersForRequest({
+  required dynamic api,
+  required Map<String, dynamic>? userSettings,
+  required List<String> selectedToolIds,
+}) async {
+  final selectedRawToolServers = _filterSelectedConfiguredToolServers(
+    _extractConfiguredToolServers(userSettings),
+    selectedToolIds,
+  );
+  final directTerminalServers = _filterEnabledDirectTerminalServers(
+    _extractConfiguredTerminalServers(userSettings),
+  );
+
+  if (selectedRawToolServers.isEmpty && directTerminalServers.isEmpty) {
+    return null;
+  }
+
+  final resolved = <Map<String, dynamic>>[];
+  if (selectedRawToolServers.isNotEmpty) {
+    resolved.addAll(await _resolveToolServers(selectedRawToolServers, api));
+  }
+  if (directTerminalServers.isNotEmpty) {
+    resolved.addAll(await _resolveToolServers(directTerminalServers, api));
+  }
+
+  return resolved.isEmpty ? null : resolved;
+}
+
+List<Map<String, dynamic>> _buildChatCompletionMessages({
+  required List<Map<String, dynamic>> conversationMessages,
+  required bool isTemporary,
+}) {
+  final requestMessages = isTemporary
+      ? conversationMessages
+      : conversationMessages.where((message) {
+          return (message['role']?.toString().toLowerCase() ?? '') == 'system';
+        });
+
+  return requestMessages
+      .map((message) => Map<String, dynamic>.from(message))
+      .toList(growable: false);
+}
+
+bool _coerceBool(dynamic value, {required bool fallback}) {
+  if (value is bool) {
+    return value;
+  }
+  if (value is String) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'true' || normalized == '1') {
+      return true;
+    }
+    if (normalized == 'false' || normalized == '0') {
+      return false;
+    }
+  }
+  if (value is num) {
+    return value != 0;
+  }
+  return fallback;
+}
+
+bool modelSupportsTerminal(dynamic selectedModel) {
+  final metadata = selectedModel?.metadata as Map<String, dynamic>?;
+  final info = metadata?['info'] as Map<String, dynamic>?;
+  final infoMeta = info?['meta'] as Map<String, dynamic>?;
+  final capabilities = infoMeta?['capabilities'];
+  if (capabilities is Map) {
+    return _coerceBool(capabilities['terminal'], fallback: true);
+  }
+  return true;
+}
+
+String? _resolveTerminalIdForRequest({required String? selectedTerminalId}) {
+  String? normalize(dynamic value) {
+    final text = value?.toString().trim();
+    if (text == null || text.isEmpty) {
+      return null;
+    }
+    return text;
+  }
+
+  final explicitSelection = normalize(selectedTerminalId);
+  if (explicitSelection != null) {
+    return explicitSelection;
+  }
+
+  return null;
+}
+
+@visibleForTesting
+List<String> extractToolIdsForApiForTest(List<String> selectedToolIds) {
+  return _extractToolIdsForApi(selectedToolIds);
+}
+
+@visibleForTesting
+List filterSelectedConfiguredToolServersForTest({
+  required List rawServers,
+  required List<String> selectedToolIds,
+}) {
+  return _filterSelectedConfiguredToolServers(rawServers, selectedToolIds);
+}
+
+@visibleForTesting
+List<Map<String, dynamic>> buildChatCompletionMessagesForTest({
+  required List<Map<String, dynamic>> conversationMessages,
+  required bool isTemporary,
+}) {
+  return _buildChatCompletionMessages(
+    conversationMessages: conversationMessages,
+    isTemporary: isTemporary,
+  );
+}
+
+@visibleForTesting
+String? resolveTerminalIdForRequestForTest(String? selectedTerminalId) {
+  return _resolveTerminalIdForRequest(selectedTerminalId: selectedTerminalId);
 }
 
 // Start a new chat (unified function for both "New Chat" button and home screen)
@@ -1521,6 +2062,11 @@ void startNewChat(dynamic ref) {
 
   // Reset to default model for new conversations (fixes #296)
   restoreDefaultModel(ref);
+
+  final settings = ref.read(appSettingsProvider);
+  ref
+      .read(temporaryChatEnabledProvider.notifier)
+      .set(settings.temporaryChatByDefault);
 }
 
 /// Restores the selected model to the user's configured default model.
@@ -1547,6 +2093,132 @@ Future<void> restoreDefaultModel(dynamic ref) async {
     DebugLogger.error('restore-default-failed', scope: 'chat/model', error: e);
   }
 }
+
+typedef _ChatFeatureDefaults = ({
+  bool webSearchEnabled,
+  bool imageGenerationEnabled,
+});
+
+Map<String, dynamic>? _asStringDynamicMap(dynamic value) {
+  if (value is Map<String, dynamic>) {
+    return value;
+  }
+  if (value is Map) {
+    return value.map((key, value) => MapEntry(key.toString(), value));
+  }
+  return null;
+}
+
+Iterable<String> _stringList(dynamic value) {
+  if (value is! List) {
+    return const <String>[];
+  }
+  return value.map((item) => item.toString());
+}
+
+bool _isAlwaysOnChatFeatureSetting(
+  Map<String, dynamic>? userSettings, {
+  required String uiKey,
+  required String legacyKey,
+}) {
+  final uiMap = _asStringDynamicMap(userSettings?['ui']);
+  final raw = uiMap?[uiKey] ?? userSettings?[legacyKey];
+
+  if (raw is bool) {
+    return raw;
+  }
+  if (raw is num) {
+    return raw != 0;
+  }
+  if (raw is String) {
+    switch (raw.toLowerCase()) {
+      case 'always':
+      case 'enabled':
+      case 'on':
+      case 'true':
+      case '1':
+        return true;
+      default:
+        return false;
+    }
+  }
+  return false;
+}
+
+Set<String> _extractModelDefaultFeatureIds(Model? model) {
+  final metadata = model?.metadata;
+  final rootMeta = _asStringDynamicMap(metadata?['meta']);
+  final infoMeta = _asStringDynamicMap(
+    _asStringDynamicMap(metadata?['info'])?['meta'],
+  );
+  final defaultFeatureIds = <String>{};
+
+  for (final candidate in <dynamic>[
+    metadata?['defaultFeatureIds'],
+    metadata?['default_feature_ids'],
+    rootMeta?['defaultFeatureIds'],
+    rootMeta?['default_feature_ids'],
+    infoMeta?['defaultFeatureIds'],
+    infoMeta?['default_feature_ids'],
+  ]) {
+    defaultFeatureIds.addAll(_stringList(candidate));
+  }
+
+  return defaultFeatureIds;
+}
+
+_ChatFeatureDefaults _resolveChatFeatureDefaults({
+  required AppSettings appSettings,
+  required Map<String, dynamic>? userSettings,
+  required Model? model,
+}) {
+  final defaultFeatureIds = _extractModelDefaultFeatureIds(model);
+  final webSearchDefault =
+      _isAlwaysOnChatFeatureSetting(
+        userSettings,
+        uiKey: 'webSearch',
+        legacyKey: 'webSearchEnabled',
+      ) ||
+      defaultFeatureIds.contains('web_search');
+  final imageGenerationDefault =
+      _isAlwaysOnChatFeatureSetting(
+        userSettings,
+        uiKey: 'imageGeneration',
+        legacyKey: 'imageGenerationEnabled',
+      ) ||
+      defaultFeatureIds.contains('image_generation');
+
+  return (
+    webSearchEnabled: appSettings.chatWebSearchEnabled ?? webSearchDefault,
+    imageGenerationEnabled:
+        appSettings.chatImageGenerationEnabled ?? imageGenerationDefault,
+  );
+}
+
+@visibleForTesting
+({bool webSearchEnabled, bool imageGenerationEnabled})
+resolveChatFeatureDefaultsForTest({
+  required AppSettings appSettings,
+  Map<String, dynamic>? userSettings,
+  Model? model,
+}) {
+  return _resolveChatFeatureDefaults(
+    appSettings: appSettings,
+    userSettings: userSettings,
+    model: model,
+  );
+}
+
+final _chatFeatureDefaultsProvider = Provider<_ChatFeatureDefaults>((ref) {
+  final appSettings = ref.watch(appSettingsProvider);
+  final userSettings = ref.watch(rawUserSettingsProvider).asData?.value;
+  final selectedModel = ref.watch(selectedModelProvider);
+  return _resolveChatFeatureDefaults(
+    appSettings: appSettings,
+    userSettings: userSettings,
+    model: selectedModel,
+  );
+});
 
 // Available tools provider
 final availableToolsProvider =
@@ -1587,16 +2259,29 @@ class AvailableToolsNotifier extends Notifier<List<String>> {
 
 class WebSearchEnabledNotifier extends Notifier<bool> {
   @override
-  bool build() => false;
+  bool build() => ref.watch(_chatFeatureDefaultsProvider).webSearchEnabled;
 
-  void set(bool value) => state = value;
+  void set(bool value) {
+    state = value;
+    unawaited(
+      ref.read(appSettingsProvider.notifier).setChatWebSearchEnabled(value),
+    );
+  }
 }
 
 class ImageGenerationEnabledNotifier extends Notifier<bool> {
   @override
-  bool build() => false;
+  bool build() =>
+      ref.watch(_chatFeatureDefaultsProvider).imageGenerationEnabled;
 
-  void set(bool value) => state = value;
+  void set(bool value) {
+    state = value;
+    unawaited(
+      ref
+          .read(appSettingsProvider.notifier)
+          .setChatImageGenerationEnabled(value),
+    );
+  }
 }
 
 class VisionCapableModelsNotifier extends Notifier<List<String>> {
@@ -1866,33 +2551,35 @@ Future<void> regenerateMessage(
       userSystemPrompt = _extractSystemPromptFromSettings(userSettingsData);
     } catch (_) {}
 
-    if ((activeConversation.systemPrompt == null ||
-            activeConversation.systemPrompt!.trim().isEmpty) &&
-        (userSystemPrompt?.isNotEmpty ?? false)) {
-      final updated = activeConversation.copyWith(
-        systemPrompt: userSystemPrompt,
-      );
-      ref.read(activeConversationProvider.notifier).set(updated);
-      activeConversation = updated;
-    }
-
     // Include selected tool ids so provider-native tool calling is triggered
     final selectedToolIds = ref.read(selectedToolIdsProvider);
+    final toolIdsForApi = _extractToolIdsForApi(selectedToolIds);
+    final selectedTerminalId = ref.read(selectedTerminalIdProvider);
     // Include selected filter ids (toggle filters enabled by user)
     final selectedFilterIds = ref.read(selectedFilterIdsProvider);
-    // Get conversation history for context (excluding the removed assistant message)
+    // Get conversation history for context, skipping archived variants that are
+    // kept locally only for the version switcher.
     final List<ChatMessage> messages = ref.read(chatMessagesProvider);
     final List<Map<String, dynamic>> conversationMessages =
         <Map<String, dynamic>>[];
+    var lastUserIndex = -1;
+    for (var index = messages.length - 1; index >= 0; index--) {
+      if (messages[index].role == 'user') {
+        lastUserIndex = index;
+        break;
+      }
+    }
 
     for (int i = 0; i < messages.length; i++) {
       final msg = messages[i];
+      if (_isArchivedAssistantVariant(msg)) {
+        continue;
+      }
       if (msg.role.isNotEmpty && msg.content.isNotEmpty && !msg.isStreaming) {
         final cleaned = ToolCallsParser.sanitizeForApi(msg.content);
 
         // Prefer provided attachments for the last user message; otherwise use message attachments
-        final bool isLastUser =
-            (i == messages.length - 1) && msg.role == 'user';
+        final bool isLastUser = i == lastUserIndex && msg.role == 'user';
         final List<String> messageAttachments =
             (isLastUser && (attachments != null && attachments.isNotEmpty))
             ? List<String>.from(attachments)
@@ -1905,9 +2592,27 @@ Future<void> regenerateMessage(
             cleanedText: cleaned,
             attachmentIds: messageAttachments,
           );
+          if (msg.files != null && msg.files!.isNotEmpty) {
+            final rawFiles = messageMap['files'];
+            final existingFiles = rawFiles is List
+                ? rawFiles.whereType<Map<String, dynamic>>().toList()
+                : <Map<String, dynamic>>[];
+            messageMap['files'] = <Map<String, dynamic>>[
+              ...existingFiles,
+              ...msg.files!,
+            ];
+          }
+          if (msg.output != null && msg.output!.isNotEmpty) {
+            messageMap['output'] = msg.output;
+          }
           conversationMessages.add(messageMap);
         } else {
-          conversationMessages.add({'role': msg.role, 'content': cleaned});
+          conversationMessages.add({
+            'role': msg.role,
+            'content': cleaned,
+            'files': ?msg.files,
+            'output': ?msg.output,
+          });
         }
       }
     }
@@ -1929,6 +2634,13 @@ Future<void> regenerateMessage(
         });
       }
     }
+    final isTemporary =
+        isTemporaryChat(activeConversation.id) ||
+        ref.read(temporaryChatEnabledProvider);
+    final requestMessages = _buildChatCompletionMessages(
+      conversationMessages: conversationMessages,
+      isTemporary: isTemporary,
+    );
 
     // Pre-seed assistant skeleton and persist chain; always use a new id so
     // server history can branch like OpenWebUI.
@@ -1936,7 +2648,6 @@ Future<void> regenerateMessage(
       ref,
       existingAssistantId: null,
       modelId: selectedModel.id,
-      systemPrompt: effectiveSystemPrompt,
     );
 
     // Attach previous assistant as a version snapshot to the new assistant
@@ -1946,22 +2657,10 @@ Future<void> regenerateMessage(
         final prev = msgs[msgs.length - 2];
         final last = msgs.last;
         if (prev.role == 'assistant' && last.id == assistantMessageId) {
-          final snapshot = ChatMessageVersion(
-            id: prev.id,
-            content: prev.content,
-            timestamp: prev.timestamp,
-            model: prev.model,
-            files: prev.files,
-            sources: prev.sources,
-            followUps: prev.followUps,
-            codeExecutions: prev.codeExecutions,
-            usage: prev.usage,
-            error: prev.error, // Preserve error in version snapshot
-          );
           (ref.read(chatMessagesProvider.notifier) as ChatMessagesNotifier)
               .updateLastMessageWithFunction(
                 (ChatMessage m) =>
-                    m.copyWith(versions: [...m.versions, snapshot]),
+                    m.copyWith(versions: _buildReplayVersions(prev)),
               );
         }
       }
@@ -1971,29 +2670,30 @@ Future<void> regenerateMessage(
     final webSearchEnabled =
         ref.read(webSearchEnabledProvider) &&
         ref.read(webSearchAvailableProvider);
-    final imageGenerationEnabled = ref.read(imageGenerationEnabledProvider);
+    final imageGenerationEnabled =
+        ref.read(imageGenerationEnabledProvider) &&
+        ref.read(imageGenerationAvailableProvider);
 
     final modelItem = _buildLocalModelItem(selectedModel);
 
     // Socket is optional — only needed for taskSocket transport.
     final socketService = ref.read(socketServiceProvider);
-    final socketSessionId = socketService?.sessionId;
+    final socketSessionId = _connectedSocketSessionId(socketService);
 
-    // Resolve tool servers from user settings (if any)
     List<Map<String, dynamic>>? toolServers;
-    final uiSettings = userSettingsData?['ui'] as Map<String, dynamic>?;
-    final rawServers = uiSettings != null
-        ? (uiSettings['toolServers'] as List?)
+    try {
+      toolServers = await _resolveToolServersForRequest(
+        api: api,
+        userSettings: userSettingsData,
+        selectedToolIds: selectedToolIds,
+      );
+    } catch (_) {}
+    final terminalIdForApi = modelSupportsTerminal(selectedModel)
+        ? _resolveTerminalIdForRequest(selectedTerminalId: selectedTerminalId)
         : null;
-    if (rawServers != null && rawServers.isNotEmpty) {
-      try {
-        toolServers = await _resolveToolServers(rawServers, api);
-      } catch (_) {}
-    }
 
     // Background tasks should follow backend-synced user settings instead of
     // forcing local defaults.
-    final isTemporary = ref.read(temporaryChatEnabledProvider);
     bool shouldGenerateTitle = false;
     if (!isTemporary) {
       try {
@@ -2016,7 +2716,8 @@ Future<void> regenerateMessage(
     );
 
     final bool isBackgroundToolsFlowPre =
-        (selectedToolIds.isNotEmpty) ||
+        toolIdsForApi.isNotEmpty ||
+        terminalIdForApi != null ||
         (toolServers != null && toolServers.isNotEmpty);
     final bool isBackgroundWebSearchPre = webSearchEnabled;
 
@@ -2079,11 +2780,11 @@ Future<void> regenerateMessage(
     } catch (_) {}
 
     try {
-      parentMsgMap = _buildOpenWebUiParentMessage(
+      parentMsgMap = _buildOpenWebUiUserMessage(
         messages: messages,
-        parentMessageId: lastUserMessageId,
+        userMessageId: lastUserMessageId,
         modelId: selectedModel.id,
-        childMessageId: assistantMessageId,
+        assistantChildMessageId: assistantMessageId,
       );
     } catch (_) {}
 
@@ -2100,10 +2801,11 @@ Future<void> regenerateMessage(
     try {
       // Use transport-aware session dispatch
       final session = await api!.sendMessageSession(
-        messages: conversationMessages,
+        messages: requestMessages,
         model: selectedModel.id,
         conversationId: activeConversation.id,
-        toolIds: selectedToolIds.isNotEmpty ? selectedToolIds : null,
+        terminalId: terminalIdForApi,
+        toolIds: toolIdsForApi.isNotEmpty ? toolIdsForApi : null,
         filterIds: selectedFilterIds.isNotEmpty ? selectedFilterIds : null,
         enableWebSearch: webSearchEnabled,
         enableImageGeneration: imageGenerationEnabled,
@@ -2113,9 +2815,10 @@ Future<void> regenerateMessage(
         backgroundTasks: bgTasks,
         responseMessageId: assistantMessageId,
         userSettings: userSettingsData,
-        parentMessageId: lastUserMessageId,
-        parentMessage: parentMsgMap,
+        parentId: parentMsgMap?['parentId']?.toString(),
+        userMessage: parentMsgMap,
         variables: promptVars2,
+        files: _extractTopLevelRequestFiles(parentMsgMap),
       );
 
       // Check if model uses reasoning based on common naming patterns
@@ -2148,7 +2851,8 @@ Future<void> regenerateMessage(
         isBackgroundFlow: isBackgroundFlow,
         modelUsesReasoning: modelUsesReasoning,
         toolsEnabled:
-            selectedToolIds.isNotEmpty ||
+            toolIdsForApi.isNotEmpty ||
+            terminalIdForApi != null ||
             (toolServers != null && toolServers.isNotEmpty) ||
             imageGenerationEnabled,
         isTemporary: isTemporary,
@@ -2185,8 +2889,16 @@ Future<void> sendMessageFromService(
   List<String>? attachments, [
   List<String>? toolIds,
   bool isVoiceMode = false,
+  String? pendingFolderIdOverride,
 ]) async {
-  await _sendMessageInternal(ref, message, attachments, toolIds, isVoiceMode);
+  await _sendMessageInternal(
+    ref,
+    message,
+    attachments,
+    toolIds,
+    isVoiceMode,
+    pendingFolderIdOverride,
+  );
 }
 
 Future<void> sendMessageWithContainer(
@@ -2212,6 +2924,7 @@ Future<void> _sendMessageInternal(
   List<String>? attachments, [
   List<String>? toolIds,
   bool isVoiceMode = false,
+  String? pendingFolderIdOverride,
 ]) async {
   final reviewerMode = ref.read(reviewerModeProvider);
   final api = ref.read(apiServiceProvider);
@@ -2219,6 +2932,14 @@ Future<void> _sendMessageInternal(
 
   if ((!reviewerMode && api == null) || selectedModel == null) {
     throw Exception('No API service or model selected');
+  }
+
+  final isLoadingConversation = ref.read(isLoadingConversationProvider);
+  final currentConversation = ref.read(activeConversationProvider);
+  // Guard against a race where the user opens an existing chat and sends
+  // before its history loads, which would otherwise create a new chat.
+  if (isLoadingConversation && currentConversation == null) {
+    throw StateError('Conversation is still loading');
   }
 
   // Get context attachments synchronously (no API calls)
@@ -2248,8 +2969,15 @@ Future<void> _sendMessageInternal(
       ? [...legacyBase64Images, ...contextFiles]
       : null;
 
-  // Create user message - files will be updated after fetching server info
+  final existingMessages = ref.read(chatMessagesProvider);
+  final openWebUiParentId = _resolveOpenWebUiParentIdForNewUserMessage(
+    existingMessages,
+  );
+
+  // Create OpenWebUI-shaped user/assistant messages. Files will be updated
+  // after fetching server info.
   final userMessageId = const Uuid().v4();
+  final String assistantMessageId = const Uuid().v4();
   var userMessage = ChatMessage(
     id: userMessageId,
     role: 'user',
@@ -2258,13 +2986,17 @@ Future<void> _sendMessageInternal(
     model: selectedModel.id,
     attachmentIds: attachments,
     files: initialUserFiles,
+    metadata: {
+      'parentId': openWebUiParentId,
+      'childrenIds': <String>[assistantMessageId],
+      'models': <String>[selectedModel.id],
+    },
   );
 
   // Add user message to UI immediately for instant feedback
   ref.read(chatMessagesProvider.notifier).addMessage(userMessage);
 
   // Add assistant placeholder immediately to show typing indicator right away
-  final String assistantMessageId = const Uuid().v4();
   final assistantPlaceholder = ChatMessage(
     id: assistantMessageId,
     role: 'assistant',
@@ -2272,6 +3004,7 @@ Future<void> _sendMessageInternal(
     timestamp: DateTime.now(),
     model: selectedModel.id,
     isStreaming: true,
+    metadata: {'parentId': userMessageId, 'childrenIds': const <String>[]},
   );
   ref.read(chatMessagesProvider.notifier).addMessage(assistantPlaceholder);
 
@@ -2343,7 +3076,8 @@ Future<void> _sendMessageInternal(
   var activeConversation = ref.read(activeConversationProvider);
 
   if (activeConversation == null) {
-    final pendingFolderId = ref.read(pendingFolderIdProvider);
+    final pendingFolderId =
+        pendingFolderIdOverride ?? ref.read(pendingFolderIdProvider);
     final isTemporary = ref.read(temporaryChatEnabledProvider);
 
     if (isTemporary) {
@@ -2354,7 +3088,6 @@ Future<void> _sendMessageInternal(
         title: 'New Chat',
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
-        systemPrompt: userSystemPrompt,
         messages: [userMessage, assistantPlaceholder],
       );
 
@@ -2369,7 +3102,6 @@ Future<void> _sendMessageInternal(
         title: 'New Chat',
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
-        systemPrompt: userSystemPrompt,
         messages: [userMessage, assistantPlaceholder],
         folderId: pendingFolderId,
       );
@@ -2390,7 +3122,6 @@ Future<void> _sendMessageInternal(
             title: 'New Chat',
             messages: [lightweightMessage],
             model: selectedModel.id,
-            systemPrompt: userSystemPrompt,
             folderId: pendingFolderId,
           );
 
@@ -2402,7 +3133,6 @@ Future<void> _sendMessageInternal(
           final currentMessages = ref.read(chatMessagesProvider);
           final updatedConversation = localConversation.copyWith(
             id: serverConversation.id,
-            systemPrompt: serverConversation.systemPrompt ?? userSystemPrompt,
             messages: currentMessages,
             folderId: serverConversation.folderId ?? pendingFolderId,
           );
@@ -2415,6 +3145,9 @@ Future<void> _sendMessageInternal(
               .read(conversationsProvider.notifier)
               .upsertConversation(
                 updatedConversation.copyWith(updatedAt: DateTime.now()),
+                trustFolderConversation:
+                    updatedConversation.folderId != null &&
+                    updatedConversation.folderId!.isNotEmpty,
               );
 
           // Invalidate conversations provider to refresh the list
@@ -2445,15 +3178,6 @@ Future<void> _sendMessageInternal(
         ref.read(pendingFolderIdProvider.notifier).clear();
       }
     }
-  }
-
-  if (activeConversation != null &&
-      (activeConversation.systemPrompt == null ||
-          activeConversation.systemPrompt!.trim().isEmpty) &&
-      (userSystemPrompt?.isNotEmpty ?? false)) {
-    final updated = activeConversation.copyWith(systemPrompt: userSystemPrompt);
-    ref.read(activeConversationProvider.notifier).set(updated);
-    activeConversation = updated;
   }
 
   // Reviewer mode: simulate a response locally and return
@@ -2521,12 +3245,16 @@ Future<void> _sendMessageInternal(
             ...msg.files!,
           ];
         }
+        if (msg.output != null && msg.output!.isNotEmpty) {
+          messageMap['output'] = msg.output;
+        }
         conversationMessages.add(messageMap);
       } else {
         // Regular text-only message
         final Map<String, dynamic> messageMap = {
           'role': msg.role,
           'content': cleaned,
+          'output': ?msg.output,
         };
         if (msg.files != null && msg.files!.isNotEmpty) {
           messageMap['files'] = msg.files;
@@ -2552,17 +3280,24 @@ Future<void> _sendMessageInternal(
       });
     }
   }
+  final selectedToolIds = toolIds ?? const <String>[];
+  final toolIdsForApi = _extractToolIdsForApi(selectedToolIds);
+  final selectedTerminalId = ref.read(selectedTerminalIdProvider);
+  final isTemporary =
+      (activeConversation != null && isTemporaryChat(activeConversation.id)) ||
+      ref.read(temporaryChatEnabledProvider);
+  final requestMessages = _buildChatCompletionMessages(
+    conversationMessages: conversationMessages,
+    isTemporary: isTemporary,
+  );
 
   // Check feature toggles for API (gated by server availability)
   final webSearchEnabled =
       ref.read(webSearchEnabledProvider) &&
       ref.read(webSearchAvailableProvider);
-  final imageGenerationEnabled = ref.read(imageGenerationEnabledProvider);
-
-  // Prepare tools list - pass tool IDs directly
-  final List<String>? toolIdsForApi = (toolIds != null && toolIds.isNotEmpty)
-      ? toolIds
-      : null;
+  final imageGenerationEnabled =
+      ref.read(imageGenerationEnabledProvider) &&
+      ref.read(imageGenerationAvailableProvider);
 
   // Get selected toggle filter IDs
   final selectedFilterIds = ref.read(selectedFilterIdsProvider);
@@ -2574,45 +3309,27 @@ Future<void> _sendMessageInternal(
   String? sessionIdForBuffer;
   String? messageIdForBuffer;
   try {
-    // Assistant placeholder was already added above (after user message)
-    // to show typing indicator immediately. Sync conversation state to server.
-    // Sync conversation state to ensure WebUI can load conversation history
-    try {
-      final activeConvForSeed = ref.read(activeConversationProvider);
-      if (activeConvForSeed != null && !isTemporaryChat(activeConvForSeed.id)) {
-        final msgsForSeed = ref.read(chatMessagesProvider);
-        await api.syncConversationMessages(
-          activeConvForSeed.id,
-          msgsForSeed,
-          model: selectedModel.id,
-          systemPrompt: effectiveSystemPrompt,
-        );
-      }
-    } catch (_) {
-      // Non-critical - continue if sync fails
-    }
     final modelItem = _buildLocalModelItem(selectedModel);
 
     // Socket is optional — only needed for taskSocket transport.
     final socketService = ref.read(socketServiceProvider);
-    final socketSessionId = socketService?.sessionId;
+    final socketSessionId = _connectedSocketSessionId(socketService);
 
-    // Resolve tool servers from user settings (if any)
     List<Map<String, dynamic>>? toolServers;
-    final uiSettings = userSettingsData?['ui'] as Map<String, dynamic>?;
-    final rawServers = uiSettings != null
-        ? (uiSettings['toolServers'] as List?)
+    try {
+      toolServers = await _resolveToolServersForRequest(
+        api: api,
+        userSettings: userSettingsData,
+        selectedToolIds: selectedToolIds,
+      );
+    } catch (_) {}
+    final terminalIdForApi = modelSupportsTerminal(selectedModel)
+        ? _resolveTerminalIdForRequest(selectedTerminalId: selectedTerminalId)
         : null;
-    if (rawServers != null && rawServers.isNotEmpty) {
-      try {
-        toolServers = await _resolveToolServers(rawServers, api);
-      } catch (_) {}
-    }
 
     // Background tasks should follow backend-synced user settings instead of
     // forcing local defaults. Enable title/tags generation only on the first
     // user turn of a new chat.
-    final isTemporary = ref.read(temporaryChatEnabledProvider);
     bool shouldGenerateTitle = false;
     if (!isTemporary) {
       try {
@@ -2635,7 +3352,8 @@ Future<void> _sendMessageInternal(
 
     // Determine if we need background task flow (tools/tool servers or web search)
     final bool isBackgroundToolsFlowPre =
-        (toolIdsForApi != null && toolIdsForApi.isNotEmpty) ||
+        toolIdsForApi.isNotEmpty ||
+        terminalIdForApi != null ||
         (toolServers != null && toolServers.isNotEmpty);
     final bool isBackgroundWebSearchPre = webSearchEnabled;
 
@@ -2653,7 +3371,7 @@ Future<void> _sendMessageInternal(
     // getPromptVariables). The backend replaces {{USER_NAME}} etc. in system
     // prompts and tool descriptions.
     Map<String, dynamic>? promptVariables;
-    Map<String, dynamic>? parentMessageMap;
+    Map<String, dynamic>? userMessageMap;
     try {
       final now = DateTime.now();
       String userName = 'User';
@@ -2704,11 +3422,11 @@ Future<void> _sendMessageInternal(
     }
 
     try {
-      parentMessageMap = _buildOpenWebUiParentMessage(
+      userMessageMap = _buildOpenWebUiUserMessage(
         messages: messages,
-        parentMessageId: lastUserMessageId,
+        userMessageId: lastUserMessageId,
         modelId: selectedModel.id,
-        childMessageId: assistantMessageId,
+        assistantChildMessageId: assistantMessageId,
       );
     } catch (_) {}
 
@@ -2728,10 +3446,11 @@ Future<void> _sendMessageInternal(
 
     try {
       final session = await api.sendMessageSession(
-        messages: conversationMessages,
+        messages: requestMessages,
         model: selectedModel.id,
         conversationId: activeConversation?.id,
-        toolIds: toolIdsForApi,
+        terminalId: terminalIdForApi,
+        toolIds: toolIdsForApi.isNotEmpty ? toolIdsForApi : null,
         filterIds: filterIdsForApi,
         enableWebSearch: webSearchEnabled,
         enableImageGeneration: imageGenerationEnabled,
@@ -2742,9 +3461,10 @@ Future<void> _sendMessageInternal(
         backgroundTasks: bgTasks,
         responseMessageId: assistantMessageId,
         userSettings: userSettingsData,
-        parentMessageId: lastUserMessageId,
-        parentMessage: parentMessageMap,
+        parentId: userMessageMap?['parentId']?.toString(),
+        userMessage: userMessageMap,
         variables: promptVariables,
+        files: _extractTopLevelRequestFiles(userMessageMap),
       );
 
       // Check if model uses reasoning based on common naming patterns
@@ -2777,7 +3497,8 @@ Future<void> _sendMessageInternal(
         isBackgroundFlow: isBackgroundFlow,
         modelUsesReasoning: modelUsesReasoning2,
         toolsEnabled:
-            (toolIdsForApi != null && toolIdsForApi.isNotEmpty) ||
+            toolIdsForApi.isNotEmpty ||
+            terminalIdForApi != null ||
             (toolServers != null && toolServers.isNotEmpty) ||
             imageGenerationEnabled,
         isTemporary: isTemporary,
@@ -2946,7 +3667,7 @@ Future<void> pinConversation(
 
     ref
         .read(conversationsProvider.notifier)
-        .updateConversation(
+        .updateConversationFromRemote(
           conversationId,
           (conversation) =>
               conversation.copyWith(pinned: pinned, updatedAt: DateTime.now()),
@@ -2993,7 +3714,7 @@ Future<void> archiveConversation(
 
     ref
         .read(conversationsProvider.notifier)
-        .updateConversation(
+        .updateConversationFromRemote(
           conversationId,
           (conversation) => conversation.copyWith(
             archived: archived,
@@ -3029,7 +3750,7 @@ Future<String?> shareConversation(WidgetRef ref, String conversationId) async {
 
     ref
         .read(conversationsProvider.notifier)
-        .updateConversation(
+        .updateConversationFromRemote(
           conversationId,
           (conversation) => conversation.copyWith(
             shareId: shareId,
@@ -3040,9 +3761,51 @@ Future<String?> shareConversation(WidgetRef ref, String conversationId) async {
     // Refresh conversations list to reflect the change
     refreshConversationsCache(ref);
 
+    final activeConversation = ref.read(activeConversationProvider);
+    if (activeConversation?.id == conversationId) {
+      ref
+          .read(activeConversationProvider.notifier)
+          .set(activeConversation!.copyWith(shareId: shareId));
+    }
+
     return shareId;
   } catch (e) {
     DebugLogger.log('Error sharing conversation: $e', scope: 'chat/providers');
+    rethrow;
+  }
+}
+
+Future<void> deleteSharedConversation(
+  WidgetRef ref,
+  String conversationId,
+) async {
+  try {
+    final api = ref.read(apiServiceProvider);
+    if (api == null) throw Exception('No API service available');
+
+    await api.deleteSharedConversation(conversationId);
+
+    ref
+        .read(conversationsProvider.notifier)
+        .updateConversationFromRemote(
+          conversationId,
+          (conversation) =>
+              conversation.copyWith(shareId: null, updatedAt: DateTime.now()),
+        );
+
+    refreshConversationsCache(ref);
+
+    final activeConversation = ref.read(activeConversationProvider);
+    if (activeConversation?.id == conversationId) {
+      ref
+          .read(activeConversationProvider.notifier)
+          .set(activeConversation!.copyWith(shareId: null));
+    }
+  } catch (e) {
+    DebugLogger.log(
+      'Error deleting shared conversation link: $e',
+      scope: 'chat/providers',
+    );
     rethrow;
   }
 }
@@ -3065,6 +3828,9 @@ Future<void> cloneConversation(WidgetRef ref, String conversationId) async {
         .read(conversationsProvider.notifier)
         .upsertConversation(
           clonedConversation.copyWith(updatedAt: DateTime.now()),
+          trustFolderConversation:
+              clonedConversation.folderId != null &&
+              clonedConversation.folderId!.isNotEmpty,
         );
     refreshConversationsCache(ref);
   } catch (e) {

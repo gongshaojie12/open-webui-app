@@ -4,12 +4,51 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 import 'package:conduit/core/services/haptic_service.dart';
+
 import '../../shared/theme/theme_extensions.dart';
+import 'drawer_slot.dart';
+
+const double _kSidebarNativeBottomBarContentHeight = 50.0;
 
 enum _DrawerSettleEndpoint { open, closed }
 
+bool _usesNativeSidebarChrome(BuildContext context) =>
+    Theme.of(context).platform == TargetPlatform.iOS;
+
+/// Top inset so sidebar tab content starts below native sidebar chrome.
+double sidebarTabContentTopPadding(BuildContext context) {
+  if (!_usesNativeSidebarChrome(context)) {
+    return Spacing.sm;
+  }
+
+  return MediaQuery.viewPaddingOf(context).top + kTextTabBarHeight + Spacing.sm;
+}
+
+/// Bottom inset so sidebar tab content clears native sidebar chrome.
+double sidebarTabContentBottomPadding(BuildContext context) {
+  if (!_usesNativeSidebarChrome(context)) {
+    return Spacing.md;
+  }
+
+  final bottomPadding = MediaQuery.viewPaddingOf(context).bottom;
+  return bottomPadding + _kSidebarNativeBottomBarContentHeight + Spacing.md;
+}
+
+/// Height excluded from drawer drag gestures above the native sidebar tab bar.
+double sidebarBottomBarGestureExclusionHeight(BuildContext context) {
+  if (!_usesNativeSidebarChrome(context)) {
+    return 0.0;
+  }
+
+  return sidebarTabContentBottomPadding(context);
+}
+
 /// A responsive layout that shows a persistent drawer on tablets (side-by-side)
 /// and an overlay drawer on mobile devices.
+///
+/// When the [drawer] is a [DrawerSlot], horizontal swipe-to-close gestures on
+/// mobile apply only to [DrawerSlot.mainPanel], not [DrawerSlot.footerPanel]
+/// (e.g. a bottom tab bar with platform views).
 ///
 /// On tablets (shortestSide >= 600), the drawer is always visible alongside
 /// the content. On mobile, it behaves like a standard slide drawer.
@@ -26,6 +65,7 @@ class ResponsiveDrawerLayout extends StatefulWidget {
   final bool pushContent;
   final double contentScaleDelta;
   final VoidCallback? onOpenStart;
+  final double mobileBottomDragGestureExclusion;
 
   // Tablet-specific configuration
   final double tabletDrawerWidth; // Fixed width for tablet drawer
@@ -43,6 +83,7 @@ class ResponsiveDrawerLayout extends StatefulWidget {
     this.pushContent = true,
     this.contentScaleDelta = 0.02,
     this.onOpenStart,
+    this.mobileBottomDragGestureExclusion = 0.0,
     this.tabletDrawerWidth = 320.0,
     this.tabletDismissible = true,
     this.tabletInitiallyDocked = true,
@@ -316,6 +357,84 @@ class ResponsiveDrawerLayoutState extends State<ResponsiveDrawerLayout>
     _resetDragState();
   }
 
+  Widget _buildTabletDrawerSlot(ConduitThemeExtension theme, DrawerSlot slot) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: ColoredBox(
+            color: theme.surfaceBackground,
+            child: slot.mainPanel,
+          ),
+        ),
+        ColoredBox(color: theme.surfaceBackground, child: slot.footerPanel),
+      ],
+    );
+  }
+
+  BoxDecoration _drawerPanelDecoration(ConduitThemeExtension theme) {
+    return BoxDecoration(color: theme.surfaceBackground);
+  }
+
+  Widget _buildMobileDrawerSlotPanel(
+    ConduitThemeExtension theme,
+    DrawerSlot slot,
+  ) {
+    return Container(
+      decoration: _drawerPanelDecoration(theme),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onHorizontalDragStart: _onDragStart,
+              onHorizontalDragUpdate: _onDragUpdate,
+              onHorizontalDragEnd: _onDragEnd,
+              onHorizontalDragCancel: _onDragCancel,
+              child: ColoredBox(
+                color: theme.surfaceBackground,
+                child: slot.mainPanel,
+              ),
+            ),
+          ),
+          ColoredBox(color: theme.surfaceBackground, child: slot.footerPanel),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMobileDrawerPanel(ConduitThemeExtension theme) {
+    final drawerPanel = RepaintBoundary(
+      child: Container(
+        decoration: _drawerPanelDecoration(theme),
+        child: widget.drawer,
+      ),
+    );
+
+    final excludedHeight = widget.mobileBottomDragGestureExclusion.clamp(
+      0.0,
+      MediaQuery.of(context).size.height,
+    );
+
+    return Stack(
+      children: [
+        drawerPanel,
+        if (excludedHeight < MediaQuery.of(context).size.height)
+          Positioned.fill(
+            bottom: excludedHeight,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onHorizontalDragStart: _onDragStart,
+              onHorizontalDragUpdate: _onDragUpdate,
+              onHorizontalDragEnd: _onDragEnd,
+              onHorizontalDragCancel: _onDragCancel,
+            ),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.conduitTheme;
@@ -342,19 +461,16 @@ class ResponsiveDrawerLayoutState extends State<ResponsiveDrawerLayout>
           duration: _tabletDuration,
           curve: Curves.easeOutCubic,
           width: targetWidth,
-          decoration: BoxDecoration(
-            color: theme.surfaceBackground,
-            border: Border(
-              right: BorderSide(color: theme.dividerColor, width: 1),
-            ),
-          ),
+          decoration: BoxDecoration(color: theme.surfaceBackground),
           child: ClipRect(
             child: IgnorePointer(
               ignoring: widget.tabletDismissible && !_isTabletDocked,
-              child: Material(
-                color: theme.surfaceBackground,
-                child: widget.drawer,
-              ),
+              child: widget.drawer is DrawerSlot
+                  ? _buildTabletDrawerSlot(theme, widget.drawer as DrawerSlot)
+                  : ColoredBox(
+                      color: theme.surfaceBackground,
+                      child: widget.drawer,
+                    ),
             ),
           ),
         ),
@@ -442,26 +558,19 @@ class ResponsiveDrawerLayoutState extends State<ResponsiveDrawerLayout>
                     top: 0,
                     bottom: 0,
                     width: _panelWidth,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onHorizontalDragStart: _onDragStart,
-                      onHorizontalDragUpdate: _onDragUpdate,
-                      onHorizontalDragEnd: _onDragEnd,
-                      onHorizontalDragCancel: _onDragCancel,
-                      child: child!,
-                    ),
+                    child: widget.drawer is DrawerSlot
+                        ? RepaintBoundary(
+                            child: _buildMobileDrawerSlotPanel(
+                              theme,
+                              widget.drawer as DrawerSlot,
+                            ),
+                          )
+                        : _buildMobileDrawerPanel(theme),
                   ),
                 ],
               ),
             );
           },
-          child: RepaintBoundary(
-            child: Material(
-              color: theme.surfaceBackground,
-              elevation: 8,
-              child: widget.drawer,
-            ),
-          ),
         ),
       ],
     );

@@ -36,6 +36,22 @@ class NavigationService {
     return router.routeInformationProvider.value.uri.toString();
   }
 
+  /// The current folder ID when the active route is `/folder/:id`.
+  static String? get currentFolderId {
+    final current = currentRoute;
+    if (current == null) return null;
+
+    final uri = Uri.tryParse(current);
+    if (uri == null) return null;
+
+    final segments = uri.pathSegments;
+    if (segments.length == 2 && segments.first == 'folder') {
+      return segments[1];
+    }
+
+    return null;
+  }
+
   /// Navigate to a specific route path.
   static Future<void> navigateTo(String routeName) async {
     final router = _router;
@@ -84,6 +100,8 @@ class NavigationService {
   }
 
   static Future<void> navigateToChat() => navigateTo(Routes.chat);
+  static Future<void> navigateToFolder(String folderId) =>
+      navigateTo(Routes.folderPath(folderId));
   static Future<void> navigateToLogin() => navigateTo(Routes.authentication);
   static Future<void> navigateToProfile() => navigateTo(Routes.profile);
   static Future<void> navigateToServerConnection() =>
@@ -101,6 +119,7 @@ class NavigationService {
 class Routes {
   static const String splash = '/splash';
   static const String chat = '/chat';
+  static const String folder = '/folder/:id';
   static const String login = '/login';
   static const String serverConnection = '/server-connection';
   static const String connectionIssue = '/connection-issue';
@@ -108,16 +127,23 @@ class Routes {
   static const String ssoAuth = '/sso-auth';
   static const String proxyAuth = '/proxy-auth';
   static const String profile = '/profile';
+  static const String personalization = '/profile/personalization';
+  static const String audioSettings = '/profile/audio';
+  static const String accountSettings = '/profile/account';
   static const String appCustomization = '/profile/customization';
+  static const String about = '/profile/about';
   static const String notes = '/notes';
   static const String noteEditor = '/notes/:id';
   static const String channel = '/channel/:id';
+
+  static String folderPath(String id) => '/folder/$id';
 }
 
 /// Friendly names for GoRouter routes to support context.pushNamed.
 class RouteNames {
   static const String splash = 'splash';
   static const String chat = 'chat';
+  static const String folder = 'folder';
   static const String login = 'login';
   static const String serverConnection = 'server-connection';
   static const String connectionIssue = 'connection-issue';
@@ -125,7 +151,11 @@ class RouteNames {
   static const String ssoAuth = 'sso-auth';
   static const String proxyAuth = 'proxy-auth';
   static const String profile = 'profile';
+  static const String personalization = 'personalization';
+  static const String audioSettings = 'audio-settings';
+  static const String accountSettings = 'account-settings';
   static const String appCustomization = 'app-customization';
+  static const String about = 'about';
   static const String notes = 'notes';
   static const String noteEditor = 'note-editor';
   static const String channel = 'channel';

@@ -3,7 +3,6 @@ import 'dart:io' show Platform;
 import 'package:conduit/l10n/app_localizations.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:conduit/core/services/haptic_service.dart';
 
 import '../../core/models/model.dart';
@@ -48,8 +47,7 @@ class ModelCapabilityChip extends StatelessWidget {
           const SizedBox(width: 4),
           Text(
             label,
-            style: TextStyle(
-              fontSize: AppTypography.labelSmall,
+            style: AppTypography.labelSmallStyle.copyWith(
               color: theme.textSecondary,
               fontWeight: FontWeight.w500,
             ),
@@ -120,92 +118,86 @@ class ModelListTile extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: Spacing.xxs),
-      child: Material(
-        color: background,
-        borderRadius: borderRadius,
-        child: InkWell(
-          borderRadius: borderRadius,
-          onTap: () {
-            ConduitHaptics.selectionClick();
-            onTap();
-          },
-          overlayColor: WidgetStateProperty.resolveWith((states) {
-            if (states.contains(WidgetState.pressed)) {
-              return theme.buttonPrimary.withValues(alpha: Alpha.buttonPressed);
-            }
-            return Colors.transparent;
-          }),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: Spacing.sm,
-              vertical: Spacing.xs,
-            ),
-            child: Row(
-              children: [
-                leading,
-                const SizedBox(width: Spacing.sm),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          ConduitHaptics.selectionClick();
+          onTap();
+        },
+        child: Container(
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: borderRadius,
+          ),
+          padding: const EdgeInsets.symmetric(
+            horizontal: Spacing.sm,
+            vertical: Spacing.xs,
+          ),
+          child: Row(
+            children: [
+              leading,
+              const SizedBox(width: Spacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      isAutoSelect ? l10n.autoSelect : model.name,
+                      style: AppTypography.bodyMediumStyle.copyWith(
+                        color: isSelected
+                            ? theme.textPrimary
+                            : theme.textSecondary,
+                        fontWeight: isSelected
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (isAutoSelect) ...[
+                      const SizedBox(height: 2),
                       Text(
-                        isAutoSelect ? l10n.autoSelect : model.name,
-                        style: TextStyle(
-                          color: isSelected
-                              ? theme.textPrimary
-                              : theme.textSecondary,
-                          fontWeight: isSelected
-                              ? FontWeight.w600
-                              : FontWeight.w400,
-                          fontSize: AppTypography.bodyMedium,
+                        l10n.autoSelectDescription,
+                        style: AppTypography.labelSmallStyle.copyWith(
+                          color: theme.textSecondary,
                         ),
-                        maxLines: 1,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      if (isAutoSelect) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          l10n.autoSelectDescription,
-                          style: TextStyle(
-                            fontSize: AppTypography.labelSmall,
-                            color: theme.textSecondary,
-                          ),
-                        ),
-                      ] else if (hasCapabilities) ...[
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            if (model.isMultimodal)
-                              ModelCapabilityChip(
-                                icon: Platform.isIOS
-                                    ? CupertinoIcons.photo
-                                    : Icons.image,
-                                label: l10n.modelCapabilityMultimodal,
-                              ),
-                            if (modelSupportsReasoning(model))
-                              ModelCapabilityChip(
-                                icon: Platform.isIOS
-                                    ? CupertinoIcons.lightbulb
-                                    : Icons.psychology_alt,
-                                label: l10n.modelCapabilityReasoning,
-                              ),
-                          ],
-                        ),
-                      ],
+                    ] else if (hasCapabilities) ...[
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          if (model.isMultimodal)
+                            ModelCapabilityChip(
+                              icon: Platform.isIOS
+                                  ? CupertinoIcons.photo
+                                  : Icons.image,
+                              label: l10n.modelCapabilityMultimodal,
+                            ),
+                          if (modelSupportsReasoning(model))
+                            ModelCapabilityChip(
+                              icon: Platform.isIOS
+                                  ? CupertinoIcons.lightbulb
+                                  : Icons.psychology_alt,
+                              label: l10n.modelCapabilityReasoning,
+                            ),
+                        ],
+                      ),
                     ],
-                  ),
+                  ],
                 ),
-                if (isSelected) ...[
-                  const SizedBox(width: Spacing.xs),
-                  Icon(
-                    Platform.isIOS ? CupertinoIcons.check_mark : Icons.check,
-                    color: theme.buttonPrimary,
-                    size: IconSize.medium,
-                  ),
-                ],
+              ),
+              if (isSelected) ...[
+                const SizedBox(width: Spacing.xs),
+                Icon(
+                  Platform.isIOS ? CupertinoIcons.check_mark : Icons.check,
+                  color: theme.buttonPrimary,
+                  size: IconSize.medium,
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),

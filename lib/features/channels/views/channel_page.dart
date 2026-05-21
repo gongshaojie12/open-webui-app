@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io' show Platform;
+import 'dart:math' as math;
 
 import 'package:adaptive_platform_ui/adaptive_platform_ui.dart';
 import 'package:flutter/cupertino.dart';
@@ -13,21 +14,28 @@ import '../../../core/models/channel.dart';
 import '../../../core/models/channel_message.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/services/api_service.dart';
+import '../../../core/services/native_sheet_bridge.dart';
 import '../../../core/services/navigation_service.dart';
 import '../../../core/utils/model_icon_utils.dart';
 import '../../../core/utils/user_avatar_utils.dart';
-import '../../../shared/theme/conduit_input_styles.dart';
 import '../../../shared/theme/theme_extensions.dart';
-import '../../../shared/widgets/conduit_components.dart';
+import '../../../shared/widgets/adaptive_route_shell.dart';
+import '../../../shared/widgets/adaptive_toolbar_components.dart';
+import '../../../shared/utils/conversation_context_menu.dart';
+import '../../../shared/widgets/chrome_gradient_fade.dart';
+import '../../../shared/widgets/measure_size.dart';
 import '../../../shared/widgets/model_avatar.dart';
 import '../../../shared/widgets/responsive_drawer_layout.dart';
 import '../../../shared/widgets/themed_dialogs.dart';
+import '../../../shared/widgets/themed_sheets.dart';
 import '../../../shared/widgets/user_avatar.dart';
 import '../../chat/services/file_attachment_service.dart';
 import '../../chat/widgets/modern_chat_input.dart';
 import '../providers/channel_providers.dart';
 import '../providers/channel_socket_handler.dart';
 import '../utils/mention_utils.dart';
+import '../widgets/channel_form_dialog.dart';
+import '../widgets/channel_message_content.dart';
 import '../widgets/thread_panel.dart';
 
 /// Full-screen view for a single channel with messaging,
@@ -44,7 +52,10 @@ class ChannelPage extends ConsumerStatefulWidget {
 }
 
 class _ChannelPageState extends ConsumerState<ChannelPage> {
+  static const _reactionEmojis = ['👍', '❤️', '😂', '🎉', '🤔', '👀'];
+
   final ScrollController _scrollController = ScrollController();
+  double _composerHeight = 0;
   bool _isSending = false;
   bool _isLoadingMore = false;
   String? _editingMessageId;
@@ -52,6 +63,7 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
   Timer? _typingTimer;
   ChannelMessage? _replyToMessage;
   ChannelMessage? _threadParent;
+  late final ChannelSocketHandler _socketHandler;
 
   void _setReplyTo(ChannelMessage message) {
     setState(() => _replyToMessage = message);
@@ -66,7 +78,7 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
     if (isTablet) {
       setState(() => _threadParent = message);
     } else {
-      showModalBottomSheet<void>(
+      ThemedSheets.showCustom<void>(
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
@@ -104,6 +116,7 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
   @override
   void initState() {
     super.initState();
+    _socketHandler = ref.read(channelSocketHandlerProvider.notifier);
     _scrollController.addListener(_onScroll);
     _loadChannel();
     // Defer subscribe to after the build phase — unsubscribe
@@ -111,9 +124,7 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
     // during initState.
     Future(() {
       if (!mounted) return;
-      ref
-          .read(channelSocketHandlerProvider.notifier)
-          .subscribe(widget.channelId);
+      _socketHandler.subscribe(widget.channelId);
     });
   }
 
@@ -125,7 +136,7 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
       ..removeListener(_onScroll)
       ..dispose();
     try {
-      ref.read(channelSocketHandlerProvider.notifier).unsubscribe();
+      _socketHandler.unsubscribe();
     } catch (_) {
       // Provider may already be disposed during hot reload or
       // container teardown — the keepAlive notifier's own
@@ -170,7 +181,7 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
     final notifier = ref.read(
       channelMessagesProvider(widget.channelId).notifier,
     );
-    if (!notifier.hasMore) return;
+    if (!notifier.hasMore()) return;
     setState(() => _isLoadingMore = true);
     try {
       await notifier.loadMore();
@@ -422,126 +433,115 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
   }
 
   // ---------------------------------------------------------------------------
-  // Bottom sheets
+  // Message actions
   // ---------------------------------------------------------------------------
 
-  void _showMessageActions(ChannelMessage message) {
-    final l10n = AppLocalizations.of(context);
-    final theme = context.conduitTheme;
+  List<ConduitContextMenuAction> _buildMessageActions(ChannelMessage message) {
+    final l10n = AppLocalizations.of(context)!;
     final currentUserId = ref.read(currentUserProvider).value?.id;
     final isOwn = message.userId == currentUserId;
 
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: theme.surfaceContainer,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(AppBorderRadius.bottomSheet),
-        ),
+    return [
+      ConduitContextMenuAction(
+        cupertinoIcon: CupertinoIcons.smiley,
+        materialIcon: Icons.emoji_emotions_outlined,
+        label: l10n.channelMessageReact,
+        onSelected: () async => _showEmojiPicker(message),
       ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.emoji_emotions_outlined),
-              title: Text(l10n?.channelMessageReact ?? 'React'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _showEmojiPicker(message);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.reply_outlined),
-              title: Text(l10n?.channelMessageReply ?? 'Reply'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _setReplyTo(message);
-              },
-            ),
-            if (message.parentId == null)
-              ListTile(
-                leading: const Icon(Icons.forum_outlined),
-                title: Text(
-                  'Thread'
-                  '${message.replyCount > 0 ? " (${message.replyCount})" : ""}',
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _openThread(message);
-                },
-              ),
-            ListTile(
-              leading: const Icon(Icons.push_pin_outlined),
-              title: Text(message.isPinned ? 'Unpin' : 'Pin'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _togglePin(message);
-              },
-            ),
-            if (isOwn)
-              ListTile(
-                leading: const Icon(Icons.edit_outlined),
-                title: Text(l10n?.channelMessageEdit ?? 'Edit'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _startEditingMessage(message);
-                },
-              ),
-            ListTile(
-              leading: Icon(Icons.delete_outline, color: theme.error),
-              title: Text(
-                l10n?.channelMessageDelete ?? 'Delete',
-                style: TextStyle(color: theme.error),
-              ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _deleteMessage(message);
-              },
-            ),
-          ],
-        ),
+      ConduitContextMenuAction(
+        cupertinoIcon: CupertinoIcons.reply,
+        materialIcon: Icons.reply_outlined,
+        label: l10n.channelMessageReply,
+        onSelected: () async => _setReplyTo(message),
       ),
-    );
+      if (message.parentId == null)
+        ConduitContextMenuAction(
+          cupertinoIcon: CupertinoIcons.bubble_left_bubble_right,
+          materialIcon: Icons.forum_outlined,
+          label: message.replyCount > 0
+              ? l10n.threadWithCount(message.replyCount)
+              : l10n.thread,
+          onSelected: () async => _openThread(message),
+        ),
+      ConduitContextMenuAction(
+        cupertinoIcon: message.isPinned
+            ? CupertinoIcons.pin_slash
+            : CupertinoIcons.pin,
+        materialIcon: Icons.push_pin_outlined,
+        label: message.isPinned ? l10n.unpin : l10n.pin,
+        onSelected: () async => _togglePin(message),
+      ),
+      if (isOwn)
+        ConduitContextMenuAction(
+          cupertinoIcon: CupertinoIcons.pencil,
+          materialIcon: Icons.edit_outlined,
+          label: l10n.channelMessageEdit,
+          onSelected: () async => _startEditingMessage(message),
+        ),
+      ConduitContextMenuAction(
+        cupertinoIcon: CupertinoIcons.delete,
+        materialIcon: Icons.delete_outline,
+        label: l10n.channelMessageDelete,
+        destructive: true,
+        onSelected: () async => _deleteMessage(message),
+      ),
+    ];
   }
 
-  void _showEmojiPicker(ChannelMessage message) {
-    final theme = context.conduitTheme;
-    const emojis = ['👍', '❤️', '😂', '🎉', '🤔', '👀'];
+  void _showEmojiPicker(ChannelMessage message) async {
+    if (Platform.isIOS) {
+      try {
+        final emoji = await NativeSheetBridge.instance.presentOptionsSelector(
+          title: AppLocalizations.of(context)!.channelMessageReact,
+          options: [
+            for (final emoji in _reactionEmojis)
+              NativeSheetOptionConfig(
+                id: emoji,
+                label: emoji,
+                sfSymbol: 'face.smiling',
+              ),
+          ],
+          rethrowErrors: true,
+        );
+        if (emoji != null) {
+          _toggleReaction(message, emoji);
+        }
+        return;
+      } catch (_) {
+        if (!mounted) {
+          return;
+        }
+      }
+    }
 
-    showModalBottomSheet<void>(
+    if (!mounted) {
+      return;
+    }
+
+    ThemedSheets.showSurface<void>(
       context: context,
-      backgroundColor: theme.surfaceContainer,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(AppBorderRadius.bottomSheet),
-        ),
+      showHandle: false,
+      padding: const EdgeInsets.symmetric(
+        vertical: Spacing.md,
+        horizontal: Spacing.lg,
       ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            vertical: Spacing.md,
-            horizontal: Spacing.lg,
-          ),
-          child: Wrap(
-            spacing: Spacing.md,
-            runSpacing: Spacing.md,
-            alignment: WrapAlignment.center,
-            children: emojis.map((emoji) {
-              return InkWell(
-                borderRadius: BorderRadius.circular(AppBorderRadius.round),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _toggleReaction(message, emoji);
-                },
-                child: Padding(
-                  padding: const EdgeInsets.all(Spacing.sm),
-                  child: Text(emoji, style: const TextStyle(fontSize: 28)),
-                ),
-              );
-            }).toList(),
-          ),
-        ),
+      builder: (ctx) => Wrap(
+        spacing: Spacing.md,
+        runSpacing: Spacing.md,
+        alignment: WrapAlignment.center,
+        children: _reactionEmojis.map((emoji) {
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              Navigator.pop(ctx);
+              _toggleReaction(message, emoji);
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(Spacing.sm),
+              child: Text(emoji, style: const TextStyle(fontSize: 28)),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
@@ -551,63 +551,14 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
   // ---------------------------------------------------------------------------
 
   Future<void> _editChannel(Channel channel) async {
-    final l10n = AppLocalizations.of(context);
-    final theme = context.conduitTheme;
-
-    final nameController = TextEditingController(text: channel.name);
-    final descController = TextEditingController(text: channel.description);
-
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => ThemedDialogs.buildBase(
-        context: ctx,
-        title: l10n?.channelEdit ?? 'Edit Channel',
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              autofocus: true,
-              style: TextStyle(color: theme.textPrimary),
-              decoration: context.conduitInputStyles.underline(
-                hint: l10n?.channelName ?? 'Channel Name',
-              ),
-            ),
-            const SizedBox(height: Spacing.md),
-            TextField(
-              controller: descController,
-              style: TextStyle(color: theme.textPrimary),
-              decoration: context.conduitInputStyles.underline(
-                hint: l10n?.channelDescription ?? 'Description',
-              ),
-              maxLines: 3,
-              minLines: 1,
-            ),
-          ],
-        ),
-        actions: [
-          ConduitTextButton(
-            text: l10n?.cancel ?? 'Cancel',
-            onPressed: () => Navigator.of(ctx).pop(false),
-          ),
-          ConduitTextButton(
-            text: l10n?.save ?? 'Save',
-            onPressed: () => Navigator.of(ctx).pop(true),
-            isPrimary: true,
-          ),
-        ],
-      ),
+    final result = await showEditChannelFormDialog(
+      context,
+      channel: channel,
+      includePrivacyToggle: false,
     );
-
-    // Don't dispose controllers here — the dialog's exit animation
-    // may still reference them. They'll be GC'd with the dialog tree.
-    final newName = nameController.text.trim();
-    final newDesc = descController.text.trim();
-
-    if (saved != true) return;
-
-    if (newName.isEmpty) return;
-    if (newName == channel.name && newDesc == channel.description) {
+    if (result == null) return;
+    if (result.name == channel.name &&
+        result.description == channel.description) {
       return;
     }
 
@@ -617,8 +568,8 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
     try {
       final json = await api.updateChannel(
         channel.id,
-        name: newName,
-        description: newDesc,
+        name: result.name,
+        description: result.description,
       );
       if (!mounted) return;
       final updated = Channel.fromJson(json);
@@ -703,193 +654,230 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
     return _buildScaffold(context, theme);
   }
 
-  Widget _buildScaffold(BuildContext context, ConduitThemeExtension theme) {
-    final l10n = AppLocalizations.of(context);
-    final channel = ref.watch(activeChannelProvider);
-    final messagesAsync = ref.watch(channelMessagesProvider(widget.channelId));
+  Widget _buildChannelTitlePill(
+    BuildContext context,
+    Channel? channel, {
+    required double maxWidth,
+  }) {
+    final label = channel?.name ?? '';
+    final textStyle = conduitAdaptiveToolbarPillTextStyle(context);
+    final leadingIcon = channel?.isPrivate == true
+        ? Icons.lock_outlined
+        : Icons.tag;
+    final targetWidth = resolveConduitAdaptiveTextPillWidth(
+      context: context,
+      label: label,
+      textStyle: textStyle,
+      maxWidth: maxWidth,
+      minWidth: 96,
+      horizontalPadding: 10 + Spacing.xs,
+      leadingWidth: IconSize.appBar + Spacing.xs,
+    );
 
-    return Scaffold(
-      backgroundColor: theme.surfaceBackground,
-      extendBodyBehindAppBar: true,
-      appBar: FloatingAppBar(
-        balanceLeading: false,
-        leading: Builder(
-          builder: (ctx) => FloatingAppBarIconButton(
-            icon: Platform.isIOS
-                ? CupertinoIcons.line_horizontal_3
-                : Icons.menu,
-            onTap: () => ResponsiveDrawerLayout.of(ctx)?.toggle(),
-          ),
-        ),
-        title: Align(
-          alignment: Alignment.centerLeft,
-          child: Padding(
-            padding: const EdgeInsets.only(left: Spacing.sm),
-            child: FloatingAppBarPill(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: Spacing.md,
-                  vertical: Spacing.sm,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      channel?.isPrivate == true
-                          ? Icons.lock_outlined
-                          : Icons.tag,
-                      size: IconSize.appBar,
-                      color: theme.textPrimary,
-                    ),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        channel?.name ?? '',
-                        style: TextStyle(
-                          color: theme.textPrimary,
-                          fontSize: AppTypography.bodySmall,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        actions: [
-          if (channel?.userCount != null)
-            Padding(
-              padding: const EdgeInsets.only(right: Spacing.xs),
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _showMemberList,
-                child: FloatingAppBarPill(
-                  isCircular: true,
-                  child: Icon(
-                    Icons.people_outline,
-                    size: IconSize.appBar,
-                    color: theme.textPrimary,
-                  ),
-                ),
-              ),
-            ),
-          Padding(
-            padding: const EdgeInsets.only(right: Spacing.inputPadding),
-            child: _buildMoreMenuButton(channel, theme, l10n),
-          ),
-        ],
-      ),
-      body: Row(
-        children: [
-          Expanded(
-            child: Column(
+    return buildConduitAdaptiveToolbarPillSurface(
+      width: targetWidth,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 44),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 10, right: Spacing.xs),
+          child: Center(
+            widthFactor: 1,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: messagesAsync.when(
-                    data: (messages) =>
-                        _buildMessageList(messages, theme, l10n),
-                    loading: () =>
-                        const Center(child: CircularProgressIndicator()),
-                    error: (error, _) => Center(
-                      child: Text(
-                        error.toString(),
-                        style: TextStyle(color: theme.error),
-                      ),
-                    ),
-                  ),
+                Icon(
+                  leadingIcon,
+                  size: IconSize.appBar,
+                  color: textStyle.color,
                 ),
-                const SizedBox(height: Spacing.sm),
-                Consumer(
-                  builder: (context, ref, _) {
-                    final typingUsers = ref.watch(channelTypingUsersProvider);
-                    if (typingUsers.isEmpty) {
-                      return const SizedBox.shrink();
-                    }
-                    final names = typingUsers.values.toList();
-                    final text = names.length == 1
-                        ? '${names.first} '
-                              'is typing...'
-                        : '${names.join(", ")} '
-                              'are typing...';
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: Spacing.md,
-                        vertical: Spacing.xxs,
-                      ),
-                      child: Text(
-                        text,
-                        style: TextStyle(
-                          color: theme.textSecondary,
-                          fontSize: 12,
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                if (_replyToMessage != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: Spacing.md,
-                      vertical: Spacing.sm,
-                    ),
-                    color: theme.surfaceContainer,
-                    child: Row(
-                      children: [
-                        Icon(Icons.reply, size: 16, color: theme.textSecondary),
-                        const SizedBox(width: Spacing.sm),
-                        Expanded(
-                          child: Text(
-                            'Replying to '
-                            '${_replyToMessage!.userName}',
-                            style: TextStyle(
-                              color: theme.textSecondary,
-                              fontSize: 13,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            Icons.close,
-                            size: 16,
-                            color: theme.textSecondary,
-                          ),
-                          onPressed: _clearReplyTo,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                        ),
-                      ],
-                    ),
-                  ),
-                RepaintBoundary(
-                  child: ModernChatInput(
-                    onSendMessage: _sendMessage,
-                    placeholder: 'Type here...',
-                    overflowButtonBuilder: _buildAttachmentButton,
+                const SizedBox(width: Spacing.xs),
+                Flexible(
+                  child: Text(
+                    label,
+                    style: textStyle,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
             ),
           ),
-          if (_threadParent != null)
-            SizedBox(
-              width: 320,
-              child: Padding(
-                padding: EdgeInsets.only(
-                  top: MediaQuery.of(context).padding.top + kTextTabBarHeight,
-                ),
-                child: ThreadPanel(
-                  channelId: widget.channelId,
-                  parentMessage: _threadParent!,
-                  onClose: () => setState(() => _threadParent = null),
-                  overflowButtonBuilder: _buildAttachmentButton,
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildChannelToolbarActionWidgets(
+    BuildContext context,
+    ConduitThemeExtension theme,
+    Channel? channel,
+    AppLocalizations? l10n,
+  ) {
+    return buildConduitAdaptiveToolbarActionWidgets([
+      if (channel?.userCount != null)
+        ConduitAdaptiveAppBarIconButton(
+          icon: Icons.people_outline,
+          iconColor: theme.textPrimary,
+          onPressed: _showMemberList,
+        ),
+      _ChannelToolbarPopupButton(
+        l10n: l10n,
+        tintColor: theme.textPrimary,
+        onSelected: (action) => _handleChannelToolbarSelection(action, channel),
+      ),
+    ]);
+  }
+
+  void _toggleDrawer() {
+    ResponsiveDrawerLayout.of(context)?.toggle();
+  }
+
+  AdaptiveAppBar _buildAdaptiveChannelAppBar(
+    BuildContext context,
+    ConduitThemeExtension theme,
+    Channel? channel,
+    AppLocalizations? l10n,
+  ) {
+    final maxTitleWidth = resolveConduitAdaptiveLeadingPillWidth(
+      context,
+      trailingActionCount: channel?.userCount != null ? 2 : 1,
+      maxWidth: kConduitAdaptiveToolbarMaxPillWidth,
+    );
+    final tintColor = theme.textPrimary;
+    const leadingGap = kConduitAdaptiveToolbarLeadingGap;
+    final leading = buildConduitAdaptiveToolbarLeadingRow(
+      children: [
+        ConduitAdaptiveAppBarIconButton(
+          icon: Platform.isIOS ? CupertinoIcons.line_horizontal_3 : Icons.menu,
+          onPressed: _toggleDrawer,
+          iconColor: tintColor,
+        ),
+        const SizedBox(width: leadingGap),
+        _buildChannelTitlePill(context, channel, maxWidth: maxTitleWidth),
+      ],
+    );
+    final actions = _buildChannelToolbarActionWidgets(
+      context,
+      theme,
+      channel,
+      l10n,
+    );
+
+    return AdaptiveAppBar(
+      useNativeToolbar: false,
+      tintColor: tintColor,
+      cupertinoNavigationBar: CupertinoNavigationBar(
+        automaticallyImplyLeading: false,
+        border: null,
+        backgroundColor: Colors.transparent,
+        enableBackgroundFilterBlur: false,
+        leading: leading,
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: actions),
+      ),
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        shadowColor: Colors.transparent,
+        elevation: Elevation.none,
+        scrolledUnderElevation: Elevation.none,
+        toolbarHeight: kTextTabBarHeight,
+        centerTitle: false,
+        titleSpacing: Spacing.sm,
+        leadingWidth: resolveConduitAdaptiveToolbarLeadingWidth(
+          pillWidth: maxTitleWidth,
+          leadingGap: leadingGap,
+        ),
+        leading: leading,
+        actions: actions,
+      ),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context, ConduitThemeExtension theme) {
+    final l10n = AppLocalizations.of(context)!;
+    final channel = ref.watch(activeChannelProvider);
+    final messagesAsync = ref.watch(channelMessagesProvider(widget.channelId));
+
+    return AdaptiveRouteShell(
+      backgroundColor: theme.surfaceBackground,
+      extendBodyBehindAppBar: true,
+      appBar: _buildAdaptiveChannelAppBar(context, theme, channel, l10n),
+      body: Stack(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: messagesAsync.when(
+                        data: (messages) =>
+                            _buildMessageList(messages, theme, l10n),
+                        loading: () =>
+                            const Center(child: CircularProgressIndicator()),
+                        error: (error, _) => Center(
+                          child: Text(
+                            error.toString(),
+                            style: AppTypography.bodyMediumStyle.copyWith(
+                              color: theme.error,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: ConduitChromeGradientFade.bottom(
+                        contentHeight: math.max(
+                          0,
+                          math.max(
+                            _composerHeight - Spacing.xl,
+                            MediaQuery.viewPaddingOf(context).bottom +
+                                Spacing.xxl,
+                          ),
+                        ),
+                        fadeHeight: Spacing.md,
+                      ),
+                    ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: _buildComposerOverlay(theme, l10n),
+                    ),
+                  ],
                 ),
               ),
+              if (_threadParent != null)
+                SizedBox(
+                  width: 320,
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      top:
+                          MediaQuery.of(context).padding.top +
+                          kTextTabBarHeight,
+                    ),
+                    child: ThreadPanel(
+                      channelId: widget.channelId,
+                      parentMessage: _threadParent!,
+                      onClose: () => setState(() => _threadParent = null),
+                      overflowButtonBuilder: _buildAttachmentButton,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            child: ConduitChromeGradientFade.top(
+              contentHeight:
+                  MediaQuery.viewPaddingOf(context).top + kTextTabBarHeight,
             ),
+          ),
         ],
       ),
     );
@@ -904,7 +892,9 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
       return Center(
         child: Text(
           l10n?.channelNoMessages ?? 'No messages yet. Start the conversation!',
-          style: TextStyle(color: theme.textSecondary),
+          style: AppTypography.bodyMediumStyle.copyWith(
+            color: theme.textSecondary,
+          ),
         ),
       );
     }
@@ -915,7 +905,10 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
     return ListView.builder(
       controller: _scrollController,
       reverse: true,
-      padding: const EdgeInsets.only(top: Spacing.md, bottom: Spacing.sm),
+      padding: EdgeInsets.only(
+        top: Spacing.md,
+        bottom: Spacing.sm + _composerHeight,
+      ),
       itemCount: messages.length + (_isLoadingMore ? 1 : 0),
       itemBuilder: (context, index) {
         if (_isLoadingMore && index == messages.length) {
@@ -960,13 +953,105 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
           editController: _editController,
           onSubmitEdit: () => _submitEdit(message),
           onCancelEdit: _cancelEditing,
-          onLongPress: () => _showMessageActions(message),
+          contextMenuActions: _buildMessageActions(message),
           onReactionTap: (emoji) => _toggleReaction(message, emoji),
           onThreadTap: message.parentId == null
               ? () => _openThread(message)
               : null,
         );
       },
+    );
+  }
+
+  Widget _buildComposerOverlay(
+    ConduitThemeExtension theme,
+    AppLocalizations l10n,
+  ) {
+    return RepaintBoundary(
+      child: MeasureSize(
+        onChange: (size) {
+          if (!mounted) return;
+          setState(() => _composerHeight = size.height);
+        },
+        child: SafeArea(
+          top: false,
+          left: false,
+          right: false,
+          minimum: const EdgeInsets.only(bottom: Spacing.sm),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: Spacing.xl),
+              Consumer(
+                builder: (context, ref, _) {
+                  final typingUsers = ref.watch(channelTypingUsersProvider);
+                  if (typingUsers.isEmpty) {
+                    return const SizedBox.shrink();
+                  }
+                  final names = typingUsers.values.toList();
+                  final text = names.length == 1
+                      ? '${names.first} is typing...'
+                      : '${names.join(", ")} are typing...';
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: Spacing.md,
+                      vertical: Spacing.xxs,
+                    ),
+                    child: Text(
+                      text,
+                      style: AppTypography.bodySmallStyle.copyWith(
+                        color: theme.textSecondary,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              if (_replyToMessage != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Spacing.md,
+                    vertical: Spacing.sm,
+                  ),
+                  color: theme.surfaceContainer,
+                  child: Row(
+                    children: [
+                      Icon(Icons.reply, size: 16, color: theme.textSecondary),
+                      const SizedBox(width: Spacing.sm),
+                      Expanded(
+                        child: Text(
+                          l10n.replyingToUser(_replyToMessage!.userName),
+                          style: AppTypography.bodySmallStyle.copyWith(
+                            color: theme.textSecondary,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.close,
+                          size: 16,
+                          color: theme.textSecondary,
+                        ),
+                        onPressed: _clearReplyTo,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                ),
+              RepaintBoundary(
+                child: ModernChatInput(
+                  onSendMessage: _sendMessage,
+                  placeholder: l10n.channelInputPlaceholder,
+                  overflowButtonBuilder: _buildAttachmentButton,
+                  bottomPadding: 0,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -987,6 +1072,7 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
     final api = ref.read(apiServiceProvider);
     if (api == null) return;
     final theme = context.conduitTheme;
+    final l10n = AppLocalizations.of(context)!;
 
     try {
       final result = await api.getChannelMembers(widget.channelId);
@@ -994,69 +1080,93 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
       final users = (result['users'] as List<dynamic>?) ?? [];
       final total = (result['total'] as int?) ?? users.length;
 
-      showModalBottomSheet<void>(
-        context: context,
-        backgroundColor: theme.surfaceContainer,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(
-            top: Radius.circular(AppBorderRadius.bottomSheet),
-          ),
-        ),
-        builder: (ctx) => SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(ctx).size.height * 0.6,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(Spacing.md),
-                  child: Text(
-                    'Members ($total)',
-                    style: TextStyle(
-                      color: theme.textPrimary,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
-                    ),
+      if (Platform.isIOS) {
+        try {
+          await NativeSheetBridge.instance.presentSheet(
+            root: NativeSheetDetailConfig(
+              id: 'channel-members',
+              title: l10n.channelMembersTitle(total),
+              items: [
+                for (final user in users.cast<Map<String, dynamic>>())
+                  NativeSheetItemConfig(
+                    id: 'member-${user['id'] ?? user['name'] ?? users.indexOf(user)}',
+                    title: user['name'] as String? ?? l10n.channelUnknownMember,
+                    subtitle: user['role'] as String?,
+                    sfSymbol: 'person.circle',
+                    kind: NativeSheetItemKind.info,
                   ),
-                ),
-                const Divider(height: 1),
-                Flexible(
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: users.length,
-                    itemBuilder: (ctx, index) {
-                      final u = users[index] as Map<String, dynamic>;
-                      final name = u['name'] as String? ?? 'Unknown';
-                      final role = u['role'] as String? ?? '';
-                      return ListTile(
-                        leading: CircleAvatar(
-                          radius: 16,
-                          child: Text(
-                            name[0].toUpperCase(),
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                        title: Text(
-                          name,
-                          style: TextStyle(color: theme.textPrimary),
-                        ),
-                        subtitle: role.isNotEmpty
-                            ? Text(
-                                role,
-                                style: TextStyle(
-                                  color: theme.textSecondary,
-                                  fontSize: 12,
-                                ),
-                              )
-                            : null,
-                      );
-                    },
-                  ),
-                ),
               ],
             ),
+            rethrowErrors: true,
+          );
+          return;
+        } catch (_) {
+          if (!mounted) {
+            return;
+          }
+        }
+      }
+
+      if (!mounted) return;
+
+      ThemedSheets.showSurface<void>(
+        context: context,
+        showHandle: false,
+        padding: EdgeInsets.zero,
+        builder: (ctx) => ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.6,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(Spacing.md),
+                child: Text(
+                  l10n.channelMembersTitle(total),
+                  style: AppTypography.titleMediumStyle.copyWith(
+                    color: theme.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: users.length,
+                  itemBuilder: (ctx, index) {
+                    final u = users[index] as Map<String, dynamic>;
+                    final name =
+                        u['name'] as String? ?? l10n.channelUnknownMember;
+                    final role = u['role'] as String? ?? '';
+                    return ListTile(
+                      leading: CircleAvatar(
+                        radius: 16,
+                        child: Text(
+                          name[0].toUpperCase(),
+                          style: AppTypography.labelMediumStyle,
+                        ),
+                      ),
+                      title: Text(
+                        name,
+                        style: AppTypography.bodyMediumStyle.copyWith(
+                          color: theme.textPrimary,
+                        ),
+                      ),
+                      subtitle: role.isNotEmpty
+                          ? Text(
+                              role,
+                              style: AppTypography.bodySmallStyle.copyWith(
+                                color: theme.textSecondary,
+                              ),
+                            )
+                          : null,
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -1070,48 +1180,66 @@ class _ChannelPageState extends ConsumerState<ChannelPage> {
     }
   }
 
-  Widget _buildMoreMenuButton(
-    Channel? channel,
-    ConduitThemeExtension theme,
-    AppLocalizations? l10n,
-  ) {
-    return PopupMenuButton<String>(
-      color: theme.surfaceContainer,
-      onSelected: (value) {
-        switch (value) {
-          case 'edit':
-            if (channel != null) _editChannel(channel);
-          case 'leave':
-            _leaveChannel();
-          case 'delete':
-            _deleteChannel();
+  void _handleChannelToolbarSelection(String action, Channel? channel) {
+    switch (action) {
+      case 'edit':
+        if (channel != null) {
+          _editChannel(channel);
         }
-      },
-      itemBuilder: (ctx) => [
-        PopupMenuItem(
+        return;
+      case 'leave':
+        _leaveChannel();
+        return;
+      case 'delete':
+        _deleteChannel();
+        return;
+    }
+  }
+}
+
+class _ChannelToolbarPopupButton extends StatelessWidget {
+  const _ChannelToolbarPopupButton({
+    required this.l10n,
+    required this.tintColor,
+    required this.onSelected,
+  });
+
+  final AppLocalizations? l10n;
+  final Color tintColor;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConduitAdaptiveToolbarOverflowButton<String>(
+      tintColor: tintColor,
+      materialIcon: Icons.more_vert,
+      items: [
+        AdaptivePopupMenuItem<String>(
           value: 'edit',
-          child: Text(l10n?.channelEdit ?? 'Edit Channel'),
+          label: l10n?.channelEdit ?? 'Edit Channel',
+          icon: conduitAdaptivePopupMenuIcon(
+            iosSymbol: 'pencil',
+            materialIcon: Icons.edit_outlined,
+          ),
         ),
-        PopupMenuItem(
+        AdaptivePopupMenuItem<String>(
           value: 'leave',
-          child: Text(l10n?.channelLeave ?? 'Leave Channel'),
+          label: l10n?.channelLeave ?? 'Leave Channel',
+          icon: conduitAdaptivePopupMenuIcon(
+            iosSymbol: 'rectangle.portrait.and.arrow.right',
+            materialIcon: Icons.logout_outlined,
+          ),
         ),
-        PopupMenuItem(
+        AdaptivePopupMenuItem<String>(
           value: 'delete',
-          child: Text(
-            l10n?.channelDelete ?? 'Delete Channel',
-            style: TextStyle(color: theme.error),
+          label: l10n?.channelDelete ?? 'Delete Channel',
+          icon: conduitAdaptivePopupMenuIcon(
+            iosSymbol: 'trash',
+            materialIcon: Icons.delete_outline,
           ),
         ),
       ],
-      child: FloatingAppBarPill(
-        isCircular: true,
-        child: Icon(
-          Platform.isIOS ? CupertinoIcons.ellipsis_vertical : Icons.more_vert,
-          color: theme.textPrimary,
-          size: IconSize.appBar,
-        ),
-      ),
+      onSelected: onSelected,
     );
   }
 }
@@ -1132,7 +1260,7 @@ class _MessageBubble extends StatelessWidget {
     this.editController,
     this.onSubmitEdit,
     this.onCancelEdit,
-    required this.onLongPress,
+    required this.contextMenuActions,
     required this.onReactionTap,
     this.onThreadTap,
   });
@@ -1149,7 +1277,7 @@ class _MessageBubble extends StatelessWidget {
   final TextEditingController? editController;
   final VoidCallback? onSubmitEdit;
   final VoidCallback? onCancelEdit;
-  final VoidCallback onLongPress;
+  final List<ConduitContextMenuAction> contextMenuActions;
   final ValueChanged<String> onReactionTap;
   final VoidCallback? onThreadTap;
 
@@ -1158,8 +1286,8 @@ class _MessageBubble extends StatelessWidget {
     final theme = context.conduitTheme;
     final timestamp = _formatTimestamp(message.createdDateTime);
 
-    return InkWell(
-      onLongPress: onLongPress,
+    return ConduitContextMenu(
+      actions: contextMenuActions,
       child: Padding(
         padding: EdgeInsets.only(
           left: Spacing.md,
@@ -1200,19 +1328,17 @@ class _MessageBubble extends StatelessWidget {
                         children: [
                           Text(
                             message.replyToMessage!.userName,
-                            style: TextStyle(
+                            style: AppTypography.labelMediumStyle.copyWith(
                               color: Theme.of(context).colorScheme.primary,
-                              fontSize: 11,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                           Text(
-                            message.replyToMessage!.content,
+                            stripMentions(message.replyToMessage!.content),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
+                            style: AppTypography.bodySmallStyle.copyWith(
                               color: theme.textSecondary,
-                              fontSize: 11,
                             ),
                           ),
                         ],
@@ -1231,10 +1357,9 @@ class _MessageBubble extends StatelessWidget {
                         ),
                       ),
                       child: Text(
-                        'Reply',
-                        style: TextStyle(
+                        AppLocalizations.of(context)!.channelMessageReply,
+                        style: AppTypography.bodySmallStyle.copyWith(
                           color: theme.textSecondary,
-                          fontSize: 11,
                           fontStyle: FontStyle.italic,
                         ),
                       ),
@@ -1252,9 +1377,8 @@ class _MessageBubble extends StatelessWidget {
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            'Pinned',
-                            style: TextStyle(
-                              fontSize: AppTypography.bodyMedium,
+                            AppLocalizations.of(context)!.pinned,
+                            style: AppTypography.bodySmallStyle.copyWith(
                               color: theme.textPrimary.withValues(alpha: 0.6),
                               height: 1.3,
                             ),
@@ -1296,14 +1420,9 @@ class _MessageBubble extends StatelessWidget {
                       ],
                     )
                   else
-                    RichText(
-                      text: buildMentionSpan(
-                        content: message.content,
-                        baseStyle: AppTypography.chatMessageStyle.copyWith(
-                          color: theme.textPrimary,
-                        ),
-                        mentionColor: Theme.of(context).colorScheme.primary,
-                      ),
+                    ChannelMessageContent(
+                      content: message.content,
+                      stateScopeId: 'channel:${message.id}',
                     ),
                   if (message.replyCount > 0 && onThreadTap != null)
                     Padding(
@@ -1317,8 +1436,7 @@ class _MessageBubble extends StatelessWidget {
                             Text(
                               '${message.replyCount} '
                               '${message.replyCount == 1 ? "reply" : "replies"}',
-                              style: TextStyle(
-                                fontSize: AppTypography.bodyMedium,
+                              style: AppTypography.bodySmallStyle.copyWith(
                                 color: theme.textPrimary.withValues(alpha: 0.6),
                                 height: 1.3,
                               ),
@@ -1367,10 +1485,9 @@ class _MessageBubble extends StatelessWidget {
         Flexible(
           child: Text(
             messageDisplayName(message),
-            style: TextStyle(
+            style: AppTypography.bodySmallStyle.copyWith(
               color: theme.textSecondary,
               fontWeight: FontWeight.w500,
-              fontSize: AppTypography.bodySmall,
               letterSpacing: 0.1,
             ),
             overflow: TextOverflow.ellipsis,
@@ -1379,9 +1496,8 @@ class _MessageBubble extends StatelessWidget {
         const SizedBox(width: Spacing.sm),
         Text(
           timestamp,
-          style: TextStyle(
+          style: AppTypography.labelSmallStyle.copyWith(
             color: theme.textSecondary,
-            fontSize: AppTypography.labelSmall,
           ),
         ),
       ],
@@ -1403,7 +1519,7 @@ class _MessageBubble extends StatelessWidget {
           return ActionChip(
             label: Text(
               '${reaction.name} ${reaction.count}',
-              style: const TextStyle(fontSize: 12),
+              style: AppTypography.labelMediumStyle,
             ),
             backgroundColor: isActive
                 ? primaryColor.withValues(alpha: 0.15)

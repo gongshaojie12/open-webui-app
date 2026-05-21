@@ -1,5 +1,4 @@
 import 'package:adaptive_platform_ui/adaptive_platform_ui.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 
@@ -7,22 +6,25 @@ import 'dart:io' show Platform;
 
 import '../../../shared/theme/conduit_input_styles.dart';
 import '../../../shared/theme/theme_extensions.dart';
+import '../../../shared/widgets/themed_sheets.dart';
 import 'package:conduit/l10n/app_localizations.dart';
 
 /// Full-screen bottom sheet editor shown when the chat input grows large.
 ///
-/// Uses [showModalBottomSheet] so Flutter's built-in drag-to-dismiss gesture
-/// works naturally — drag the handle at the top (or anywhere outside the text
-/// field) downward to close. The send button mirrors the compact chat input.
+/// Presented by the shared modal-sheet helper so Flutter's built-in
+/// drag-to-dismiss gesture works naturally. The send button mirrors the
+/// compact chat input.
 class ExpandedTextEditorSheet extends StatefulWidget {
   const ExpandedTextEditorSheet({
     super.key,
     required this.controller,
     required this.onSend,
+    required this.onClose,
   });
 
   final TextEditingController controller;
   final VoidCallback onSend;
+  final VoidCallback onClose;
 
   @override
   State<ExpandedTextEditorSheet> createState() =>
@@ -72,114 +74,92 @@ class _ExpandedTextEditorSheetState extends State<ExpandedTextEditorSheet> {
       color: iconColor,
     );
 
-    final Widget sendButton;
-    if (!kIsWeb && Platform.isIOS) {
-      sendButton = AdaptiveButton.child(
-        onPressed: _hasText ? widget.onSend : null,
-        enabled: _hasText,
-        style: AdaptiveButtonStyle.prominentGlass,
-        color: theme.buttonPrimary,
-        size: AdaptiveButtonSize.medium,
-        minSize: const Size(buttonSize, buttonSize),
-        padding: EdgeInsets.zero,
-        borderRadius: BorderRadius.circular(buttonSize),
-        useSmoothRectangleBorder: false,
-        child: sendIcon,
-      );
-    } else {
-      sendButton = SizedBox(
-        width: buttonSize,
-        height: buttonSize,
-        child: Material(
-          color: _hasText
-              ? theme.buttonPrimary
-              : theme.surfaceContainerHighest,
-          shape: CircleBorder(
-            side: BorderSide(
-              color: _hasText ? theme.buttonPrimary : theme.cardBorder,
-              width: BorderWidth.thin,
-            ),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: _hasText ? widget.onSend : null,
-            customBorder: const CircleBorder(),
-            child: Center(child: sendIcon),
-          ),
-        ),
-      );
-    }
+    final sendButton = AdaptiveButton.child(
+      onPressed: _hasText ? widget.onSend : null,
+      enabled: _hasText,
+      style: AdaptiveButtonStyle.prominentGlass,
+      color: theme.buttonPrimary,
+      size: AdaptiveButtonSize.medium,
+      minSize: const Size(buttonSize, buttonSize),
+      padding: EdgeInsets.zero,
+      borderRadius: BorderRadius.circular(buttonSize),
+      useSmoothRectangleBorder: false,
+      child: sendIcon,
+    );
 
-    // useSafeArea: true on the showModalBottomSheet call already constrains
-    // the sheet to the safe area — no manual height calculation needed.
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        height: double.infinity,
-        decoration: BoxDecoration(
-          color: theme.surfaceBackground,
-          borderRadius: const BorderRadius.vertical(
-            top: Radius.circular(AppBorderRadius.bottomSheet),
+    final closeButton = SheetCloseButton(
+      onPressed: widget.onClose,
+      color: theme.textPrimary,
+      iconSize: IconSize.small + 1,
+      buttonSize: buttonSize,
+    );
+
+    // useSafeArea: true on the presenter already constrains the sheet to the
+    // safe area, so no manual height calculation is needed.
+    return Container(
+      height: double.infinity,
+      decoration: BoxDecoration(
+        color: theme.surfaceBackground,
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(AppBorderRadius.bottomSheet),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Drag handle — primary dismiss affordance.
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: Spacing.sm),
+              decoration: BoxDecoration(
+                color: theme.dividerColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
           ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Drag handle — primary dismiss affordance.
-            Center(
-              child: Container(
-                width: 36,
-                height: 4,
-                margin: const EdgeInsets.symmetric(vertical: Spacing.sm),
-                decoration: BoxDecoration(
-                  color: theme.dividerColor,
-                  borderRadius: BorderRadius.circular(2),
-                ),
+          // Text editor
+          Expanded(
+            child: TextField(
+              controller: widget.controller,
+              autofocus: true,
+              maxLines: null,
+              expands: true,
+              textAlignVertical: TextAlignVertical.top,
+              style: AppTypography.chatMessageStyle.copyWith(
+                color: theme.textPrimary,
+                height: 1.5,
               ),
-            ),
-            // Text editor
-            Expanded(
-              child: TextField(
-                controller: widget.controller,
-                autofocus: true,
-                maxLines: null,
-                expands: true,
-                textAlignVertical: TextAlignVertical.top,
-                style: TextStyle(
-                  color: theme.textPrimary,
-                  fontSize: 16,
-                  height: 1.5,
-                ),
-                decoration: context.conduitInputStyles
-                    .borderless(hint: l10n.messageHintText)
-                    .copyWith(
-                      contentPadding: const EdgeInsets.fromLTRB(
-                        Spacing.md,
-                        Spacing.xs,
-                        Spacing.md,
-                        Spacing.sm,
-                      ),
-                      isDense: true,
+              decoration: context.conduitInputStyles
+                  .borderless(hint: l10n.messageHintText)
+                  .copyWith(
+                    contentPadding: const EdgeInsets.fromLTRB(
+                      Spacing.md,
+                      Spacing.xs,
+                      Spacing.md,
+                      Spacing.sm,
                     ),
-              ),
+                    isDense: true,
+                  ),
             ),
-            // Bottom bar — send button, keyboard-aware.
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                Spacing.screenPadding,
-                Spacing.sm,
-                Spacing.screenPadding,
-                viewInsets.bottom > 0
-                    ? viewInsets.bottom + Spacing.sm
-                    : Spacing.md + viewPadding.bottom,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [sendButton],
-              ),
+          ),
+          // Bottom bar — send button, keyboard-aware.
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              Spacing.screenPadding,
+              Spacing.sm,
+              Spacing.screenPadding,
+              viewInsets.bottom > 0
+                  ? viewInsets.bottom + Spacing.sm
+                  : Spacing.md + viewPadding.bottom,
             ),
-          ],
-        ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [closeButton, sendButton],
+            ),
+          ),
+        ],
       ),
     );
   }

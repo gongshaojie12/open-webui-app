@@ -1,29 +1,25 @@
-import 'dart:io';
-
 import 'package:adaptive_platform_ui/adaptive_platform_ui.dart';
+import 'package:conduit/core/models/folder.dart';
 import 'package:conduit/core/providers/app_providers.dart';
+import 'package:conduit/core/services/native_sheet_bridge.dart';
 import 'package:conduit/l10n/app_localizations.dart';
 import 'package:conduit/shared/theme/theme_extensions.dart';
+import 'package:conduit/shared/widgets/measure_size.dart';
 import 'package:conduit/shared/widgets/themed_dialogs.dart';
+import 'package:conduit/shared/widgets/themed_sheets.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:conduit/core/services/haptic_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:super_context_menu/super_context_menu.dart';
-// ignore: implementation_imports
-import 'package:super_context_menu/src/scaffold/mobile/menu_widget_builder.dart'
-    as mobile;
 
 import 'package:conduit/features/chat/providers/chat_providers.dart' as chat;
-
-/// Re-export super_context_menu types for convenience.
-export 'package:super_context_menu/super_context_menu.dart'
-    show ContextMenuWidget, Menu, MenuAction, MenuSeparator;
+import 'package:conduit/features/chat/widgets/chat_share_sheet.dart';
+import 'package:conduit/features/navigation/widgets/folder_tree_guides.dart';
 
 /// Defines an action for use in Conduit context menus.
 class ConduitContextMenuAction {
   final IconData cupertinoIcon;
+  final String? sfSymbol;
   final IconData materialIcon;
   final String label;
   final Future<void> Function() onSelected;
@@ -32,6 +28,7 @@ class ConduitContextMenuAction {
 
   const ConduitContextMenuAction({
     required this.cupertinoIcon,
+    this.sfSymbol,
     required this.materialIcon,
     required this.label,
     required this.onSelected,
@@ -40,297 +37,128 @@ class ConduitContextMenuAction {
   });
 }
 
-/// A context menu widget that provides native iOS appearance and a beautiful
-/// Material 3 styled menu on Android.
+/// A long-press context menu widget with platform-specific presentation.
 ///
-/// On iOS, this uses the native context menu provided by super_context_menu.
-/// On Android, it displays a custom Material 3 styled menu that matches the
-/// app's theme.
-class ConduitContextMenu extends StatelessWidget {
+/// The app keeps its own action model so call sites can share haptics and
+/// icons while the menu presentation follows the current platform. On iOS we
+/// keep the child size stable during preview because stock
+/// [CupertinoContextMenu] can assert when the child is laid out by flex-based
+/// parents.
+class ConduitContextMenu extends StatefulWidget {
   final List<ConduitContextMenuAction> actions;
   final Widget child;
+  final WidgetBuilder? topWidgetBuilder;
+  final bool stabilizePreviewSize;
 
   const ConduitContextMenu({
     super.key,
     required this.actions,
     required this.child,
+    this.topWidgetBuilder,
+    this.stabilizePreviewSize = true,
   });
 
   @override
+  State<ConduitContextMenu> createState() => _ConduitContextMenuState();
+}
+
+class _ConduitContextMenuState extends State<ConduitContextMenu> {
+  Size? _childSize;
+
+  @override
   Widget build(BuildContext context) {
-    // iOS: Use native context menu
-    if (Platform.isIOS) {
-      return ContextMenuWidget(
-        menuProvider: (_) => buildConduitMenu(actions),
-        child: child,
-      );
+    if (widget.actions.isEmpty) {
+      return widget.child;
     }
 
-    // Android: Use ContextMenuWidget with custom Material 3 styling
-    return ContextMenuWidget(
-      menuProvider: (_) => buildConduitMenu(actions),
-      mobileMenuWidgetBuilder: _ConduitMobileMenuBuilder(
-        theme: context.conduitTheme,
-      ),
-      child: child,
-    );
-  }
-}
-
-/// Custom Material 3 styled menu builder for super_context_menu on Android.
-class _ConduitMobileMenuBuilder extends mobile.MobileMenuWidgetBuilder {
-  final ConduitThemeExtension theme;
-
-  const _ConduitMobileMenuBuilder({required this.theme});
-
-  @override
-  Widget buildMenuContainer(
-    BuildContext context,
-    mobile.MobileMenuInfo menuInfo,
-    Widget child,
-  ) {
-    // Use pre-blended shadow color for Impeller compatibility
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(AppBorderRadius.lg),
-        boxShadow: theme.popoverShadows,
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(AppBorderRadius.lg),
-        child: child,
-      ),
-    );
-  }
-
-  @override
-  Widget buildMenuContainerInner(
-    BuildContext context,
-    mobile.MobileMenuInfo menuInfo,
-    Widget child,
-  ) {
-    // Use pre-blended border color for Impeller compatibility
-    final borderColor = Color.lerp(
-      theme.surfaces.popover,
-      theme.surfaces.border,
-      0.15,
-    )!;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.surfaces.popover,
-        borderRadius: BorderRadius.circular(AppBorderRadius.lg),
-        border: Border.all(color: borderColor, width: 0.5),
-      ),
-      child: child,
-    );
-  }
-
-  @override
-  Widget buildMenu(
-    BuildContext context,
-    mobile.MobileMenuInfo menuInfo,
-    Widget child,
-  ) {
-    return child;
-  }
-
-  @override
-  Widget buildMenuItemsContainer(
-    BuildContext context,
-    mobile.MobileMenuInfo menuInfo,
-    Widget child,
-  ) {
-    return child;
-  }
-
-  @override
-  Widget buildMenuHeader(
-    BuildContext context,
-    mobile.MobileMenuInfo menuInfo,
-    mobile.MobileMenuButtonState state,
-  ) {
-    // No header needed for simple menus
-    return const SizedBox.shrink();
-  }
-
-  @override
-  Widget buildInactiveMenuVeil(
-    BuildContext context,
-    mobile.MobileMenuInfo menuInfo,
-  ) {
-    // Use pre-blended solid color for Impeller compatibility
-    final veilColor = theme.isDark
-        ? const Color(0x4D000000) // ~30% black
-        : const Color(0x4D424242); // ~30% grey
-    return SizedBox.expand(child: ColoredBox(color: veilColor));
-  }
-
-  @override
-  Widget buildMenuItem(
-    BuildContext context,
-    mobile.MobileMenuInfo menuInfo,
-    mobile.MobileMenuButtonState state,
-    MenuElement element,
-  ) {
-    if (element is MenuAction) {
-      final isDestructive = element.attributes.destructive;
-      final textColor = isDestructive ? theme.error : theme.textPrimary;
-      final iconColor = isDestructive ? theme.error : theme.iconPrimary;
-      final imageWidget = element.image?.asWidget(menuInfo.iconTheme);
-
-      // Use ColoredBox for pressed state to avoid Impeller opacity issues
-      Widget content = Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: Spacing.md,
-          vertical: Spacing.sm + 2,
-        ),
-        child: Row(
-          children: [
-            if (imageWidget != null)
-              Padding(
-                padding: const EdgeInsets.only(right: Spacing.md),
-                child: IconTheme(
-                  data: IconThemeData(color: iconColor, size: IconSize.medium),
-                  child: imageWidget,
-                ),
-              ),
-            Expanded(
-              child: Text(
-                element.title ?? '',
-                style: TextStyle(
-                  fontSize: AppTypography.bodyMedium,
-                  fontWeight: FontWeight.w500,
-                  color: textColor,
-                  decoration: TextDecoration.none,
-                  fontFamily: theme.typography.primaryFont.isEmpty
-                      ? null
-                      : theme.typography.primaryFont,
-                  fontFamilyFallback: theme.typography.primaryFallback.isEmpty
-                      ? null
-                      : theme.typography.primaryFallback,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-
-      if (state.pressed) {
-        content = ColoredBox(color: theme.surfaceContainer, child: content);
-      }
-
-      return content;
+    if (PlatformInfo.isIOS) {
+      return _buildCupertinoContextMenu(context);
     }
 
-    if (element is MenuSeparator) {
-      // Use pre-blended color for Impeller compatibility
-      final separatorColor = Color.lerp(
-        theme.surfaces.popover,
-        theme.dividerColor,
-        0.4,
-      )!;
-      return Divider(
-        height: 1,
-        thickness: 0.5,
-        indent: Spacing.md,
-        endIndent: Spacing.md,
-        color: separatorColor,
-      );
-    }
-
-    // For submenus or other elements, show a simple row
-    if (element is Menu) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: Spacing.md,
-          vertical: Spacing.sm + 2,
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                element.title ?? '',
-                style: TextStyle(
-                  fontSize: AppTypography.bodyMedium,
-                  fontWeight: FontWeight.w500,
-                  color: theme.textPrimary,
-                  decoration: TextDecoration.none,
-                  fontFamily: theme.typography.primaryFont.isEmpty
-                      ? null
-                      : theme.typography.primaryFont,
-                  fontFamilyFallback: theme.typography.primaryFallback.isEmpty
-                      ? null
-                      : theme.typography.primaryFallback,
-                ),
-              ),
-            ),
-            Icon(
-              Icons.chevron_right,
-              size: IconSize.small,
-              color: theme.iconSecondary,
-            ),
-          ],
-        ),
-      );
-    }
-
-    return const SizedBox.shrink();
-  }
-
-  @override
-  Widget buildOverlayBackground(BuildContext context, double opacity) {
-    // Use pre-computed hex colors for Impeller compatibility
-    // These are solid colors at different opacities (0x80 = 50%, 0x66 = 40%)
-    final overlayColor = Color.lerp(
-      const Color(0x00000000),
-      theme.isDark ? const Color(0x80000000) : const Color(0x66000000),
-      opacity,
-    )!;
-    // GestureDetector with opaque behavior ensures hit testing works
-    // even when the overlay is visually transparent
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      child: SizedBox.expand(child: ColoredBox(color: overlayColor)),
+    return AdaptiveContextMenu(
+      actions: [
+        for (final action in widget.actions)
+          AdaptiveContextMenuAction(
+            title: action.label,
+            icon: action.materialIcon,
+            isDestructive: action.destructive,
+            onPressed: () {
+              ConduitHaptics.selectionClick();
+              action.onBeforeClose?.call();
+              action.onSelected();
+            },
+          ),
+      ],
+      child: widget.child,
     );
   }
 
-  @override
-  Widget buildMenuPreviewContainer(BuildContext context, Widget child) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(AppBorderRadius.md),
-        boxShadow: theme.popoverShadows,
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(AppBorderRadius.md),
-        child: child,
-      ),
-    );
-  }
-}
+  Widget _buildCupertinoContextMenu(BuildContext context) {
+    final contextMenu = CupertinoContextMenu.builder(
+      actions: [
+        for (final action in widget.actions)
+          CupertinoContextMenuAction(
+            isDestructiveAction: action.destructive,
+            trailingIcon: action.cupertinoIcon,
+            onPressed: () {
+              Navigator.of(context, rootNavigator: true).pop();
+              Future.microtask(() {
+                ConduitHaptics.selectionClick();
+                action.onBeforeClose?.call();
+                action.onSelected();
+              });
+            },
+            child: Text(action.label),
+          ),
+      ],
+      builder: (context, animation) {
+        final previewChild = IgnorePointer(
+          ignoring: animation.value > 0,
+          child: widget.child,
+        );
+        final size = widget.stabilizePreviewSize ? _childSize : null;
+        Widget preview = previewChild;
+        if (animation.value > 0 && size != null) {
+          preview = SizedBox(
+            width: size.width,
+            height: size.height,
+            child: previewChild,
+          );
+        }
 
-/// Builds a [Menu] from a list of [ConduitContextMenuAction]s.
-///
-/// Use this with [ContextMenuWidget.menuProvider]:
-/// ```dart
-/// ContextMenuWidget(
-///   menuProvider: (_) => buildConduitMenu(actions),
-///   child: MyWidget(),
-/// )
-/// ```
-Menu buildConduitMenu(List<ConduitContextMenuAction> actions) {
-  return Menu(
-    children: actions.map((action) {
-      return MenuAction(
-        title: action.label,
-        callback: () {
-          ConduitHaptics.selectionClick();
-          action.onBeforeClose?.call();
-          action.onSelected();
-        },
-        attributes: MenuActionAttributes(destructive: action.destructive),
-      );
-    }).toList(),
-  );
+        final topWidgetBuilder = widget.topWidgetBuilder;
+        if (animation.value > 0 && topWidgetBuilder != null) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              topWidgetBuilder(context),
+              const SizedBox(height: Spacing.sm),
+              preview,
+            ],
+          );
+        }
+
+        return preview;
+      },
+    );
+
+    if (!widget.stabilizePreviewSize) {
+      return contextMenu;
+    }
+
+    return MeasureSize(onChange: _handleChildSizeChanged, child: contextMenu);
+  }
+
+  void _handleChildSizeChanged(Size size) {
+    if (!size.width.isFinite ||
+        !size.height.isFinite ||
+        size.width <= 0 ||
+        size.height <= 0 ||
+        _childSize == size) {
+      return;
+    }
+    _childSize = size;
+  }
 }
 
 /// Builds a list of actions for conversation context menus.
@@ -347,6 +175,32 @@ List<ConduitContextMenuAction> buildConversationActions({
   required WidgetRef ref,
   required dynamic conversation,
 }) {
+  final foldersEnabled = ref.watch(foldersFeatureEnabledProvider);
+  final folders = foldersEnabled
+      ? ref
+            .watch(foldersProvider)
+            .maybeWhen(
+              data: (folders) => folders,
+              orElse: () => const <Folder>[],
+            )
+      : const <Folder>[];
+
+  return buildConversationActionsWithFolders(
+    context: context,
+    ref: ref,
+    conversation: conversation,
+    foldersEnabled: foldersEnabled,
+    folders: folders,
+  );
+}
+
+List<ConduitContextMenuAction> buildConversationActionsWithFolders({
+  required BuildContext context,
+  required WidgetRef ref,
+  required dynamic conversation,
+  required bool foldersEnabled,
+  required List<Folder> folders,
+}) {
   if (conversation == null) {
     return [];
   }
@@ -354,6 +208,11 @@ List<ConduitContextMenuAction> buildConversationActions({
   final l10n = AppLocalizations.of(context)!;
   final bool isPinned = conversation.pinned == true;
   final bool isArchived = conversation.archived == true;
+  final currentFolderId = _conversationFolderId(conversation);
+  final canMove =
+      foldersEnabled &&
+      (folders.any((folder) => folder.id != currentFolderId) ||
+          currentFolderId != null);
 
   Future<void> togglePin() async {
     final errorMessage = l10n.failedToUpdatePin;
@@ -388,11 +247,27 @@ List<ConduitContextMenuAction> buildConversationActions({
     await _confirmAndDeleteConversation(context, ref, conversation.id);
   }
 
+  Future<void> shareConversation() async {
+    if (!context.mounted) return;
+    await showChatShareSheet(context: context, conversation: conversation);
+  }
+
+  Future<void> moveConversation() async {
+    await _moveConversation(
+      context,
+      ref,
+      conversation.id,
+      currentFolderId: currentFolderId,
+      folders: folders,
+    );
+  }
+
   return [
     ConduitContextMenuAction(
       cupertinoIcon: isPinned
           ? CupertinoIcons.pin_slash
           : CupertinoIcons.pin_fill,
+      sfSymbol: isPinned ? 'pin.slash' : 'pin.fill',
       materialIcon: isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
       label: isPinned ? l10n.unpin : l10n.pin,
       onBeforeClose: () => ConduitHaptics.lightImpact(),
@@ -402,6 +277,7 @@ List<ConduitContextMenuAction> buildConversationActions({
       cupertinoIcon: isArchived
           ? CupertinoIcons.archivebox_fill
           : CupertinoIcons.archivebox,
+      sfSymbol: isArchived ? 'archivebox.fill' : 'archivebox',
       materialIcon: isArchived
           ? Icons.unarchive_rounded
           : Icons.archive_rounded,
@@ -410,14 +286,33 @@ List<ConduitContextMenuAction> buildConversationActions({
       onSelected: toggleArchive,
     ),
     ConduitContextMenuAction(
+      cupertinoIcon: CupertinoIcons.share,
+      sfSymbol: 'square.and.arrow.up',
+      materialIcon: Icons.ios_share_rounded,
+      label: l10n.shareChat,
+      onBeforeClose: () => ConduitHaptics.selectionClick(),
+      onSelected: shareConversation,
+    ),
+    ConduitContextMenuAction(
       cupertinoIcon: CupertinoIcons.pencil,
+      sfSymbol: 'pencil',
       materialIcon: Icons.edit_rounded,
       label: l10n.rename,
       onBeforeClose: () => ConduitHaptics.selectionClick(),
       onSelected: rename,
     ),
+    if (canMove)
+      ConduitContextMenuAction(
+        cupertinoIcon: CupertinoIcons.folder,
+        sfSymbol: 'folder',
+        materialIcon: Icons.drive_file_move_outline,
+        label: l10n.move,
+        onBeforeClose: () => ConduitHaptics.selectionClick(),
+        onSelected: moveConversation,
+      ),
     ConduitContextMenuAction(
       cupertinoIcon: CupertinoIcons.delete,
+      sfSymbol: 'trash',
       materialIcon: Icons.delete_rounded,
       label: l10n.delete,
       destructive: true,
@@ -427,21 +322,235 @@ List<ConduitContextMenuAction> buildConversationActions({
   ];
 }
 
-/// Builds a [Menu] for conversation context actions.
-///
-/// Use with [ContextMenuWidget.menuProvider].
-Menu buildConversationMenu({
-  required BuildContext context,
-  required WidgetRef ref,
-  required dynamic conversation,
-}) {
-  return buildConduitMenu(
-    buildConversationActions(
-      context: context,
-      ref: ref,
-      conversation: conversation,
-    ),
+String? _conversationFolderId(dynamic conversation) {
+  try {
+    final value = conversation.folderId;
+    if (value is String && value.isNotEmpty) {
+      return value;
+    }
+  } catch (_) {}
+  return null;
+}
+
+class _ConversationMoveTarget {
+  const _ConversationMoveTarget({required this.folderId});
+
+  final String? folderId;
+}
+
+Future<void> _moveConversation(
+  BuildContext context,
+  WidgetRef ref,
+  String conversationId, {
+  required String? currentFolderId,
+  required List<Folder> folders,
+}) async {
+  final target = await _showConversationMoveSheet(
+    context,
+    folders: folders,
+    currentFolderId: currentFolderId,
   );
+  if (!context.mounted || target == null) return;
+  if (target.folderId == currentFolderId) return;
+
+  final l10n = AppLocalizations.of(context)!;
+  try {
+    final api = ref.read(apiServiceProvider);
+    if (api == null) throw Exception('No API service');
+    await api.moveConversationToFolder(conversationId, target.folderId);
+    if (!context.mounted) return;
+
+    ConduitHaptics.selectionClick();
+    ref
+        .read(conversationsProvider.notifier)
+        .updateConversation(
+          conversationId,
+          (conversation) => conversation.copyWith(
+            folderId: target.folderId,
+            updatedAt: DateTime.now(),
+          ),
+          trustFolderConversation:
+              target.folderId != null && target.folderId!.isNotEmpty,
+        );
+
+    final activeConversation = ref.read(activeConversationProvider);
+    if (activeConversation?.id == conversationId) {
+      ref
+          .read(activeConversationProvider.notifier)
+          .set(
+            activeConversation!.copyWith(
+              folderId: target.folderId,
+              updatedAt: DateTime.now(),
+            ),
+          );
+    }
+    refreshConversationsCache(ref, includeFolders: true);
+  } catch (_) {
+    if (!context.mounted) return;
+    await _showConversationError(context, l10n.failedToMoveChat);
+  }
+}
+
+Future<_ConversationMoveTarget?> _showConversationMoveSheet(
+  BuildContext context, {
+  required List<Folder> folders,
+  required String? currentFolderId,
+}) async {
+  final l10n = AppLocalizations.of(context)!;
+  final treeEntries = folderTreeEntriesForTargets(
+    folders: folders,
+    omitFolderId: currentFolderId,
+  );
+
+  if (Theme.of(context).platform == TargetPlatform.iOS) {
+    const noFolderId = '__no_folder__';
+    try {
+      final selectedId = await NativeSheetBridge.instance
+          .presentOptionsSelector(
+            title: l10n.moveToFolder,
+            options: [
+              if (currentFolderId != null)
+                NativeSheetOptionConfig(
+                  id: noFolderId,
+                  label: l10n.noFolder,
+                  sfSymbol: 'folder.badge.minus',
+                ),
+              for (final entry in treeEntries)
+                NativeSheetOptionConfig(
+                  id: entry.folder.id,
+                  label: entry.folder.name,
+                  sfSymbol: 'folder',
+                  ancestorHasMoreSiblings: entry.ancestorHasMoreSiblings,
+                  showBranch: true,
+                  hasMoreSiblings: entry.hasMoreSiblings,
+                ),
+            ],
+            rethrowErrors: true,
+          );
+      if (selectedId == null) {
+        return null;
+      }
+      if (selectedId == noFolderId) {
+        return const _ConversationMoveTarget(folderId: null);
+      }
+      return _ConversationMoveTarget(folderId: selectedId);
+    } catch (_) {
+      if (!context.mounted) {
+        return null;
+      }
+    }
+  }
+
+  if (!context.mounted) {
+    return null;
+  }
+
+  return ThemedSheets.showSurface<_ConversationMoveTarget>(
+    context: context,
+    isScrollControlled: true,
+    builder: (sheetContext) {
+      final theme = sheetContext.conduitTheme;
+      final maxListHeight = MediaQuery.sizeOf(sheetContext).height * 0.62;
+
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            l10n.moveToFolder,
+            style: AppTypography.headlineSmallStyle.copyWith(
+              color: theme.textPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: Spacing.md),
+          ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxListHeight),
+            child: ListView(
+              shrinkWrap: true,
+              physics: const ClampingScrollPhysics(),
+              padding: EdgeInsets.zero,
+              children: [
+                if (currentFolderId != null)
+                  _MoveTargetTile(
+                    icon: PlatformInfo.isIOS
+                        ? CupertinoIcons.folder_badge_minus
+                        : Icons.folder_off_outlined,
+                    label: l10n.noFolder,
+                    onTap: () => Navigator.of(
+                      sheetContext,
+                    ).pop(const _ConversationMoveTarget(folderId: null)),
+                  ),
+                for (final entry in treeEntries)
+                  FolderTreeHierarchyNode(
+                    key: ValueKey<String>('move-chat-tree-${entry.folder.id}'),
+                    ancestorHasMoreSiblings: entry.ancestorHasMoreSiblings,
+                    showBranch: true,
+                    hasMoreSiblings: entry.hasMoreSiblings,
+                    child: _MoveTargetTile(
+                      icon: PlatformInfo.isIOS
+                          ? CupertinoIcons.folder
+                          : Icons.folder_outlined,
+                      label: entry.folder.name,
+                      onTap: () => Navigator.of(
+                        sheetContext,
+                      ).pop(_ConversationMoveTarget(folderId: entry.folder.id)),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+class _MoveTargetTile extends StatelessWidget {
+  const _MoveTargetTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.conduitTheme;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: TouchTarget.listItem),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: Spacing.sm,
+            vertical: Spacing.sm,
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: theme.iconPrimary, size: IconSize.listItem),
+              const SizedBox(width: Spacing.sm),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.sidebarTitleStyle.copyWith(
+                    color: theme.textPrimary,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 Future<void> _renameConversation(
@@ -472,7 +581,7 @@ Future<void> _renameConversation(
     ConduitHaptics.selectionClick();
     ref
         .read(conversationsProvider.notifier)
-        .updateConversation(
+        .updateConversationFromRemote(
           conversationId,
           (conversation) =>
               conversation.copyWith(title: newName, updatedAt: DateTime.now()),
@@ -538,7 +647,10 @@ Future<void> _showConversationError(
   await ThemedDialogs.show<void>(
     context,
     title: l10n.errorMessage,
-    content: Text(message, style: TextStyle(color: theme.textSecondary)),
+    content: Text(
+      message,
+      style: AppTypography.bodyMediumStyle.copyWith(color: theme.textSecondary),
+    ),
     actions: [
       AdaptiveButton(
         onPressed: () => Navigator.of(context).pop(),

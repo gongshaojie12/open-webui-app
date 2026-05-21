@@ -9,7 +9,6 @@ import 'package:intl/intl.dart';
 import 'package:conduit/core/services/haptic_service.dart';
 import '../../../shared/theme/conduit_input_styles.dart';
 import '../../../shared/theme/theme_extensions.dart';
-import '../../../shared/utils/glass_colors.dart';
 // app_theme not required here; using theme extension tokens
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -19,6 +18,7 @@ import '../providers/chat_providers.dart';
 import '../services/clipboard_attachment_service.dart';
 import '../services/file_attachment_service.dart';
 import '../services/ios_native_paste_service.dart';
+import '../services/ios_keyboard_attachment_bridge.dart';
 import '../providers/context_attachments_provider.dart';
 import '../providers/knowledge_cache_provider.dart';
 import '../../notes/providers/notes_providers.dart';
@@ -30,6 +30,7 @@ import '../../../core/models/prompt.dart';
 import '../../../core/models/toggle_filter.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/services/navigation_service.dart';
+import '../../../core/services/native_sheet_bridge.dart';
 import '../../../core/services/settings_service.dart';
 import '../../chat/services/voice_input_service.dart';
 import '../../../core/models/knowledge_base.dart';
@@ -38,11 +39,14 @@ import '../../../core/models/knowledge_base_file.dart';
 import '../../../shared/utils/platform_utils.dart';
 import 'package:conduit/l10n/app_localizations.dart';
 import '../../../shared/widgets/modal_safe_area.dart';
+import '../../../shared/widgets/model_avatar.dart';
+import '../../../shared/widgets/themed_sheets.dart';
 import '../../../core/utils/prompt_variable_parser.dart';
 import '../../prompts/widgets/prompt_variable_dialog.dart';
 import '../../auth/providers/unified_auth_providers.dart';
 import 'chat_input_intents.dart';
 import 'expanded_text_editor.dart';
+import 'composer_overflow_items.dart';
 import 'composer_overflow_menu.dart';
 import 'mention_text_controller.dart';
 import 'model_suggestion_overlay.dart';
@@ -51,6 +55,7 @@ import 'prompt_suggestion_overlay.dart';
 class ModernChatInput extends ConsumerStatefulWidget {
   final Function(String) onSendMessage;
   final bool enabled;
+  final double? bottomPadding;
 
   /// Optional placeholder text shown when the input is empty.
   /// Falls back to the localised default ("Ask anything...").
@@ -64,6 +69,7 @@ class ModernChatInput extends ConsumerStatefulWidget {
   final Function()? onVoiceInput;
   final Function()? onVoiceCall;
   final Function()? onFileAttachment;
+  final Function()? onServerFileAttachment;
   final Function()? onImageAttachment;
   final Function()? onCameraCapture;
   final Function()? onWebAttachment;
@@ -75,11 +81,13 @@ class ModernChatInput extends ConsumerStatefulWidget {
     super.key,
     required this.onSendMessage,
     this.enabled = true,
+    this.bottomPadding,
     this.placeholder,
     this.overflowButtonBuilder,
     this.onVoiceInput,
     this.onVoiceCall,
     this.onFileAttachment,
+    this.onServerFileAttachment,
     this.onImageAttachment,
     this.onCameraCapture,
     this.onWebAttachment,
@@ -97,16 +105,13 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
   static const Duration _contextSuggestionDelay = Duration(milliseconds: 250);
   static const int _maxContextSuggestionsPerType = 4;
 
-  bool get _useIOS26NativeControls => PlatformInfo.isIOS26OrHigher();
-
   static const double _composerRadius = AppBorderRadius.card;
 
   final MentionTextEditingController _controller =
       MentionTextEditingController();
   final FocusNode _focusNode = FocusNode();
 
-  /// Preserves the text field widget across parent shell swaps (e.g. when the
-  /// compact shell switches between native glass and blur on multiline toggle).
+  /// Preserves the text field widget across parent shell swaps.
   /// Without this, different parent ValueKeys cause Flutter to unmount and
   /// remount the TextField, losing focus and keyboard state.
   final GlobalKey _textFieldKey = GlobalKey();
@@ -119,6 +124,8 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
   DateTime _lastEditTime = DateTime(0);
   StreamSubscription<String>? _voiceStreamSubscription;
   StreamSubscription<IosNativePastePayload>? _pasteSubscription;
+  StreamSubscription<IosKeyboardAttachmentEvent>?
+  _keyboardAttachmentSubscription;
   late VoiceInputService _voiceService;
   StreamSubscription<String>? _textSub;
   Timer? _contextSuggestionDebounce;
@@ -135,6 +142,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
   List<_ComposerContextSuggestion> _contextSuggestions =
       const <_ComposerContextSuggestion>[];
   int _contextSuggestionRequestId = 0;
+  bool _isNativeAttachmentPanelVisible = false;
 
   /// Service for handling clipboard paste operations.
   final ClipboardAttachmentService _clipboardService =
@@ -168,6 +176,10 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
       ) {
         unawaited(_handleNativePastePayload(payload));
       });
+      _keyboardAttachmentSubscription = IosKeyboardAttachmentBridge
+          .instance
+          .events
+          .listen(_handleNativeKeyboardAttachmentEvent);
     }
 
     // Publish focus changes to listeners and guard against unexpected loss
@@ -180,6 +192,16 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
         try {
           ref.read(composerHasFocusProvider.notifier).set(hasFocus);
         } catch (_) {}
+
+        // Dismissing the keyboard by tapping outside does not go through our
+        // toggle/hide path; clear native attachment state so the overflow icon
+        // returns to + when the panel is no longer on screen.
+        if (!hasFocus &&
+            !kIsWeb &&
+            Platform.isIOS &&
+            _isNativeAttachmentPanelVisible) {
+          unawaited(_hideNativeKeyboardAttachmentPanel());
+        }
 
         // If focus was lost within 500ms of the last text edit, the user was
         // actively typing and the loss was likely caused by a widget tree
@@ -213,8 +235,12 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     _pendingFocus = false;
     _voiceStreamSubscription?.cancel();
     _pasteSubscription?.cancel();
+    _keyboardAttachmentSubscription?.cancel();
     _textSub?.cancel();
     _contextSuggestionDebounce?.cancel();
+    if (!kIsWeb && Platform.isIOS) {
+      unawaited(IosKeyboardAttachmentBridge.instance.hide());
+    }
     _voiceService.stopListening();
     super.dispose();
   }
@@ -286,10 +312,51 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     _controller.clearMentions();
     _controller.clear();
     _focusNode.unfocus();
+    if (!kIsWeb && Platform.isIOS) {
+      unawaited(_hideNativeKeyboardAttachmentPanel());
+    }
     try {
       SystemChannels.textInput.invokeMethod('TextInput.hide');
     } catch (_) {
       // Silently handle if keyboard dismissal fails
+    }
+  }
+
+  void _handleNativeKeyboardAttachmentEvent(IosKeyboardAttachmentEvent event) {
+    if (!mounted || _isDeactivated) return;
+
+    switch (event) {
+      case IosKeyboardAttachmentVisibilityChanged(:final visible):
+        if (_isNativeAttachmentPanelVisible != visible) {
+          setState(() => _isNativeAttachmentPanelVisible = visible);
+        }
+      case IosKeyboardAttachmentAction(:final id):
+        _handleNativeKeyboardAttachmentAction(id);
+    }
+  }
+
+  void _handleNativeKeyboardAttachmentAction(String id) {
+    if (!mounted || _isDeactivated) return;
+
+    switch (id) {
+      case ComposerOverflowActionIds.file:
+        widget.onFileAttachment?.call();
+        return;
+      case ComposerOverflowActionIds.serverFile:
+        widget.onServerFileAttachment?.call();
+        return;
+      case ComposerOverflowActionIds.photo:
+        widget.onImageAttachment?.call();
+        return;
+      case ComposerOverflowActionIds.camera:
+        widget.onCameraCapture?.call();
+        return;
+      case ComposerOverflowActionIds.web:
+        widget.onWebAttachment?.call();
+        return;
+      default:
+        toggleComposerOverflowSelection(ref, id);
+        return;
     }
   }
 
@@ -343,27 +410,6 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     }
   }
 
-  /// Handles pasting images/files from clipboard with pre-loaded image data.
-  ///
-  /// This avoids a second clipboard read by using data already fetched when
-  /// building the context menu.
-  Future<void> _handleClipboardPasteWithData(Uint8List imageData) async {
-    if (!widget.enabled) return;
-
-    final onPasted = widget.onPastedAttachments;
-    if (onPasted == null) return;
-
-    PlatformUtils.lightHaptic();
-
-    final attachment = await _clipboardService.createAttachmentFromImageData(
-      imageData: imageData,
-      mimeType: 'image/png',
-    );
-    if (attachment != null) {
-      await onPasted([attachment]);
-    }
-  }
-
   Future<void> _handleNativePastePayload(IosNativePastePayload payload) async {
     if (!mounted || !widget.enabled || !_focusNode.hasFocus) {
       return;
@@ -401,113 +447,86 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     BuildContext context,
     EditableTextState editableTextState,
   ) {
-    if (SystemContextMenu.isSupportedByField(editableTextState)) {
-      return SystemContextMenu.editableText(
-        editableTextState: editableTextState,
-        items: _buildIosSystemContextMenuItems(editableTextState),
-      );
-    }
-
+    // iOS 26 can assert when Flutter tries to show overlapping system edit
+    // menus while focus is changing. Use the Flutter-rendered toolbar until
+    // the platform SystemContextMenu path is reliable again.
     return _buildFallbackContextMenu(context, editableTextState);
   }
 
-  List<IOSSystemContextMenuItem> _buildIosSystemContextMenuItems(
-    EditableTextState editableTextState,
-  ) {
-    final items = List<IOSSystemContextMenuItem>.from(
-      SystemContextMenu.getDefaultItems(editableTextState),
-    );
-
-    if (widget.onPastedAttachments == null ||
-        items.any((item) => item is IOSSystemContextMenuItemPaste)) {
-      return items;
-    }
-
-    final pasteItem = const IOSSystemContextMenuItemPaste();
-    final insertionIndex = items.indexWhere(
-      (item) =>
-          item is IOSSystemContextMenuItemSelectAll ||
-          item is IOSSystemContextMenuItemLookUp ||
-          item is IOSSystemContextMenuItemSearchWeb ||
-          item is IOSSystemContextMenuItemShare ||
-          item is IOSSystemContextMenuItemLiveText,
-    );
-
-    if (insertionIndex >= 0) {
-      items.insert(insertionIndex, pasteItem);
-    } else {
-      items.add(pasteItem);
-    }
-
-    return items;
-  }
-
-  /// Builds a Flutter-rendered fallback menu with "Paste Image".
+  /// Builds a Flutter-rendered fallback text editing menu.
   Widget _buildFallbackContextMenu(
     BuildContext context,
     EditableTextState editableTextState,
   ) {
-    final List<ContextMenuButtonItem> buttonItems = List.from(
+    final buttonItems = _buildFallbackContextMenuItems(
+      context,
+      editableTextState,
+    );
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: editableTextState.contextMenuAnchors,
+      buttonItems: buttonItems,
+    );
+  }
+
+  List<ContextMenuButtonItem> _buildFallbackContextMenuItems(
+    BuildContext context,
+    EditableTextState editableTextState,
+  ) {
+    final items = List<ContextMenuButtonItem>.from(
       editableTextState.contextMenuButtonItems,
     );
-
-    // Only add "Paste Image" if we have a callback for pasted attachments
-    if (widget.onPastedAttachments == null) {
-      return AdaptiveTextSelectionToolbar.buttonItems(
-        anchors: editableTextState.contextMenuAnchors,
-        buttonItems: buttonItems,
-      );
+    if (kIsWeb || !Platform.isIOS || widget.onPastedAttachments == null) {
+      return items;
     }
 
-    return FutureBuilder<Uint8List?>(
-      future: _clipboardService.getClipboardImage(),
-      builder: (context, snapshot) {
-        final imageData = snapshot.data;
-        final hasImage = imageData != null && imageData.isNotEmpty;
-
-        if (hasImage) {
-          // Avoid duplicating any platform or framework-provided image paste
-          // action that is already present in the button list.
-          final pasteImageLabel =
-              AppLocalizations.of(context)?.pasteImage ?? 'Paste Image';
-          final alreadyHasPasteImage = buttonItems.any(
-            (item) =>
-                item.label != null &&
-                item.label!.toLowerCase().contains('image'),
-          );
-
-          if (!alreadyHasPasteImage) {
-            // Find the index of the standard Paste button to insert after it
-            final pasteIndex = buttonItems.indexWhere(
-              (item) => item.type == ContextMenuButtonType.paste,
-            );
-
-            // Capture imageData in closure to avoid re-reading clipboard
-            final pasteImageItem = ContextMenuButtonItem(
-              label: pasteImageLabel,
-              onPressed: () {
-                // Close the context menu first
-                ContextMenuController.removeAny();
-                // Use the captured imageData directly
-                _handleClipboardPasteWithData(imageData);
-              },
-            );
-
-            // Insert after Paste if found, otherwise add at the end
-            if (pasteIndex >= 0) {
-              buttonItems.insert(pasteIndex + 1, pasteImageItem);
-            } else {
-              buttonItems.add(pasteImageItem);
-            }
-          }
-        }
-
-        return AdaptiveTextSelectionToolbar.buttonItems(
-          anchors: editableTextState.contextMenuAnchors,
-          buttonItems: buttonItems,
-        );
-      },
+    final pasteIndex = items.indexWhere(
+      (item) => item.type == ContextMenuButtonType.paste,
     );
+    if (pasteIndex >= 0) {
+      final defaultPaste = items[pasteIndex];
+      items[pasteIndex] = ContextMenuButtonItem(
+        type: defaultPaste.type,
+        label: defaultPaste.label,
+        onPressed: () {
+          unawaited(
+            _handleFallbackPaste(
+              editableTextState,
+              defaultPaste: defaultPaste.onPressed,
+            ),
+          );
+        },
+      );
+      return items;
+    }
+
+    items.add(
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.paste,
+        label: MaterialLocalizations.of(context).pasteButtonLabel,
+        onPressed: () {
+          unawaited(_handleFallbackPaste(editableTextState));
+        },
+      ),
+    );
+    return items;
+  }
+
+  Future<void> _handleFallbackPaste(
+    EditableTextState editableTextState, {
+    VoidCallback? defaultPaste,
+  }) async {
+    if (!mounted || !widget.enabled) {
+      return;
+    }
+
+    final handledImagePaste = await IosNativePasteService.instance
+        .requestPaste();
+    if (handledImagePaste) {
+      editableTextState.hideToolbar();
+      return;
+    }
+
+    defaultPaste?.call();
   }
 
   void _insertNewline() {
@@ -1216,9 +1235,86 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
       }
     }
 
-    await showModalBottomSheet(
+    if (Platform.isIOS) {
+      try {
+        final l10n = AppLocalizations.of(context)!;
+        final cacheState = ref.read(knowledgeCacheProvider);
+        final bases = cacheState.bases;
+        if (bases.isEmpty) {
+          return;
+        }
+        final selectedBase = await NativeSheetBridge.instance
+            .presentOptionsSelector(
+              title: l10n.knowledgeBase,
+              selectedOptionId: selectedBaseId,
+              options: [
+                for (final base in bases)
+                  NativeSheetOptionConfig(
+                    id: base.id,
+                    label: base.name,
+                    subtitle: base.description,
+                    sfSymbol: 'books.vertical',
+                  ),
+              ],
+              rethrowErrors: true,
+            );
+        if (selectedBase == null) {
+          return;
+        }
+        await cacheNotifier.fetchFilesForBase(selectedBase);
+        if (!mounted) {
+          return;
+        }
+        final selectedBaseModel = bases.firstWhere(
+          (base) => base.id == selectedBase,
+        );
+        final files =
+            ref.read(knowledgeCacheProvider).files[selectedBase] ??
+            const <KnowledgeBaseFile>[];
+        if (files.isEmpty) {
+          return;
+        }
+        final selectedFileId = await NativeSheetBridge.instance
+            .presentOptionsSelector(
+              title: selectedBaseModel.name,
+              subtitle: l10n.files,
+              options: [
+                for (final file in files)
+                  NativeSheetOptionConfig(
+                    id: file.id,
+                    label: file.meta?['name']?.toString() ?? file.filename,
+                    subtitle: file.meta?['source']?.toString() ?? file.filename,
+                    sfSymbol: 'doc.text',
+                  ),
+              ],
+              rethrowErrors: true,
+            );
+        if (selectedFileId == null || !mounted) {
+          return;
+        }
+        for (final file in files) {
+          if (file.id == selectedFileId) {
+            ref
+                .read(contextAttachmentsProvider.notifier)
+                .addKnowledge(
+                  displayName: file.meta?['name']?.toString() ?? file.filename,
+                  fileId: file.id,
+                  collectionName: selectedBaseModel.name,
+                  url: file.meta?['source']?.toString(),
+                );
+            break;
+          }
+        }
+        return;
+      } catch (_) {
+        if (!mounted) {
+          return;
+        }
+      }
+    }
+
+    await ThemedSheets.showCustom<void>(
       context: context,
-      backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (modalContext) {
         return ModalSheetSafeArea(
@@ -1456,10 +1552,10 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                       ),
                     ),
                   ),
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(AppBorderRadius.card),
+                Semantics(
+                  button: true,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
                     onTap: () {
                       _applyContextSuggestion(suggestion);
                     },
@@ -1569,17 +1665,159 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     Color overlayColor,
     Color borderColor,
   ) {
+    final l10n = AppLocalizations.of(context)!;
     return _buildSuggestionOverlayContainer(
       context,
       overlayColor: overlayColor,
       borderColor: borderColor,
       child: AdaptiveListTile(
-        title: const Text('Browse knowledge base'),
-        subtitle: const Text('Press Enter to pick a document'),
+        title: Text(l10n.browseKnowledgeBase),
+        subtitle: Text(l10n.knowledgePickerHint),
         leading: const Icon(Icons.folder_outlined),
         onTap: () => _openKnowledgePicker(),
       ),
     );
+  }
+
+  ComposerOverflowAttachmentAvailability get _overflowAttachmentAvailability {
+    return ComposerOverflowAttachmentAvailability(
+      file: widget.onFileAttachment != null,
+      serverFile: widget.onServerFileAttachment != null,
+      photo: widget.onImageAttachment != null,
+      camera: widget.onCameraCapture != null,
+      web: widget.onWebAttachment != null,
+    );
+  }
+
+  List<IosKeyboardAttachmentActionConfig> _nativeKeyboardAttachmentActions({
+    required AppLocalizations l10n,
+    required bool webSearchAvailable,
+    required bool webSearchEnabled,
+    required bool imageGenerationAvailable,
+    required bool imageGenerationEnabled,
+    required List<Tool> availableTools,
+    required List<String> selectedToolIds,
+  }) {
+    if (kIsWeb || !Platform.isIOS) {
+      return const <IosKeyboardAttachmentActionConfig>[];
+    }
+
+    return buildComposerOverflowItems(
+      l10n: l10n,
+      attachmentAvailability: _overflowAttachmentAvailability,
+      webSearchAvailable: webSearchAvailable,
+      webSearchEnabled: webSearchEnabled,
+      imageGenerationAvailable: imageGenerationAvailable,
+      imageGenerationEnabled: imageGenerationEnabled,
+      availableTools: availableTools,
+      selectedToolIds: selectedToolIds,
+    ).map(_nativeKeyboardAttachmentActionFromItem).toList(growable: false);
+  }
+
+  IosKeyboardAttachmentActionConfig _nativeKeyboardAttachmentActionFromItem(
+    ComposerOverflowItem item,
+  ) {
+    return IosKeyboardAttachmentActionConfig(
+      id: item.id,
+      label: item.label,
+      subtitle: item.subtitle,
+      sfSymbol: item.sfSymbol,
+      section: item.section.nativeValue,
+      enabled: item.enabled,
+      selected: item.selected,
+      dismissesKeyboard: item.dismissesKeyboard,
+    );
+  }
+
+  List<IosKeyboardAttachmentActionConfig>
+  _currentNativeKeyboardAttachmentActions({required AppLocalizations l10n}) {
+    final availableTools = ref
+        .read(toolsListProvider)
+        .maybeWhen<List<Tool>>(
+          data: (tools) => tools,
+          orElse: () => const <Tool>[],
+        );
+
+    return _nativeKeyboardAttachmentActions(
+      l10n: l10n,
+      webSearchAvailable: ref.read(webSearchAvailableProvider),
+      webSearchEnabled: ref.read(webSearchEnabledProvider),
+      imageGenerationAvailable: ref.read(imageGenerationAvailableProvider),
+      imageGenerationEnabled: ref.read(imageGenerationEnabledProvider),
+      availableTools: availableTools,
+      selectedToolIds: ref.read(selectedToolIdsProvider),
+    );
+  }
+
+  void _scheduleNativeKeyboardAttachmentSync() {
+    if (kIsWeb || !Platform.isIOS || !_isNativeAttachmentPanelVisible) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _isDeactivated || !_isNativeAttachmentPanelVisible) {
+        return;
+      }
+
+      final l10n = AppLocalizations.of(context);
+      if (l10n == null) {
+        return;
+      }
+
+      final actions = _currentNativeKeyboardAttachmentActions(l10n: l10n);
+      if (actions.isEmpty) {
+        return;
+      }
+
+      unawaited(
+        IosKeyboardAttachmentBridge.instance.configure(actions: actions),
+      );
+    });
+  }
+
+  Future<void> _handleOverflowButtonPressed(
+    List<IosKeyboardAttachmentActionConfig> nativeActions,
+  ) async {
+    ConduitHaptics.selectionClick();
+
+    if (!kIsWeb && Platform.isIOS && nativeActions.isNotEmpty) {
+      final handled = await _toggleNativeKeyboardAttachmentPanel(nativeActions);
+      if (handled) {
+        return;
+      }
+    }
+
+    if (mounted && !_isDeactivated) {
+      _showOverflowSheet();
+    }
+  }
+
+  Future<bool> _toggleNativeKeyboardAttachmentPanel(
+    List<IosKeyboardAttachmentActionConfig> actions,
+  ) async {
+    if (!widget.enabled) return false;
+    final handled = await IosKeyboardAttachmentBridge.instance.toggle(
+      actions: actions,
+    );
+    if (!handled) {
+      return false;
+    }
+
+    if (!_focusNode.hasFocus && !_isNativeAttachmentPanelVisible) {
+      try {
+        ref.read(composerAutofocusEnabledProvider.notifier).set(true);
+      } catch (_) {}
+      _ensureFocusedIfEnabled();
+    }
+
+    return true;
+  }
+
+  Future<void> _hideNativeKeyboardAttachmentPanel() async {
+    if (kIsWeb || !Platform.isIOS || !_isNativeAttachmentPanelVisible) {
+      return;
+    }
+    await IosKeyboardAttachmentBridge.instance.hide();
   }
 
   @override
@@ -1607,26 +1845,53 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
         } catch (_) {}
       });
     });
+    ref.listen<bool>(webSearchAvailableProvider, (previous, next) {
+      _scheduleNativeKeyboardAttachmentSync();
+    });
+    ref.listen<bool>(webSearchEnabledProvider, (previous, next) {
+      _scheduleNativeKeyboardAttachmentSync();
+    });
+    ref.listen<bool>(imageGenerationAvailableProvider, (previous, next) {
+      _scheduleNativeKeyboardAttachmentSync();
+    });
+    ref.listen<bool>(imageGenerationEnabledProvider, (previous, next) {
+      _scheduleNativeKeyboardAttachmentSync();
+    });
+    ref.listen<List<String>>(selectedToolIdsProvider, (previous, next) {
+      _scheduleNativeKeyboardAttachmentSync();
+    });
+    ref.listen<AsyncValue<List<Tool>>>(toolsListProvider, (previous, next) {
+      _scheduleNativeKeyboardAttachmentSync();
+    });
 
     // Use dedicated streaming provider to avoid rebuilding on every message change
     final isGenerating = ref.watch(isChatStreamingProvider);
     final stopGeneration = ref.read(stopGenerationProvider);
 
-    // Check if file uploads are in progress or complete
-    final attachedFiles = ref.watch(attachedFilesProvider);
-    final hasUploadsInProgress = attachedFiles.any(
-      (f) =>
-          f.status == FileUploadStatus.uploading ||
-          f.status == FileUploadStatus.pending,
+    // Watch only upload send-state booleans so metadata/progress churn does not
+    // fan out through the whole composer.
+    final hasUploadsInProgress = ref.watch(
+      attachedFilesProvider.select(
+        (files) => files.any(
+          (f) =>
+              f.status == FileUploadStatus.uploading ||
+              f.status == FileUploadStatus.pending,
+        ),
+      ),
     );
-    final allUploadsComplete =
-        attachedFiles.isEmpty ||
-        attachedFiles.every((f) => f.status == FileUploadStatus.completed);
+    final allUploadsComplete = ref.watch(
+      attachedFilesProvider.select(
+        (files) =>
+            files.isEmpty ||
+            files.every((f) => f.status == FileUploadStatus.completed),
+      ),
+    );
 
     final webSearchEnabled = ref.watch(webSearchEnabledProvider);
     final webSearchAvailable = ref.watch(webSearchAvailableProvider);
     final imageGenEnabled = ref.watch(imageGenerationEnabledProvider);
     final imageGenAvailable = ref.watch(imageGenerationAvailableProvider);
+    final l10n = AppLocalizations.of(context)!;
     final notesEnabled = ref.watch(notesFeatureEnabledProvider);
     final isCreatingDraftNote = ref.watch(
       noteCreatorProvider.select((state) => state.isLoading),
@@ -1650,11 +1915,28 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
       orElse: () => false,
     );
     final selectedToolIds = ref.watch(selectedToolIdsProvider);
+    final selectedTerminalId = ref.watch(selectedTerminalIdProvider);
     final selectedFilterIds = ref.watch(selectedFilterIdsProvider);
 
     // Get filters from the selected model for quick pills
-    final selectedModel = ref.watch(selectedModelProvider);
-    final availableFilters = selectedModel?.filters ?? const [];
+    final availableFilters = ref.watch(
+      selectedModelProvider.select(
+        (model) => model?.filters ?? const <ToggleFilter>[],
+      ),
+    );
+    final terminalModelSupported = ref.watch(
+      selectedModelProvider.select(modelSupportsTerminal),
+    );
+    final terminalActive = selectedTerminalId != null && terminalModelSupported;
+    final nativeAttachmentActions = _nativeKeyboardAttachmentActions(
+      l10n: l10n,
+      webSearchAvailable: webSearchAvailable,
+      webSearchEnabled: webSearchEnabled,
+      imageGenerationAvailable: imageGenAvailable,
+      imageGenerationEnabled: imageGenEnabled,
+      availableTools: availableTools,
+      selectedToolIds: selectedToolIds,
+    );
 
     final focusTick = ref.watch(inputFocusTriggerProvider);
     final autofocusEnabled = ref.watch(composerAutofocusEnabledProvider);
@@ -1675,10 +1957,8 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
 
     final bool hasComposerFocus = _focusNode.hasFocus;
     final bool isActive = hasComposerFocus || _hasText;
-    final bool useGlassColors = !kIsWeb && Platform.isIOS;
-    final Color placeholderColor = useGlassColors
-        ? GlassColors.secondaryLabel(context)
-        : context.conduitTheme.textSecondary.withValues(alpha: 0.5);
+    final Color placeholderColor = context.conduitTheme.textSecondary
+        .withValues(alpha: 0.5);
     final Color placeholderBase = placeholderColor;
     final Color placeholderFocused = placeholderColor;
     final List<Widget> quickPills = <Widget>[];
@@ -1802,14 +2082,10 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
         !_isRecording;
 
     // Keep iOS 26 single-line composer as capsule.
-    // Switch multiline to rounded rectangle to avoid oval morphing.
-    const double multilineRadius = AppBorderRadius.large;
-    final double compactRadius = _useIOS26NativeControls
-        ? (_isMultiline ? multilineRadius : AppBorderRadius.round)
-        : (_isMultiline ? AppBorderRadius.xl : AppBorderRadius.round);
-    final double expandedRadius = _useIOS26NativeControls
+    final double compactRadius = _isMultiline
         ? AppBorderRadius.xl
-        : _composerRadius;
+        : AppBorderRadius.round;
+    const double expandedRadius = _composerRadius;
     final BorderRadius shellRadius = BorderRadius.circular(
       showCompactComposer ? compactRadius : expandedRadius,
     );
@@ -1879,18 +2155,20 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
           padding: const EdgeInsets.fromLTRB(
             Spacing.inputPadding,
             0,
-            Spacing.inputPadding,
+            Spacing.sm,
             Spacing.sm,
           ),
           child: Row(
             children: [
               _buildOverflowButton(
-                tooltip: AppLocalizations.of(context)!.more,
+                tooltip: l10n.more,
                 webSearchActive: webSearchEnabled,
                 imageGenerationActive: imageGenEnabled,
                 toolsActive: selectedToolIds.isNotEmpty,
+                terminalActive: terminalActive,
                 filtersActive: selectedFilterIds.isNotEmpty,
                 dense: true,
+                nativeActions: nativeAttachmentActions,
               ),
               const SizedBox(width: Spacing.xs),
               Expanded(
@@ -1935,8 +2213,8 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
         padding: EdgeInsets.fromLTRB(
           Spacing.md,
           0,
-          Spacing.md,
-          _isMultiline ? Spacing.sm : 0,
+          Spacing.sm,
+          Platform.isIOS && _isMultiline ? Spacing.sm : 0,
         ),
         constraints: const BoxConstraints(minHeight: TouchTarget.input),
         alignment: Alignment.center,
@@ -1949,32 +2227,45 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                   : CrossAxisAlignment.center,
               children: [
                 Expanded(
-                  child: _buildComposerTextField(
-                    brightness: brightness,
-                    sendOnEnter: sendOnEnter,
-                    voiceAvailable: voiceAvailable,
-                    isGenerating: isGenerating,
-                    allUploadsComplete: allUploadsComplete,
-                    placeholderBase: placeholderBase,
-                    placeholderFocused: placeholderFocused,
-                    contentPadding: const EdgeInsets.symmetric(
-                      vertical: Spacing.xs,
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      bottom: Platform.isAndroid && _isMultiline
+                          ? Spacing.sm
+                          : 0,
                     ),
-                    isActive: isActive,
+                    child: _buildComposerTextField(
+                      brightness: brightness,
+                      sendOnEnter: sendOnEnter,
+                      voiceAvailable: voiceAvailable,
+                      isGenerating: isGenerating,
+                      allUploadsComplete: allUploadsComplete,
+                      placeholderBase: placeholderBase,
+                      placeholderFocused: placeholderFocused,
+                      contentPadding: const EdgeInsets.symmetric(
+                        vertical: Spacing.xs,
+                      ),
+                      isActive: isActive,
+                    ),
                   ),
                 ),
                 if (!_hasText && voiceAvailable && !isGenerating) ...[
                   const SizedBox(width: Spacing.xs),
-                  // Wrap in the same height as the dense primary button so
-                  // the mic icon's visual center aligns with the button when
-                  // bottom-aligned in the multiline (crossAxisAlignment.end)
-                  // layout.
-                  SizedBox(
-                    height: 36.0,
-                    child: Center(child: _buildInlineMicAction(voiceAvailable)),
-                  ),
+                  Platform.isAndroid
+                      ? Transform.translate(
+                          offset: const Offset(Spacing.xxs, 0),
+                          child: _buildInlineMicAction(
+                            voiceAvailable,
+                            size: 36.0,
+                          ),
+                        )
+                      : SizedBox(
+                          height: 36.0,
+                          child: Center(
+                            child: _buildInlineMicAction(voiceAvailable),
+                          ),
+                        ),
                 ],
-                const SizedBox(width: Spacing.xs),
+                SizedBox(width: Platform.isAndroid ? 0 : Spacing.xs),
                 _buildPrimaryButton(
                   _hasText,
                   isGenerating,
@@ -2002,57 +2293,20 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
         ),
       );
 
-      // Use AdaptiveButton glass for single-line compact input.
-      // Multiline uses AdaptiveBlurView for dynamic height.
-      final bool useNativeCompactGlass =
-          _useIOS26NativeControls && !_isMultiline;
-      final Widget textFieldShell = useNativeCompactGlass
-          ? LayoutBuilder(
-              key: const ValueKey('compact-native-glass'),
-              builder: (context, constraints) {
-                final width = constraints.maxWidth.isFinite
-                    ? constraints.maxWidth
-                    : MediaQuery.of(context).size.width * 0.58;
+      final Widget textFieldShell = _buildComposerShell(
+        key: const ValueKey('compact-composer-shell'),
+        borderRadius: shellRadius,
+        useSmoothRectangleBorder: _isMultiline,
+        child: textFieldContent,
+      );
 
-                return ClipRRect(
-                  borderRadius: shellRadius,
-                  child: SizedBox(
-                    height: TouchTarget.input,
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: IgnorePointer(
-                            child: AdaptiveButton.child(
-                              onPressed: () {},
-                              enabled: true,
-                              style: AdaptiveButtonStyle.glass,
-                              size: AdaptiveButtonSize.large,
-                              minSize: Size(width, TouchTarget.input),
-                              useSmoothRectangleBorder: false,
-                              child: const SizedBox.shrink(),
-                            ),
-                          ),
-                        ),
-                        textFieldContent,
-                      ],
-                    ),
-                  ),
-                );
-              },
-            )
-          : _buildComposerShell(
-              key: const ValueKey('compact-glass-fallback'),
-              borderRadius: shellRadius,
-              child: textFieldContent,
-            );
-
-      final bottomPadding = MediaQuery.of(context).viewPadding.bottom;
+      final bottomPadding = _composerBottomPadding(context);
       return Padding(
         padding: EdgeInsets.fromLTRB(
           Spacing.screenPadding,
           0,
           Spacing.screenPadding,
-          bottomPadding + Spacing.md,
+          bottomPadding,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -2067,11 +2321,13 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 _buildOverflowButton(
-                  tooltip: AppLocalizations.of(context)!.more,
+                  tooltip: l10n.more,
                   webSearchActive: webSearchEnabled,
                   imageGenerationActive: imageGenEnabled,
                   toolsActive: selectedToolIds.isNotEmpty,
+                  terminalActive: terminalActive,
                   filtersActive: selectedFilterIds.isNotEmpty,
+                  nativeActions: nativeAttachmentActions,
                 ),
                 const SizedBox(width: Spacing.sm),
                 Expanded(
@@ -2114,13 +2370,13 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     );
 
     // Wrap with padding for floating effect, accounting for safe area
-    final bottomPadding = MediaQuery.of(context).viewPadding.bottom;
+    final bottomPadding = _composerBottomPadding(context);
     return Padding(
       padding: EdgeInsets.fromLTRB(
         Spacing.screenPadding,
         0,
         Spacing.screenPadding,
-        bottomPadding + Spacing.md,
+        bottomPadding,
       ),
       child: shell,
     );
@@ -2161,6 +2417,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
       excludeFromSemantics: true,
       onTap: () {
         if (!widget.enabled) return;
+        unawaited(_hideNativeKeyboardAttachmentPanel());
         // Explicit user intent to focus: re-enable autofocus and focus
         try {
           ref.read(composerAutofocusEnabledProvider.notifier).set(true);
@@ -2240,9 +2497,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                 placeholderFocused,
                 factor,
               )!;
-              final textLabel = (!kIsWeb && Platform.isIOS)
-                  ? GlassColors.label(context)
-                  : context.conduitTheme.inputText;
+              final textLabel = context.conduitTheme.inputText;
               final Color animatedTextColor = Color.lerp(
                 textLabel.withValues(alpha: 0.88),
                 textLabel,
@@ -2284,9 +2539,9 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                   textInputAction: TextInputAction.newline,
                   autofillHints: const <String>[],
                   showCursor: true,
+                  cursorColor: Theme.of(context).textSelectionTheme.cursorColor,
                   scrollPadding: const EdgeInsets.only(bottom: 80),
                   keyboardAppearance: brightness,
-                  cursorColor: animatedTextColor,
                   style: baseChatStyle.copyWith(
                     color: animatedTextColor,
                     fontStyle: _isRecording
@@ -2310,6 +2565,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                   onSubmitted: (_) {},
                   onTap: () {
                     if (!widget.enabled) return;
+                    unawaited(_hideNativeKeyboardAttachmentPanel());
                     _ensureFocusedIfEnabled();
                   },
                 );
@@ -2329,7 +2585,6 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                 showCursor: true,
                 scrollPadding: const EdgeInsets.only(bottom: 80),
                 keyboardAppearance: brightness,
-                cursorColor: animatedTextColor,
                 style: baseChatStyle.copyWith(
                   color: animatedTextColor,
                   fontStyle: _isRecording ? FontStyle.italic : FontStyle.normal,
@@ -2360,13 +2615,15 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                       .toList(),
                   onContentInserted: _handleContentInserted,
                 ),
-                // Custom context menu with "Paste Image" option
+                // Use Flutter's standard text-editing context menu. Images
+                // arrive through ContentInsertionConfiguration/native paste.
                 contextMenuBuilder: (context, editableTextState) {
                   return _buildFallbackContextMenu(context, editableTextState);
                 },
                 onSubmitted: (_) {},
                 onTap: () {
                   if (!widget.enabled) return;
+                  unawaited(_hideNativeKeyboardAttachmentPanel());
                   _ensureFocusedIfEnabled();
                 },
               );
@@ -2382,8 +2639,10 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     required bool webSearchActive,
     required bool imageGenerationActive,
     required bool toolsActive,
+    required bool terminalActive,
     required bool filtersActive,
     bool dense = false,
+    List<IosKeyboardAttachmentActionConfig> nativeActions = const [],
   }) {
     final double buttonSize = dense ? 36.0 : TouchTarget.minimum;
 
@@ -2395,46 +2654,63 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     final bool enabled = widget.enabled && !_isRecording;
 
     Color? activeColor;
+    final bool nativePanelVisible =
+        !kIsWeb && Platform.isIOS && _isNativeAttachmentPanelVisible;
+
+    // Native attachment panel uses an X to dismiss; keep it neutral like the idle
+    // + control, not the same primary-filled treatment as feature/tool "active" states.
     if (webSearchActive ||
         imageGenerationActive ||
         toolsActive ||
+        terminalActive ||
         filtersActive) {
       activeColor = context.conduitTheme.buttonPrimary;
     }
 
     final bool isActive = activeColor != null;
+    final theme = context.conduitTheme;
 
     final Color iconColor = !enabled
-        ? context.conduitTheme.textPrimary.withValues(alpha: Alpha.disabled)
+        ? theme.textPrimary.withValues(alpha: Alpha.disabled)
+        : nativePanelVisible
+        ? theme.textPrimary.withValues(alpha: Alpha.strong)
         : isActive
-        ? context.conduitTheme.buttonPrimaryText
-        : context.conduitTheme.textPrimary.withValues(alpha: Alpha.strong);
+        ? theme.buttonPrimaryText
+        : theme.textPrimary.withValues(alpha: Alpha.strong);
 
-    final IconData overflowIcon = switch ((
-      webSearchActive,
-      imageGenerationActive,
-      toolsActive,
-      filtersActive,
-    )) {
-      (true, _, _, _) => Platform.isIOS ? CupertinoIcons.search : Icons.search,
-      (_, true, _, _) => Platform.isIOS ? CupertinoIcons.photo : Icons.image,
-      (_, _, true, _) => Platform.isIOS ? CupertinoIcons.wrench : Icons.build,
-      (_, _, _, true) =>
-        Platform.isIOS ? CupertinoIcons.sparkles : Icons.auto_awesome,
-      _ => Platform.isIOS ? CupertinoIcons.add : Icons.add,
-    };
+    final IconData overflowIcon;
+    if (nativePanelVisible) {
+      overflowIcon = CupertinoIcons.xmark;
+    } else if (webSearchActive) {
+      overflowIcon = Platform.isIOS ? CupertinoIcons.search : Icons.search;
+    } else if (imageGenerationActive) {
+      overflowIcon = Platform.isIOS ? CupertinoIcons.photo : Icons.image;
+    } else if (toolsActive) {
+      overflowIcon = Platform.isIOS ? CupertinoIcons.wrench : Icons.build;
+    } else if (terminalActive) {
+      overflowIcon = Platform.isIOS
+          ? CupertinoIcons.chevron_left_slash_chevron_right
+          : Icons.terminal_rounded;
+    } else if (filtersActive) {
+      overflowIcon = Platform.isIOS
+          ? CupertinoIcons.sparkles
+          : Icons.auto_awesome;
+    } else {
+      overflowIcon = Platform.isIOS ? CupertinoIcons.add : Icons.add;
+    }
 
     return AdaptiveTooltip(
       message: tooltip,
       child: _buildComposerIconButton(
         onPressed: enabled
             ? () {
-                ConduitHaptics.selectionClick();
-                _showOverflowSheet();
+                unawaited(_handleOverflowButtonPressed(nativeActions));
               }
             : null,
         size: buttonSize,
-        isProminent: isActive,
+        isProminent: isActive && !nativePanelVisible,
+        androidShowBackground: !isActive,
+        color: nativePanelVisible ? theme.surfaceContainerHighest : null,
         child: Icon(overflowIcon, size: IconSize.large, color: iconColor),
       ),
     );
@@ -2455,27 +2731,38 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     );
   }
 
-  Widget _buildInlineMicAction(bool voiceAvailable) {
+  Widget _buildInlineMicAction(bool voiceAvailable, {double? size}) {
     final bool enabledMic = widget.enabled && voiceAvailable;
+    final icon = Icon(
+      Platform.isIOS ? CupertinoIcons.mic : Icons.mic,
+      size: IconSize.large,
+      color: _isRecording
+          ? context.conduitTheme.buttonPrimary
+          : context.conduitTheme.textSecondary.withValues(
+              alpha: enabledMic ? Alpha.strong : Alpha.disabled,
+            ),
+    );
+    final onPressed = enabledMic
+        ? () {
+            ConduitHaptics.selectionClick();
+            _toggleVoice();
+          }
+        : null;
+
+    if (size != null) {
+      return _buildComposerIconButton(
+        onPressed: onPressed,
+        size: size,
+        child: icon,
+      );
+    }
+
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: enabledMic
-          ? () {
-              ConduitHaptics.selectionClick();
-              _toggleVoice();
-            }
-          : null,
+      onTap: onPressed,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
-        child: Icon(
-          Platform.isIOS ? CupertinoIcons.mic : Icons.mic,
-          size: IconSize.large,
-          color: _isRecording
-              ? context.conduitTheme.buttonPrimary
-              : context.conduitTheme.textSecondary.withValues(
-                  alpha: enabledMic ? Alpha.strong : Alpha.disabled,
-                ),
-        ),
+        child: icon,
       ),
     );
   }
@@ -2594,7 +2881,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     if (widget.onVoiceCall != null) {
       final bool enabledVoiceCall = widget.enabled;
       return AdaptiveTooltip(
-        message: 'Voice Call',
+        message: AppLocalizations.of(context)!.voiceCallTitle,
         child: _buildComposerIconButton(
           key: const ValueKey('primary-btn-voice-call'),
           onPressed: enabledVoiceCall
@@ -2662,10 +2949,11 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       curve: Curves.easeOutCubic,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppBorderRadius.round),
+      child: Semantics(
+        button: true,
+        enabled: enabled,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: onTap == null
               ? null
               : () {
@@ -2688,21 +2976,10 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
               mainAxisSize: MainAxisSize.min,
               children: [
                 iconUrl != null && iconUrl.isNotEmpty
-                    ? SizedBox(
-                        width: dense ? IconSize.small : IconSize.small + 1,
-                        height: dense ? IconSize.small : IconSize.small + 1,
-                        child: Image.network(
-                          iconUrl,
-                          width: dense ? IconSize.small : IconSize.small + 1,
-                          height: dense ? IconSize.small : IconSize.small + 1,
-                          color: iconUrl.endsWith('.svg') ? iconColor : null,
-                          colorBlendMode: BlendMode.srcIn,
-                          errorBuilder: (_, _, _) => Icon(
-                            icon,
-                            size: dense ? IconSize.small : IconSize.small + 1,
-                            color: iconColor,
-                          ),
-                        ),
+                    ? ModelAvatar(
+                        size: dense ? IconSize.small : IconSize.small + 1,
+                        imageUrl: iconUrl,
+                        label: label,
                       )
                     : Icon(
                         icon,
@@ -2713,10 +2990,9 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                 AnimatedDefaultTextStyle(
                   duration: const Duration(milliseconds: 200),
                   curve: Curves.easeOutCubic,
-                  style: AppTypography.labelStyle.copyWith(
+                  style: AppTypography.labelMediumStyle.copyWith(
                     color: textColor,
                     fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
-                    fontSize: dense ? 12 : 13,
                     letterSpacing: -0.1,
                   ),
                   child: Text(
@@ -2735,81 +3011,80 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
 
   /// Builds a circular icon button for the composer.
   ///
-  /// On iOS, uses [AdaptiveButton] with glass style for native appearance.
-  /// On Android/web/desktop, uses a Material-styled circular button with
-  /// theme-consistent colors matching the composer shell.
+  /// Uses native glass on iOS while keeping Material composer buttons native to
+  /// Android instead of using the adaptive glass tonal fallback.
   Widget _buildComposerIconButton({
     Key? key,
     required VoidCallback? onPressed,
     required Widget child,
     required double size,
     bool isProminent = false,
+    bool androidShowBackground = false,
     Color? color,
   }) {
     final theme = context.conduitTheme;
     final effectiveColor = color ?? theme.buttonPrimary;
+    final androidBackgroundColor =
+        color ?? theme.surfaceContainerHighest.withValues(alpha: 0.95);
+    final buttonStyle = Platform.isAndroid
+        ? (isProminent || androidShowBackground
+              ? AdaptiveButtonStyle.filled
+              : AdaptiveButtonStyle.plain)
+        : (isProminent
+              ? AdaptiveButtonStyle.prominentGlass
+              : AdaptiveButtonStyle.glass);
 
-    if (!kIsWeb && Platform.isIOS) {
-      return AdaptiveButton.child(
-        key: key,
-        onPressed: onPressed,
-        enabled: onPressed != null,
-        style: isProminent
-            ? AdaptiveButtonStyle.prominentGlass
-            : AdaptiveButtonStyle.glass,
-        color: effectiveColor,
-        size: size > 40 ? AdaptiveButtonSize.large : AdaptiveButtonSize.medium,
-        minSize: Size(size, size),
-        padding: EdgeInsets.zero,
-        borderRadius: BorderRadius.circular(size),
-        useSmoothRectangleBorder: false,
-        child: child,
-      );
-    }
-
-    final bgColor = isProminent
-        ? effectiveColor
-        : theme.surfaceContainerHighest;
-    final borderColor = isProminent ? effectiveColor : theme.cardBorder;
-
-    return SizedBox(
+    return AdaptiveButton.child(
       key: key,
-      width: size,
-      height: size,
-      child: Material(
-        color: bgColor,
-        shape: CircleBorder(
-          side: BorderSide(color: borderColor, width: BorderWidth.thin),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onPressed,
-          customBorder: const CircleBorder(),
-          child: Center(child: child),
-        ),
-      ),
+      onPressed: onPressed,
+      enabled: onPressed != null,
+      style: buttonStyle,
+      color: Platform.isAndroid && androidShowBackground && !isProminent
+          ? androidBackgroundColor
+          : effectiveColor,
+      size: size > 40 ? AdaptiveButtonSize.large : AdaptiveButtonSize.medium,
+      minSize: Size(size, size),
+      padding: EdgeInsets.zero,
+      borderRadius: BorderRadius.circular(size),
+      useSmoothRectangleBorder: false,
+      child: child,
     );
   }
 
   /// Builds the composer shell container.
   ///
-  /// On iOS, uses [AdaptiveBlurView] for native glass/blur effects.
-  /// On Android/web/desktop, uses a Material surface container with a
-  /// subtle border for better contrast and a native look.
+  /// Uses package-provided glass on iOS and a themed Material surface elsewhere.
   Widget _buildComposerShell({
     Key? key,
     required Widget child,
     required BorderRadius borderRadius,
+    bool useSmoothRectangleBorder = true,
   }) {
+    final theme = context.conduitTheme;
+
     if (!kIsWeb && Platform.isIOS) {
-      return AdaptiveBlurView(
+      return Stack(
         key: key,
-        blurStyle: BlurStyle.systemUltraThinMaterial,
-        borderRadius: borderRadius,
-        child: child,
+        fit: StackFit.passthrough,
+        children: [
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AdaptiveButton.child(
+                onPressed: () {},
+                style: AdaptiveButtonStyle.glass,
+                size: AdaptiveButtonSize.large,
+                padding: EdgeInsets.zero,
+                borderRadius: borderRadius,
+                useSmoothRectangleBorder: useSmoothRectangleBorder,
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ),
+          child,
+        ],
       );
     }
-    final theme = context.conduitTheme;
+
     return Container(
       key: key,
       decoration: BoxDecoration(
@@ -2819,6 +3094,18 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
       ),
       child: child,
     );
+  }
+
+  double _composerBottomPadding(BuildContext context) {
+    if (widget.bottomPadding case final bottomPadding?) {
+      return bottomPadding;
+    }
+
+    if (!kIsWeb && Platform.isIOS) {
+      return Spacing.md * 2;
+    }
+
+    return MediaQuery.viewPaddingOf(context).bottom + Spacing.md;
   }
 
   Widget _wrapIosSurfaceShadow(
@@ -2861,12 +3148,12 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
       SystemChannels.textInput.invokeMethod('TextInput.hide');
     } catch (_) {}
 
-    showModalBottomSheet(
+    ThemedSheets.showCustom<void>(
       context: context,
-      backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (_) => ComposerOverflowSheet(
         onFileAttachment: widget.onFileAttachment,
+        onServerFileAttachment: widget.onServerFileAttachment,
         onImageAttachment: widget.onImageAttachment,
         onCameraCapture: widget.onCameraCapture,
         onWebAttachment: widget.onWebAttachment,
@@ -2884,7 +3171,43 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     });
   }
 
-  void _showExpandTextModal() {
+  void _showExpandTextModal() async {
+    if (Platform.isIOS) {
+      final l10n = AppLocalizations.of(context)!;
+      setState(() => _expandModalOpen = true);
+      try {
+        final result = await NativeSheetBridge.instance.presentTextEditor(
+          title: widget.placeholder ?? l10n.sendMessage,
+          value: _controller.text,
+          placeholder: widget.placeholder ?? l10n.messageHintText,
+          sendLabel: l10n.send,
+          valueId: 'expanded-text-value',
+          sendActionId: 'send-expanded-text',
+          closeActionId: 'close-expanded-text',
+          rethrowErrors: true,
+        );
+        final updatedText = result?.values['expanded-text-value'] as String?;
+        if (mounted && updatedText != null && _controller.text != updatedText) {
+          _controller.value = TextEditingValue(
+            text: updatedText,
+            selection: TextSelection.collapsed(offset: updatedText.length),
+          );
+        }
+        if (mounted) {
+          setState(() => _expandModalOpen = false);
+        }
+        if (result?.actionId == 'send-expanded-text' && mounted) {
+          _sendMessage();
+        }
+        return;
+      } catch (_) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _expandModalOpen = false);
+      }
+    }
+
     final modalController = TextEditingController(text: _controller.text);
 
     void syncToMain() {
@@ -2902,14 +3225,21 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     modalController.addListener(syncToMain);
     setState(() => _expandModalOpen = true);
 
-    showModalBottomSheet<bool>(
+    if (!mounted) {
+      return;
+    }
+
+    ThemedSheets.showCustom<bool>(
       context: context,
-      backgroundColor: Colors.transparent,
       isScrollControlled: true,
       enableDrag: true,
       useSafeArea: true,
       builder: (modalContext) => ExpandedTextEditorSheet(
         controller: modalController,
+        onClose: () {
+          FocusScope.of(modalContext).unfocus();
+          Navigator.of(modalContext).pop(false);
+        },
         onSend: () {
           FocusScope.of(modalContext).unfocus();
           Navigator.of(modalContext).pop(true);
