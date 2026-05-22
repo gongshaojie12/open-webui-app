@@ -72,7 +72,7 @@ class SwipeablePageRoute<T> extends PageRoute<T> {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
-    return const CupertinoPageTransitionsBuilder().buildTransitions<T>(
+    return CupertinoPageTransitionsBuilder().buildTransitions<T>(
       this,
       context,
       animation,

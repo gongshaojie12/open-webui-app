@@ -1,254 +1,832 @@
-ll@LLdeMacBook-Pro ios % pod install --repo-update
-Updating local specs repositories
-Analyzing dependencies
-Downloading dependencies
-Installing CryptoSwift (1.10.0)
-Installing CwlCatchException (2.2.1)
-Installing CwlCatchExceptionSupport (2.2.1)
-Installing DKImagePickerController (4.3.9)
-Installing DKPhotoGallery (0.0.19)
-Installing Flutter (1.0.0)
-Installing Mantle (2.2.0)
-Installing SDWebImage (5.21.7)
-Installing SDWebImageWebPCoder (0.15.0)
-Installing SwiftyGif (5.4.5)
-Installing adaptive_platform_ui (0.1.0)
-Installing audio_session (0.0.1)
-Installing connectivity_plus (0.0.1)
-Installing file_picker (0.0.1)
-Installing flutter_callkit_incoming (0.0.1)
-Installing flutter_image_compress_common (1.0.0)
-Installing flutter_local_notifications (0.0.1)
-Installing flutter_native_splash (2.4.3)
-Installing flutter_secure_storage_darwin (10.0.0)
-Installing flutter_tts (0.0.1)
-Installing gaimon (0.0.1)
-Installing home_widget (0.0.1)
-Installing image_picker_ios (0.0.1)
-Installing just_audio (0.0.1)
-Installing libwebp (1.5.0)
-Installing onnxruntime-c (1.22.0)
-Installing onnxruntime-objc (1.22.0)
-Installing package_info_plus (0.4.5)
-Installing permission_handler_apple (9.3.0)
-Installing quick_actions_ios (0.0.1)
-Installing record_ios (1.2.0)
-Installing share_handler_ios (0.0.14)
-Installing share_handler_ios_models (0.0.9)
-Installing share_plus (0.0.1)
-Installing shared_preferences_foundation (0.0.1)
-Installing speech_to_text (7.2.0)
-Installing sqflite_darwin (0.0.4)
-Installing url_launcher_ios (0.0.1)
-Installing vad (0.0.6)
-Installing wakelock_plus (0.0.1)
-Installing webview_flutter_wkwebview (0.0.1)
-Generating Pods project
-  
-――― MARKDOWN TEMPLATE ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-  
-### Command
-  
-```
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/bin/pod install --repo-update
-```
-  
-### Report
-  
-* What did you do?
-  
-* What did you expect to happen?
-  
-* What happened instead?
+ll@LLdeMacBook-Pro open-webui-app % flutter build ios --no-codesign
+The following plugins do not support Swift Package Manager for ios:
+  - vad
+  - share_handler_ios
+  - permission_handler_apple
+  - flutter_tts
+  - flutter_image_compress_common
+  - flutter_callkit_incoming
+  - adaptive_platform_ui
+This will become an error in a future version of Flutter. Please contact the
+plugin maintainers to request Swift Package Manager adoption.
+Warning: Building for device with codesigning disabled. You will have to
+manually codesign before deploying to device.
+Building com.gongshaojie.zhongxiaozhiAI for device (ios-release)...
+Adding Swift Package Manager integration...                       133.7s
+Running pod install...                                           1,496ms
+Running Xcode build...                                                  
+Xcode build done.                                           97.1s
+Failed to build iOS app
+Error output from Xcode build:
+↳
+    **BUILD FAILED**
   
   
-### Stack
+Xcode's output:
+↳
+    Writing result bundle at path:
+    /var/folders/js/tvjzxgjd4hgbvqzqzd8d53kc0000gn/T/flutter_tools.Csacyx/flutt
+    er_ios_build_temp_dir2GaDdT/temporary_xcresult_bundle
   
-```
-   CocoaPods : 1.16.2
-        Ruby : ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin25]
-    RubyGems : 4.0.8
-        Host : macOS 26.4.1 (25E253)
-       Xcode : 26.4 (17E192)
-         Git : git version 2.53.0
-Ruby lib dir : /opt/homebrew/Cellar/ruby/4.0.2/lib
-Repositories : trunk - CDN - https://cdn.cocoapods.org/
-```
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:54:38: warning: 'CTCarrier' is
+    deprecated: first deprecated in iOS 16.0 - Deprecated with no replacement
+    [-Wdeprecated-declarations]
+       54 | -(bool)canPlacePhoneCallWithCarrier:(CTCarrier *)carrier {
+          |                                      ^
+    In module 'CoreTelephony' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:8:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS.sdk/System/Library/Frameworks/CoreTelephony.framework/Hea
+    ders/CTCarrier.h:17:12: note: 'CTCarrier' has been explicitly marked
+    deprecated here
+       17 | @interface CTCarrier : NSObject
+          |            ^
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:39:30: warning: 'CTCarrier' is
+    deprecated: first deprecated in iOS 16.0 - Deprecated with no replacement
+    [-Wdeprecated-declarations]
+       39 |     NSDictionary<NSString _, CTCarrier_ > *providers = [netInfo
+       serviceSubscriberCellularProviders];
+          |                              ^
+    In module 'CoreTelephony' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:8:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS.sdk/System/Library/Frameworks/CoreTelephony.framework/Hea
+    ders/CTCarrier.h:17:12: note: 'CTCarrier' has been explicitly marked
+    deprecated here
+       17 | @interface CTCarrier : NSObject
+          |            ^
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:39:65: warning:
+    'serviceSubscriberCellularProviders' is deprecated: first deprecated in iOS
+    16.0 - Deprecated with no replacement [-Wdeprecated-declarations]
+       39 |     NSDictionary<NSString _, CTCarrier_ > *providers = [netInfo
+       serviceSubscriberCellularProviders];
+          |                                                                 ^
+    In module 'CoreTelephony' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:8:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS.sdk/System/Library/Frameworks/CoreTelephony.framework/Hea
+    ders/CTTelephonyNetworkInfo.h:105:78: note: property
+    'serviceSubscriberCellularProviders' is declared deprecated here
+      105 | @property(readonly, retain, nullable) NSDictionary<NSString *,
+      CTCarrier _>_ serviceSubscriberCellularProviders
+      API_DEPRECATED("Deprecated with no replacement", ios(12.0, 16.0),
+      watchos(5.0, 9.0)) API_UNAVAILABLE(macos, tvos);
+          |
+          ^
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS.sdk/System/Library/Frameworks/CoreTelephony.framework/Hea
+    ders/CTTelephonyNetworkInfo.h:105:78: note:
+    'serviceSubscriberCellularProviders' has been explicitly marked deprecated
+    here
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:41:7: warning: 'CTCarrier' is
+    deprecated: first deprecated in iOS 16.0 - Deprecated with no replacement
+    [-Wdeprecated-declarations]
+       41 |       CTCarrier *carrier = [providers objectForKey:key];
+          |       ^
+    In module 'CoreTelephony' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:8:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS.sdk/System/Library/Frameworks/CoreTelephony.framework/Hea
+    ders/CTCarrier.h:17:12: note: 'CTCarrier' has been explicitly marked
+    deprecated here
+       17 | @interface CTCarrier : NSObject
+          |            ^
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:49:5: warning: 'CTCarrier' is
+    deprecated: first deprecated in iOS 16.0 - Deprecated with no replacement
+    [-Wdeprecated-declarations]
+       49 |     CTCarrier *carrier = [netInfo subscriberCellularProvider];
+          |     ^
+    In module 'CoreTelephony' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:8:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS.sdk/System/Library/Frameworks/CoreTelephony.framework/Hea
+    ders/CTCarrier.h:17:12: note: 'CTCarrier' has been explicitly marked
+    deprecated here
+       17 | @interface CTCarrier : NSObject
+          |            ^
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:49:35: warning:
+    'subscriberCellularProvider' is deprecated: first deprecated in iOS 12.0
+    [-Wdeprecated-declarations]
+       49 |     CTCarrier *carrier = [netInfo subscriberCellularProvider];
+          |                                   ^~~~~~~~~~~~~~~~~~~~~~~~~~
+          |                                   serviceSubscriberCellularProviders
+    In module 'CoreTelephony' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:8:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS.sdk/System/Library/Frameworks/CoreTelephony.framework/Hea
+    ders/CTTelephonyNetworkInfo.h:114:50: note: property
+    'subscriberCellularProvider' is declared deprecated here
+      114 | @property(readonly, retain, nullable) CTCarrier
+      *subscriberCellularProvider
+      API_DEPRECATED_WITH_REPLACEMENT("serviceSubscriberCellularProviders",
+      ios(4.0, 12.0)) API_UNAVAILABLE(macos);
+          |                                                  ^
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS.sdk/System/Library/Frameworks/CoreTelephony.framework/Hea
+    ders/CTTelephonyNetworkInfo.h:114:50: note: 'subscriberCellularProvider' has
+    been explicitly marked deprecated here
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:56:28: warning: 'mobileNetworkCode'
+    is deprecated: first deprecated in iOS 16.0 - Deprecated; returns '65535' at
+    some point in the future [-Wdeprecated-declarations]
+       56 |   NSString *mnc = [carrier mobileNetworkCode];
+          |                            ^
+    In module 'CoreTelephony' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/PhonePermissionStrategy.m:8:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS.sdk/System/Library/Frameworks/CoreTelephony.framework/Hea
+    ders/CTCarrier.h:50:61: note: property 'mobileNetworkCode' is declared
+    deprecated here
+       50 | @property (nonatomic, readonly, retain, nullable) NSString
+       *mobileNetworkCode
+          |                                                             ^
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS.sdk/System/Library/Frameworks/CoreTelephony.framework/Hea
+    ders/CTCarrier.h:50:61: note: 'mobileNetworkCode' has been explicitly marked
+    deprecated here
+    7 warnings generated.
+    /Users/ll/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/ios/Class
+    es/strategies/NotificationPermissionStrategy.m:57:9: warning: @available
+    does not guard availability here; use if (@available) instead
+    [-Wunsupported-availability-guard]
+       57 |     if (@available(iOS 12 , *) && settings.authorizationStatus ==
+       UNAuthorizationStatusProvisional) {
+          |         ^
+    1 warning generated.
+    libtool: warning: 'assert_arc_enabled.o' has no symbols
+    /Users/ll/NLP/open-webui-app/ios/Pods/libwebp/src/dsp/dec_neon.c:1467:38:
+    warning: variable 'sum_left' may be uninitialized when used here
+    [-Wconditional-uninitialized]
+     1467 |     const uint16x8_t sum = vaddq_u16(sum_left, sum_top);
+          |                                      ^~~~~~~~
+    /Users/ll/NLP/open-webui-app/ios/Pods/libwebp/src/dsp/dec_neon.c:1432:3:
+    note: variable 'sum_left' is declared here
+     1432 |   uint16x8_t sum_left;
+          |   ^
+    /Users/ll/NLP/open-webui-app/ios/Pods/libwebp/src/dsp/dec_neon.c:1467:48:
+    warning: variable 'sum_top' may be uninitialized when used here
+    [-Wconditional-uninitialized]
+     1467 |     const uint16x8_t sum = vaddq_u16(sum_left, sum_top);
+          |                                                ^~~~~~~
+    /Users/ll/NLP/open-webui-app/ios/Pods/libwebp/src/dsp/dec_neon.c:1431:3:
+    note: variable 'sum_top' is declared here
+     1431 |   uint16x8_t sum_top;
+          |   ^
+    /Users/ll/NLP/open-webui-app/ios/Pods/libwebp/src/dsp/dec_neon.c:1556:38:
+    warning: variable 'sum_left' may be uninitialized when used here
+    [-Wconditional-uninitialized]
+     1556 |     const uint16x8_t sum = vaddq_u16(sum_left, sum_top);
+          |                                      ^~~~~~~~
+    /Users/ll/NLP/open-webui-app/ios/Pods/libwebp/src/dsp/dec_neon.c:1515:3:
+    note: variable 'sum_left' is declared here
+     1515 |   uint16x8_t sum_left;
+          |   ^
+    /Users/ll/NLP/open-webui-app/ios/Pods/libwebp/src/dsp/dec_neon.c:1556:48:
+    warning: variable 'sum_top' may be uninitialized when used here
+    [-Wconditional-uninitialized]
+     1556 |     const uint16x8_t sum = vaddq_u16(sum_left, sum_top);
+          |                                                ^~~~~~~
+    /Users/ll/NLP/open-webui-app/ios/Pods/libwebp/src/dsp/dec_neon.c:1514:3:
+    note: variable 'sum_top' is declared here
+     1514 |   uint16x8_t sum_top;
+          |   ^
+    4 warnings generated.
+    /Users/ll/NLP/open-webui-app/ios/Pods/libwebp/src/enc/backward_references_en
+    c.c:720:12: warning: variable 'best_offset' may be uninitialized when used
+    here [-Wconditional-uninitialized]
+      720 |           (best_offset << MAX_LENGTH_BITS) | (uint32_t)best_length;
+          |            ^~~~~~~~~~~
+    /Users/ll/NLP/open-webui-app/ios/Pods/libwebp/src/enc/backward_references_en
+    c.c:652:20: note: initialize the variable 'best_offset' to silence this
+    warning
+      652 |     int best_offset;
+          |                    ^
+          |                     = 0
+    1 warning generated.
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_tts-4.2.5/ios/Classes/AudioCateg
+    oryOptions.swift:25:15: warning: 'allowBluetooth' was deprecated in iOS 8.0:
+    renamed to 'AVAudioSession.CategoryOptions.allowBluetoothHFP'
+          return .allowBluetooth
+                  ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_tts-4.2.5/ios/Classes/AudioCateg
+    oryOptions.swift:25:15: note: use
+    'AVAudioSession.CategoryOptions.allowBluetoothHFP' instead
+          return .allowBluetooth
+                  ^~~~~~~~~~~~~~
+                  AVAudioSession.CategoryOptions.allowBluetoothHFP
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_tts-4.2.5/ios/Classes/SwiftFlutt
+    erTtsPlugin.swift:10:7: warning: stored property 'synthesizer' of
+    'Sendable'-conforming class 'SwiftFlutterTtsPlugin' has non-Sendable type
+    'AVSpeechSynthesizer'
+      let synthesizer = AVSpeechSynthesizer()
+          ^
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AVFAudio.framework/Head
+    ers/AVSpeechSynthesis.h:227:12: note: class 'AVSpeechSynthesizer' does not
+    conform to the 'Sendable' protocol
+    @interface AVSpeechSynthesizer : NSObject
+               ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadataExif.m:41:65: warning:
+    'kCGImagePropertyExifSubsecTimeOrginal' is deprecated: first deprecated in
+    iOS 10.0 - No longer supported [-Wdeprecated-declarations]
+       41 |              SYStringSel(subsecTimeOriginal):       (NSString
+       *)kCGImagePropertyExifSubsecTimeOrginal,
+          |                                                                 ^
+    In module 'ImageIO' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadataExif.m:10:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/ImageIO.framework/Heade
+    rs/CGImageProperties.h:252:34: note: 'kCGImagePropertyExifSubsecTimeOrginal'
+    has been explicitly marked deprecated here
+      252 | IMAGEIO_EXTERN const CFStringRef
+      kCGImagePropertyExifSubsecTimeOrginal
+      IMAGEIO_AVAILABLE_BUT_DEPRECATED(10.4, 10.11, 4.0, 10.0);
+          |                                  ^
+    1 warning generated.
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:49:36: warning: 'ALAsset' is
+    deprecated: first deprecated in iOS 9 - Use PHAsset from the Photos
+    framework instead [-Wdeprecated-declarations]
+       49 | + (instancetype)metadataWithAsset:(ALAsset *)asset
+          |                                    ^
+    In module 'AssetsLibrary' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:14:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AssetsLibrary.framework
+    /Headers/ALAsset.h:40:12: note: 'ALAsset' has been explicitly marked
+    deprecated here
+       40 | @interface ALAsset : NSObject {
+          |            ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:52:5: warning:
+    'ALAssetRepresentation' is deprecated: first deprecated in iOS 9 - Use
+    PHImageRequestOptions with the PHImageManager from the Photos framework
+    instead [-Wdeprecated-declarations]
+       52 |     ALAssetRepresentation *representation = [asset
+       defaultRepresentation];
+          |     ^
+    In module 'AssetsLibrary' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:14:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AssetsLibrary.framework
+    /Headers/ALAssetRepresentation.h:20:12: note: 'ALAssetRepresentation' has
+    been explicitly marked deprecated here
+       20 | @interface ALAssetRepresentation : NSObject {
+          |            ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:52:52: warning:
+    'defaultRepresentation' is deprecated: first deprecated in iOS 9 - Use
+    PHImageRequestOptions with the PHImageManager from the Photos framework
+    instead [-Wdeprecated-declarations]
+       52 |     ALAssetRepresentation *representation = [asset
+       defaultRepresentation];
+          |                                                    ^
+    In module 'AssetsLibrary' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:14:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AssetsLibrary.framework
+    /Headers/ALAsset.h:49:1: note: 'defaultRepresentation' has been explicitly
+    marked deprecated here
+       49 | - (ALAssetRepresentation *)defaultRepresentation AL_DEPRECATED(4,
+       "Use PHImageRequestOptions with the PHImageManager from the Photos
+       framework instead");
+          | ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:53:57: warning: 'metadata' is
+    deprecated: first deprecated in iOS 9 - Use
+    CGImageSourceCopyPropertiesAtIndex() to retrieve metadata from an image
+    returned by the PHImageManager from the Photos framework instead
+    [-Wdeprecated-declarations]
+       53 |     return [self metadataWithDictionary:[representation metadata]];
+          |                                                         ^
+    In module 'AssetsLibrary' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:14:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AssetsLibrary.framework
+    /Headers/ALAssetRepresentation.h:56:1: note: 'metadata' has been explicitly
+    marked deprecated here
+       56 | - (NSDictionary *)metadata AL_DEPRECATED(4, "Use
+       CGImageSourceCopyPropertiesAtIndex() to retrieve metadata from an image
+       returned by the PHImageManager from the Photos framework instead");
+          | ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:152:13: warning: 'ALAsset' is
+    deprecated: first deprecated in iOS 9 - Use PHAsset from the Photos
+    framework instead [-Wdeprecated-declarations]
+      152 |     __block ALAsset *assetAtUrl = nil;
+          |             ^
+    In module 'AssetsLibrary' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:14:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AssetsLibrary.framework
+    /Headers/ALAsset.h:40:12: note: 'ALAsset' has been explicitly marked
+    deprecated here
+       40 | @interface ALAsset : NSObject {
+          |            ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:153:5: warning: 'ALAssetsLibrary' is
+    deprecated: first deprecated in iOS 9 - Use PHPhotoLibrary from the Photos
+    framework instead [-Wdeprecated-declarations]
+      153 |     ALAssetsLibrary* library = [[ALAssetsLibrary alloc] init];
+          |     ^
+    In module 'AssetsLibrary' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:14:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AssetsLibrary.framework
+    /Headers/ALAssetsLibrary.h:80:12: note: 'ALAssetsLibrary' has been
+    explicitly marked deprecated here
+       80 | @interface ALAssetsLibrary : NSObject {
+          |            ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:153:50: warning: 'ALAssetsLibrary' is
+    deprecated: first deprecated in iOS 9 - Use PHPhotoLibrary from the Photos
+    framework instead [-Wdeprecated-declarations]
+      153 |     ALAssetsLibrary* library = [[ALAssetsLibrary alloc] init];
+          |                                                  ^
+    In module 'AssetsLibrary' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:14:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AssetsLibrary.framework
+    /Headers/ALAssetsLibrary.h:80:12: note: 'ALAssetsLibrary' has been
+    explicitly marked deprecated here
+       80 | @interface ALAssetsLibrary : NSObject {
+          |            ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:156:49: warning: 'ALAsset' is
+    deprecated: first deprecated in iOS 9 - Use PHAsset from the Photos
+    framework instead [-Wdeprecated-declarations]
+      156 |     [library assetForURL:assetURL resultBlock:^(ALAsset *asset) {
+          |                                                 ^
+    In module 'AssetsLibrary' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:14:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AssetsLibrary.framework
+    /Headers/ALAsset.h:40:12: note: 'ALAsset' has been explicitly marked
+    deprecated here
+       40 | @interface ALAsset : NSObject {
+          |            ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:156:14: warning:
+    'assetForURL:resultBlock:failureBlock:' is deprecated: first deprecated in
+    iOS 9 - Use fetchAssetsWithLocalIdentifiers:options: on PHAsset to fetch
+    assets by local identifier (or to lookup PHAssets by a previously known
+    ALAssetPropertyAssetURL use fetchAssetsWithALAssetURLs:options:) from the
+    Photos framework instead [-Wdeprecated-declarations]
+      156 |     [library assetForURL:assetURL resultBlock:^(ALAsset *asset) {
+          |              ^
+    In module 'AssetsLibrary' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:14:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AssetsLibrary.framework
+    /Headers/ALAssetsLibrary.h:95:1: note:
+    'assetForURL:resultBlock:failureBlock:' has been explicitly marked
+    deprecated here
+       95 | - (void)assetForURL:(NSURL *)assetURL
+       resultBlock:(ALAssetsLibraryAssetForURLResultBlock)resultBlock
+       failureBlock:(ALAssetsLibraryAccessFailureBlock)failureBlock
+       AL_DEPRECATED(4, "Use fetchAssetsWithLocalIdentifiers:options: on PHAsset
+       to fetch assets by local identifier (or to lookup PHAssets by a
+       previously known ALAssetPropertyAssetURL use
+       fetchAssetsWithALAssetURLs:options:) from the Photos framework instead");
+          | ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:167:5: warning:
+    'ALAssetRepresentation' is deprecated: first deprecated in iOS 9 - Use
+    PHImageRequestOptions with the PHImageManager from the Photos framework
+    instead [-Wdeprecated-declarations]
+      167 |     ALAssetRepresentation *representation = [assetAtUrl
+      defaultRepresentation];
+          |     ^
+    In module 'AssetsLibrary' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:14:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AssetsLibrary.framework
+    /Headers/ALAssetRepresentation.h:20:12: note: 'ALAssetRepresentation' has
+    been explicitly marked deprecated here
+       20 | @interface ALAssetRepresentation : NSObject {
+          |            ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:167:57: warning:
+    'defaultRepresentation' is deprecated: first deprecated in iOS 9 - Use
+    PHImageRequestOptions with the PHImageManager from the Photos framework
+    instead [-Wdeprecated-declarations]
+      167 |     ALAssetRepresentation *representation = [assetAtUrl
+      defaultRepresentation];
+          |                                                         ^
+    In module 'AssetsLibrary' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:14:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AssetsLibrary.framework
+    /Headers/ALAsset.h:49:1: note: 'defaultRepresentation' has been explicitly
+    marked deprecated here
+       49 | - (ALAssetRepresentation *)defaultRepresentation AL_DEPRECATED(4,
+       "Use PHImageRequestOptions with the PHImageManager from the Photos
+       framework instead");
+          | ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:168:28: warning: 'metadata' is
+    deprecated: first deprecated in iOS 9 - Use
+    CGImageSourceCopyPropertiesAtIndex() to retrieve metadata from an image
+    returned by the PHImageManager from the Photos framework instead
+    [-Wdeprecated-declarations]
+      168 |     return [representation metadata];
+          |                            ^
+    In module 'AssetsLibrary' imported from
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/SYPictureMetadata/SYMetadata.m:14:
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/AssetsLibrary.framework
+    /Headers/ALAssetRepresentation.h:56:1: note: 'metadata' has been explicitly
+    marked deprecated here
+       56 | - (NSDictionary *)metadata AL_DEPRECATED(4, "Use
+       CGImageSourceCopyPropertiesAtIndex() to retrieve metadata from an image
+       returned by the PHImageManager from the Photos framework instead");
+          | ^
+    12 warnings generated.
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/CompressFileHandler.m:109:16: warning: unused variable 'swf'
+    [-Wunused-variable]
+      109 |     const char swf[3] = {'F', 'W', 'S'};
+          |                ^~~
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_image_compress_common-1.0.6/ios/
+    Classes/CompressFileHandler.m:110:16: warning: unused variable 'swc'
+    [-Wunused-variable]
+      110 |     const char swc[3] = {'C', 'W', 'S'};
+          |                ^~~
+    2 warnings generated.
+    /Users/ll/.pub-cache/hosted/pub.dev/adaptive_platform_ui-0.1.107/ios/Classes
+    /iOS26ButtonView.swift:306:16: warning: 'contentEdgeInsets' was deprecated
+    in iOS 15.0: This property is ignored when using UIButtonConfiguration
+            button.contentEdgeInsets = UIEdgeInsets(top: 8, left: 16, bottom: 8,
+            right: 16)
+                   ^
+    /Users/ll/.pub-cache/hosted/pub.dev/adaptive_platform_ui-0.1.107/ios/Classes
+    /iOS26NativeTabBarManager.swift:52:46: warning: 'windows' was deprecated in
+    iOS 15.0: Use UIWindowScene.windows on a relevant window scene instead
+            if let window = UIApplication.shared.windows.first(where: {
+            $0.isKeyWindow }) {
+                                                 ^
+    /Users/ll/.pub-cache/hosted/pub.dev/adaptive_platform_ui-0.1.107/ios/Classes
+    /iOS26SearchTabBarController.swift:93:12: warning: unnecessary check for
+    'iOS'; enclosing scope ensures guard will always be true
+            if #available(iOS 26.0, *) {
+               ^
+    /Users/ll/.pub-cache/hosted/pub.dev/adaptive_platform_ui-0.1.107/ios/Classes
+    /iOS26SearchTabBarController.swift:7:7: note: enclosing scope here
+    class iOS26SearchTabBarController: UITabBarController,
+    UISearchResultsUpdating, UISearchBarDelegate {
+          ^
+    /Users/ll/.pub-cache/hosted/pub.dev/adaptive_platform_ui-0.1.107/ios/Classes
+    /iOS26SearchTabBarController.swift:292:12: warning: unnecessary check for
+    'iOS'; enclosing scope ensures guard will always be true
+            if #available(iOS 26.0, *) {
+               ^
+    /Users/ll/.pub-cache/hosted/pub.dev/adaptive_platform_ui-0.1.107/ios/Classes
+    /iOS26SearchTabBarController.swift:280:7: note: enclosing scope here
+    class iOS26SearchTabBarPlatformView: NSObject, FlutterPlatformView {
+          ^
+    /Users/ll/.pub-cache/hosted/pub.dev/adaptive_platform_ui-0.1.107/ios/Classes
+    /iOS26TabBarPlatformView.swift:56:13: warning: variable 'spacerFlags' was
+    written to, but never read
+            var spacerFlags: [Bool] = []
+                ^
+    /Users/ll/.pub-cache/hosted/pub.dev/adaptive_platform_ui-0.1.107/ios/Classes
+    /iOS26TabBarPlatformView.swift:519:17: warning: variable 'tintColor' was
+    written to, but never read
+                var tintColor: UIColor? = nil
+                    ^
+    /Users/ll/.pub-cache/hosted/pub.dev/adaptive_platform_ui-0.1.107/ios/Classes
+    /iOS26TabBarPlatformView.swift:520:17: warning: variable 'unselectedColor'
+    was written to, but never read
+                var unselectedColor: UIColor? = nil
+                    ^
+    /Users/ll/NLP/open-webui-app/ios/Pods/SDWebImageWebPCoder/SDWebImageWebPCode
+    r/Classes/SDImageWebPCoder.m:466:61: warning: bitwise operation between
+    different enumeration types ('enum CGBitmapInfo' and 'enum
+    CGImageAlphaInfo') [-Wenum-enum-conversion]
+      466 |         CGBitmapInfo bitmapInfo = kCGBitmapByteOrderDefault |
+      kCGImageAlphaPremultipliedLast;
+          |                                   ~~~~~~~~~~~~~~~~~~~~~~~~~ ^
+          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    /Users/ll/NLP/open-webui-app/ios/Pods/SDWebImageWebPCoder/SDWebImageWebPCode
+    r/Classes/SDImageWebPCoder.m:891:52: warning: bitwise operation between
+    different enumeration types ('enum CGImageAlphaInfo' and 'enum
+    CGBitmapInfo') [-Wenum-enum-conversion]
+      891 |         .bitmapInfo = hasAlpha ? kCGImageAlphaLast |
+      kCGBitmapByteOrderDefault : kCGImageAlphaNone | kCGBitmapByteOrderDefault,
+      // RGB888/RGBA8888 (Non-premultiplied to works for libwebp)
+          |                                  ~~~~~~~~~~~~~~~~~ ^
+          ~~~~~~~~~~~~~~~~~~~~~~~~~
+    /Users/ll/NLP/open-webui-app/ios/Pods/SDWebImageWebPCoder/SDWebImageWebPCode
+    r/Classes/SDImageWebPCoder.m:891:100: warning: bitwise operation between
+    different enumeration types ('enum CGImageAlphaInfo' and 'enum
+    CGBitmapInfo') [-Wenum-enum-conversion]
+      891 |         .bitmapInfo = hasAlpha ? kCGImageAlphaLast |
+      kCGBitmapByteOrderDefault : kCGImageAlphaNone | kCGBitmapByteOrderDefault,
+      // RGB888/RGBA8888 (Non-premultiplied to works for libwebp)
+          |
+          ~~~~~~~~~~~~~~~~~ ^ ~~~~~~~~~~~~~~~~~~~~~~~~~
+    3 warnings generated.
+    /Users/ll/NLP/open-webui-app/ios/Pods/SDWebImage/SDWebImage/Core/UIImage+Tra
+    nsform.m:761:58: warning: bitwise operation between different enumeration
+    types ('CGBitmapInfo' (aka 'enum CGBitmapInfo') and 'enum
+    CGImagePixelFormatInfo') [-Wenum-enum-conversion]
+      761 |         CGImagePixelFormatInfo pixelFormat = (bitmapInfo &
+      kCGImagePixelFormatMask);
+          |                                               ~~~~~~~~~~ ^
+          ~~~~~~~~~~~~~~~~~~~~~~~
+    /Users/ll/NLP/open-webui-app/ios/Pods/SDWebImage/SDWebImage/Core/UIImage+Tra
+    nsform.m:847:58: warning: bitwise operation between different enumeration
+    types ('CGBitmapInfo' (aka 'enum CGBitmapInfo') and 'enum
+    CGImagePixelFormatInfo') [-Wenum-enum-conversion]
+      847 |         CGImagePixelFormatInfo pixelFormat = (bitmapInfo &
+      kCGImagePixelFormatMask);
+          |                                               ~~~~~~~~~~ ^
+          ~~~~~~~~~~~~~~~~~~~~~~~
+    /Users/ll/NLP/open-webui-app/ios/Pods/SDWebImage/SDWebImage/Core/UIImage+Tra
+    nsform.m:964:55: warning: bitwise operation between different enumeration
+    types ('enum CGImageAlphaInfo' and 'const CGBitmapInfo' (aka 'const enum
+    CGBitmapInfo')) [-Wenum-enum-conversion]
+      964 |         .bitmapInfo = kCGImageAlphaPremultipliedFirst |
+      kCGBitmapByteOrder32Host, //requests a BGRA buffer.
+          |                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ^
+          ~~~~~~~~~~~~~~~~~~~~~~~~
+    3 warnings generated.
+    /Users/ll/NLP/open-webui-app/ios/Pods/SDWebImage/SDWebImage/Core/SDImageIOAn
+    imatedCoder.m:203:51: warning: bitwise operation between different
+    enumeration types ('CGImageAlphaInfo' (aka 'enum CGImageAlphaInfo') and
+    'CGBitmapInfo' (aka 'enum CGBitmapInfo')) [-Wenum-enum-conversion]
+      203 |         CGBitmapInfo newBitmapInfo = newAlphaInfo | byteOrderInfo;
+          |                                      ~~~~~~~~~~~~ ^ ~~~~~~~~~~~~~
+    1 warning generated.
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_callkit_incoming-3.0.0/ios/Class
+    es/Call.swift:323:17: warning: variable 'mapExtras' was never mutated;
+    consider changing to 'let' constant
+                var mapExtras = extra as? [String: Any]
+                ~~~ ^
+                let
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_callkit_incoming-3.0.0/ios/Class
+    es/CallkitNotificationManager.swift:25:29: warning: 'alert' was deprecated
+    in iOS 14.0
+            completionHandler([.alert, .sound, .badge])
+                                ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_callkit_incoming-3.0.0/ios/Class
+    es/CallkitNotificationManager.swift:66:42: warning: 'keyWindow' was
+    deprecated in iOS 13.0: Should not be used for applications that support
+    multiple scenes as it returns a key window across all connected scenes
+                        UIApplication.shared.keyWindow?.rootViewController?.pres
+                        ent(alert, animated: true)
+                                             ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_callkit_incoming-3.0.0/ios/Class
+    es/CallkitNotificationManager.swift:81:42: warning: 'keyWindow' was
+    deprecated in iOS 13.0: Should not be used for applications that support
+    multiple scenes as it returns a key window across all connected scenes
+                        UIApplication.shared.keyWindow?.rootViewController?.pres
+                        ent(alert, animated: true)
+                                             ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_callkit_incoming-3.0.0/ios/Class
+    es/NSUserActivity.swift:57:11: warning: 'INStartAudioCallIntent' was
+    deprecated in iOS 13.0: INStartAudioCallIntent is deprecated. Please adopt
+    INStartCallIntent instead
+    extension INStartAudioCallIntent: SupportedStartCallIntent {}
+              ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_callkit_incoming-3.0.0/ios/Class
+    es/NSUserActivity.swift:58:11: warning: 'INStartVideoCallIntent' was
+    deprecated in iOS 13.0: INStartVideoCallIntent is deprecated. Please adopt
+    INStartCallIntent instead
+    extension INStartVideoCallIntent: SupportedStartCallIntent {}
+              ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_callkit_incoming-3.0.0/ios/Class
+    es/NSUserActivity.swift:33:35: warning: 'INStartVideoCallIntent' was
+    deprecated in iOS 13.0: INStartVideoCallIntent is deprecated. Please adopt
+    INStartCallIntent instead
+            return startCallIntent is INStartVideoCallIntent
+                                      ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_callkit_incoming-3.0.0/ios/Class
+    es/SwiftFlutterCallkitIncomingPlugin.swift:472:29: warning:
+    'init(localizedName:)' was deprecated in iOS 14.0
+            let configuration = CXProviderConfiguration(localizedName:
+            data.appName)
+                                ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_callkit_incoming-3.0.0/ios/Class
+    es/SwiftFlutterCallkitIncomingPlugin.swift:513:22: warning: 'allowBluetooth'
+    was deprecated in iOS 8.0: renamed to
+    'AVAudioSession.CategoryOptions.allowBluetoothHFP'
+                        .allowBluetooth,
+                         ^
+    /Users/ll/.pub-cache/hosted/pub.dev/flutter_callkit_incoming-3.0.0/ios/Class
+    es/SwiftFlutterCallkitIncomingPlugin.swift:513:22: note: use
+    'AVAudioSession.CategoryOptions.allowBluetoothHFP' instead
+                        .allowBluetooth,
+                         ^~~~~~~~~~~~~~
+                         AVAudioSession.CategoryOptions.allowBluetoothHFP
+    /Users/ll/NLP/open-webui-app/ios/Runner.xcodeproj: ShareExtension: ld:
+    warning: ignoring duplicate libraries: '-lc++'
+    /* com.apple.actool.document.warnings */
+    /Users/ll/NLP/open-webui-app/ios/Runner/Assets.xcassets:./AppIcon.appiconset
+    /(null)[2d][AppIcon-20@2x.png]: warning: The app icon set "AppIcon" has 21
+    unassigned children.
+    /Users/ll/NLP/open-webui-app/ios/Runner/Assets.xcassets:./AppIcon.appiconset
+    /(null)[2d][AppIcon-20@2x.png]: warning: The app icon set "AppIcon" has 21
+    unassigned children.
+    /* com.apple.actool.compilation-results */
+    /Users/ll/Library/Developer/Xcode/DerivedData/Runner-cxjicfuquldjhtacnsjkvfv
+    tgmsp/Build/Intermediates.noindex/Runner.build/Release-iphoneos/Runner.build
+    /DerivedSources/GeneratedAssetSymbols-Index.plist
+    /Users/ll/Library/Developer/Xcode/DerivedData/Runner-cxjicfuquldjhtacnsjkvfv
+    tgmsp/Build/Intermediates.noindex/Runner.build/Release-iphoneos/Runner.build
+    /DerivedSources/GeneratedAssetSymbols.h
+    /Users/ll/Library/Developer/Xcode/DerivedData/Runner-cxjicfuquldjhtacnsjkvfv
+    tgmsp/Build/Intermediates.noindex/Runner.build/Release-iphoneos/Runner.build
+    /DerivedSources/GeneratedAssetSymbols.swift
   
-### Plugins
+    /* com.apple.actool.document.warnings */
+    /Users/ll/NLP/open-webui-app/ios/Runner/Assets.xcassets:./AppIcon.appiconset
+    /(null)[2d][AppIcon-20@2x.png]: warning: The app icon set "AppIcon" has 21
+    unassigned children.
+    /Users/ll/NLP/open-webui-app/ios/Runner/Assets.xcassets:./AppIcon.appiconset
+    /(null)[2d][AppIcon-20@2x.png]: warning: The app icon set "AppIcon" has 21
+    unassigned children.
+    /Users/ll/NLP/open-webui-app/ios/Runner/Assets.xcassets:./AppIcon.appiconset
+    /(null)[2d][AppIcon-20@2x.png]: warning: The app icon set "AppIcon" has 21
+    unassigned children.
+    /* com.apple.actool.document.notices */
+    /Users/ll/NLP/open-webui-app/ios/Runner/Assets.xcassets:./AppIcon.appiconset
+    /[][iphone][57x57][][][1x][][][][]: notice: 57x57 app icons only apply to
+    iPhone apps targeting releases of iOS prior to 7.0
+    /Users/ll/NLP/open-webui-app/ios/Runner/Assets.xcassets:./AppIcon.appiconset
+    /[][iphone][57x57][][][2x][][][][]: notice: 57x57@2x app icons only apply to
+    iPhone apps targeting releases of iOS prior to 7.0
+    /Users/ll/NLP/open-webui-app/ios/Runner/Assets.xcassets:./AppIcon.appiconset
+    /[][ipad][50x50][][][1x][][][][]: notice: 50x50 iPad spotlight icons only
+    apply to iPad apps targeting releases of iOS prior to 7.0
+    /Users/ll/NLP/open-webui-app/ios/Runner/Assets.xcassets:./AppIcon.appiconset
+    /[][ipad][50x50][][][2x][][][][]: notice: 50x50 iPad spotlight icons only
+    apply to iPad apps targeting releases of iOS prior to 7.0
+    /Users/ll/NLP/open-webui-app/ios/Runner/Assets.xcassets:./AppIcon.appiconset
+    /[][ipad][72x72][][][1x][][][][]: notice: 72x72 app icons only apply to iPad
+    apps targeting releases of iOS prior to 7.0
+    /Users/ll/NLP/open-webui-app/ios/Runner/Assets.xcassets:./AppIcon.appiconset
+    /[][ipad][72x72][][][2x][][][][]: notice: 72x72@2x app icons only apply to
+    iPad apps targeting releases of iOS prior to 7.0
+    /Users/ll/NLP/open-webui-app/ios/Runner/Assets.xcassets:./AppIcon.appiconset
+    /[][ipad][76x76][][][1x][][][][]: notice: 76x76@1x app icons only apply to
+    iPad apps targeting releases of iOS prior to 10.0.
+    /* com.apple.actool.compilation-results */
+    /Users/ll/Library/Developer/Xcode/DerivedData/Runner-cxjicfuquldjhtacnsjkvfv
+    tgmsp/Build/Intermediates.noindex/Runner.build/Release-iphoneos/Runner.build
+    /assetcatalog_generated_info.plist_thinned
+    /Users/ll/Library/Developer/Xcode/DerivedData/Runner-cxjicfuquldjhtacnsjkvfv
+    tgmsp/Build/Intermediates.noindex/Runner.build/Release-iphoneos/Runner.build
+    /assetcatalog_output/thinned/AppIcon60x60@2x.png
+    /Users/ll/Library/Developer/Xcode/DerivedData/Runner-cxjicfuquldjhtacnsjkvfv
+    tgmsp/Build/Intermediates.noindex/Runner.build/Release-iphoneos/Runner.build
+    /assetcatalog_output/thinned/AppIcon76x76@2x~ipad.png
+    /Users/ll/Library/Developer/Xcode/DerivedData/Runner-cxjicfuquldjhtacnsjkvfv
+    tgmsp/Build/Intermediates.noindex/Runner.build/Release-iphoneos/Runner.build
+    /assetcatalog_output/thinned/Assets.car
   
-```
-cocoapods-deintegrate : 1.0.5
-cocoapods-plugins     : 1.0.0
-cocoapods-search      : 1.0.1
-cocoapods-trunk       : 1.6.0
-cocoapods-try         : 1.2.0
-```
+    /Users/ll/NLP/open-webui-app/ios/Runner/NativeSheetBridge.swift:3588:43:
+    warning: comparing non-optional value of type 'String' to 'nil' always
+    returns false
+            subtitleLabel.isHidden = subtitle == nil
+                                     ~~~~~~~~ ^  ~~~
+    /Users/ll/NLP/open-webui-app/ios/Runner/AppDelegate.swift:78:26: warning:
+    'allowBluetooth' was deprecated in iOS 8.0: renamed to
+    'AVAudioSession.CategoryOptions.allowBluetoothHFP'
+                            .allowBluetooth,
+                             ^
+    /Users/ll/NLP/open-webui-app/ios/Runner/AppDelegate.swift:78:26: note: use
+    'AVAudioSession.CategoryOptions.allowBluetoothHFP' instead
+                            .allowBluetooth,
+                             ^~~~~~~~~~~~~~
+                             AVAudioSession.CategoryOptions.allowBluetoothHFP
+    /Users/ll/NLP/open-webui-app/ios/Runner/AppDelegate.swift:515:27: warning:
+    main actor-isolated class property 'shared' can not be referenced from a
+    nonisolated context
+                UIApplication.shared.endBackgroundTask(task)
+                              ^
+    /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Devel
+    oper/SDKs/iPhoneOS26.4.sdk/System/Library/Frameworks/UIKit.framework/Headers
+    /UIApplication.h:87:54: note: class property declared here
+    @property(class, nonatomic, readonly) UIApplication *sharedApplication
+    NS_EXTENSION_UNAVAILABLE_IOS("Use view controller based solutions where
+    appropriate instead.");
+                                                         ^
+    /Users/ll/NLP/open-webui-app/ios/Runner/AppDelegate.swift:545:17: warning:
+    capture of 'self' with non-Sendable type 'AppIntentMethodChannel' in a
+    '@Sendable' closure
+                    self.channel.invokeMethod(
+                    ^
+    /Users/ll/NLP/open-webui-app/ios/Runner/AppDelegate.swift:523:13: note:
+    class 'AppIntentMethodChannel' does not conform to the 'Sendable' protocol
+    final class AppIntentMethodChannel {
+                ^
+    /Users/ll/NLP/open-webui-app/ios/Runner/AppDelegate.swift:752:35: warning:
+    left side of nil coalescing operator '??' has non-optional type 'String', so
+    the right side is never used
+            let name = image.filename ?? "shared_image.jpg"
+                       ~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~
   
-### Podfile
+    /Users/ll/NLP/open-webui-app/ios/Runner/AppDelegate.swift:750:20: warning:
+    no calls to throwing functions occur within 'try' expression
+            let data = try image.data
+                       ^
+    lib/shared/utils/platform_page_route.dart:75:18: Error: Not a constant
+    expression.
+        return const CupertinoPageTransitionsBuilder().buildTransitions<T>(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    Target kernel_snapshot_program failed: Exception
+    Failed to package /Users/ll/NLP/open-webui-app.
+    Command PhaseScriptExecution failed with a nonzero exit code
+    warning: The CFBundleVersion of an app extension ('1') must match that of
+    its containing parent app ('116').
+    warning: The CFBundleVersion of an app extension ('1') must match that of
+    its containing parent app ('116').
+    warning: Run script build phase '[CP] Copy XCFrameworks' will be run during
+    every build because it does not specify any outputs. To address this issue,
+    either add output dependencies to the script phase, or configure it to run
+    in every build by unchecking "Based on dependency analysis" in the script
+    phase. (in target 'onnxruntime-c' from project 'Pods')
+    /Users/ll/NLP/open-webui-app/ios/Pods/Pods.xcodeproj: warning: The iOS
+    deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range
+    of supported deployment target versions is 12.0 to 26.4.99. (in target
+    'permission_handler_apple-permission_handler_apple_privacy' from project
+    'Pods')
+    /Users/ll/NLP/open-webui-app/ios/Pods/Pods.xcodeproj: warning: The iOS
+    deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range
+    of supported deployment target versions is 12.0 to 26.4.99. (in target
+    'share_handler_ios_models' from project 'Pods')
+    /Users/ll/NLP/open-webui-app/ios/Pods/Pods.xcodeproj: warning: The iOS
+    deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range
+    of supported deployment target versions is 12.0 to 26.4.99. (in target
+    'libwebp' from project 'Pods')
+    /Users/ll/NLP/open-webui-app/ios/Pods/Pods.xcodeproj: warning: The iOS
+    deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range
+    of supported deployment target versions is 12.0 to 26.4.99. (in target
+    'SDWebImageWebPCoder' from project 'Pods')
+    /Users/ll/NLP/open-webui-app/ios/Pods/Pods.xcodeproj: warning: The iOS
+    deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range
+    of supported deployment target versions is 12.0 to 26.4.99. (in target
+    'SDWebImage-SDWebImage' from project 'Pods')
+    /Users/ll/NLP/open-webui-app/ios/Pods/Pods.xcodeproj: warning: The iOS
+    deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range
+    of supported deployment target versions is 12.0 to 26.4.99. (in target
+    'SDWebImage' from project 'Pods')
+    note: Run script build phase 'Run Script' will be run during every build
+    because the option to run the script phase "Based on dependency analysis" is
+    unchecked. (in target 'Runner' from project 'Runner')
+    note: Run script build phase 'Thin Binary' will be run during every build
+    because the option to run the script phase "Based on dependency analysis" is
+    unchecked. (in target 'Runner' from project 'Runner')
+    warning: Run script build phase '[CP] Copy Pods Resources' will be run
+    during every build because it does not specify any outputs. To address this
+    issue, either add output dependencies to the script phase, or configure it
+    to run in every build by unchecking "Based on dependency analysis" in the
+    script phase. (in target 'Runner' from project 'Runner')
+    warning: Run script build phase '[CP] Embed Pods Frameworks' will be run
+    during every build because it does not specify any outputs. To address this
+    issue, either add output dependencies to the script phase, or configure it
+    to run in every build by unchecking "Based on dependency analysis" in the
+    script phase. (in target 'Runner' from project 'Runner')
+    /Users/ll/NLP/open-webui-app/ios/Pods/Pods.xcodeproj: warning: The iOS
+    deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range
+    of supported deployment target versions is 12.0 to 26.4.99. (in target
+    'Mantle' from project 'Pods')
+    /Users/ll/NLP/open-webui-app/ios/Pods/Pods.xcodeproj: warning: The iOS
+    deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 11.0, but the range
+    of supported deployment target versions is 12.0 to 26.4.99. (in target
+    'CryptoSwift-CryptoSwift' from project 'Pods')
+    /Users/ll/NLP/open-webui-app/ios/Pods/Pods.xcodeproj: warning: The iOS
+    deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 11.0, but the range
+    of supported deployment target versions is 12.0 to 26.4.99. (in target
+    'CryptoSwift' from project 'Pods')
   
-```ruby
-# Uncomment this line to define a global platform for your project
-platform :ios, '16.0'
-  
-# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
-ENV['COCOAPODS_DISABLE_STATS'] = 'true'
-  
-# Work around Xcode cycle false-positives by letting CocoaPods not declare IO paths
-install! 'cocoapods', :disable_input_output_paths => true
-  
-project 'Runner', {
-  'Debug' => :debug,
-  'Profile' => :release,
-  'Release' => :release,
-}
-  
-def flutter_root
-  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), **FILE**)
-  unless File.exist?(generated_xcode_build_settings_path)
-    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
-  end
-  
-  File.foreach(generated_xcode_build_settings_path) do |line|
-    matches = line.match(/FLUTTER_ROOT\=(.*)/)
-    return matches[1].strip if matches
-  end
-  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
-end
-  
-require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
-  
-flutter_ios_podfile_setup
-  
-target 'Runner' do
-  # Use dynamic frameworks for native extension compatibility
-  use_frameworks! :linkage => :dynamic
-  use_modular_headers!
-  
-  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-  
-  # share_handler addition start
-  target 'ShareExtension' do
-    inherit! :search_paths
-    # Only models are needed in extension to avoid app-only APIs
-    pod "share_handler_ios_models", :path => ".symlinks/plugins/share_handler_ios/ios/Models"
-  end
-  # share_handler addition end
-  target 'RunnerTests' do
-    inherit! :search_paths
-  end
-end
-  
-post_install do |installer|
-  installer.pods_project.targets.each do |target|
-    flutter_additional_ios_build_settings(target)
-    target.build_configurations.each do |config|
-      defs = config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || ['$(inherited)']
-      defs = [defs] if defs.is_a?(String)
-      %w[
-        PERMISSION_MICROPHONE=1
-        PERMISSION_SPEECH_RECOGNIZER=1
-        PERMISSION_NOTIFICATIONS=1
-      ].each do |flag|
-        defs << flag unless defs.include?(flag)
-      end
-      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = defs
-  
-      # Flutter engine in this setup is arm64-only for simulator.
-      # Exclude x86_64 simulator architecture to avoid unresolved Flutter
-      # symbols when Xcode attempts a universal simulator link.
-      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
-    end
-  end
-  
-  # Add -ObjC linker flag for objective_c native assets (required for Release builds)
-  # This fixes: "dlsym(RTLD_DEFAULT, DOBJC_initializeApi): symbol not found"
-  installer.aggregate_targets.each do |aggregate_target|
-    user_project = aggregate_target.user_project
-    user_project.native_targets.each do |native_target|
-      if ['Runner', 'ShareExtension'].include?(native_target.name)
-        native_target.build_configurations.each do |config|
-          config.build_settings['ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES'] = 'NO'
-          config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
-
-          # Add -ObjC and -lc++ flags for native extensions support
-          other_ldflags = config.build_settings['OTHER_LDFLAGS'] || ['$(inherited)']
-          other_ldflags = [other_ldflags] if other_ldflags.is_a?(String)
-          unless other_ldflags.include?('-ObjC')
-            other_ldflags << '-ObjC'
-          end
-          unless other_ldflags.include?('-lc++')
-            other_ldflags << '-lc++'
-          end
-          config.build_settings['OTHER_LDFLAGS'] = other_ldflags
-  
-          if native_target.name == 'Runner' && ['Release', 'Profile'].include?(config.name)
-            # The VAD package uses ONNX Runtime through FFI. Archived iOS
-            # builds can strip the exported OrtGetApiBase symbol unless the
-            # Runner target keeps the linked product intact.
-            config.build_settings['STRIP_INSTALLED_PRODUCT'] = 'NO'
-            config.build_settings['STRIP_STYLE'] = 'non-global'
-          end
-        end
-      end
-    end
-    user_project.save
-  end
-end
-```
-  
-### Error
-  
-```
-ArgumentError - [Xcodeproj] Unable to find compatibility version string for object version `70`.
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/xcodeproj-1.27.0/lib/xcodeproj/project.rb:85:in 'Xcodeproj::Project#initialize'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/project.rb:48:in 'Pod::Project#initialize'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer/xcode/pods_project_generator/project_generator.rb:82:in 'Pod::Installer::Xcode::ProjectGenerator#create_project'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer/xcode/pods_project_generator/project_generator.rb:73:in 'Pod::Installer::Xcode::ProjectGenerator#generate!'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer/xcode/single_pods_project_generator.rb:16:in 'Pod::Installer::Xcode::SinglePodsProjectGenerator#generate!'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer.rb:320:in 'block in Pod::Installer#create_and_save_projects'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/user_interface.rb:64:in 'Pod::UserInterface.section'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer.rb:315:in 'Pod::Installer#create_and_save_projects'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer.rb:307:in 'Pod::Installer#generate_pods_project'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer.rb:183:in 'Pod::Installer#integrate'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer.rb:170:in 'Pod::Installer#install!'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/command/install.rb:52:in 'Pod::Command::Install#run'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/claide-1.1.0/lib/claide/command.rb:334:in 'CLAide::Command.run'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/command.rb:52:in 'Pod::Command.run'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/bin/pod:55:in '<top (required)>'
-/opt/homebrew/Cellar/ruby/4.0.2/lib/ruby/4.0.0/rubygems.rb:304:in 'Kernel#load'
-/opt/homebrew/Cellar/ruby/4.0.2/lib/ruby/4.0.0/rubygems.rb:304:in 'Gem.activate_and_load_bin_path'
-/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/bin/pod:25:in '<main>'
-```
-  
-――― TEMPLATE END ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
-  
-[!] Oh no, an error occurred.
-  
-Search for existing GitHub issues similar to yours:
-https://github.com/CocoaPods/CocoaPods/search?q=%5BXcodeproj%5D+Unable+to+find+compatibility+version+string+for+object+version+%6070%60.&type=Issues
-  
-If none exists, create a ticket, with the template displayed above, on:
-https://github.com/CocoaPods/CocoaPods/issues/new
-  
-Be sure to first read the contributing guide for details on how to properly submit a ticket:
-https://github.com/CocoaPods/CocoaPods/blob/master/CONTRIBUTING.md
-  
-Don't forget to anonymize any private data!
-  
-Looking for related issues on cocoapods/cocoapods...
- - Unable to find compatibility version string for object version `70`
-   https://github.com/CocoaPods/CocoaPods/issues/12889 [open] [2 comments]
-   27 Feb 2026
-  
- - Unable to find compatibility version string for object version `70`
-   https://github.com/CocoaPods/CocoaPods/issues/12840 [open] [18 comments]
-   12 Feb 2026
-  
- - CocoaPods don't install in my project
-   https://github.com/CocoaPods/CocoaPods/issues/12764 [open] [5 comments]
-   28 Jan 2026
-  
-and 7 more at:
-https://github.com/cocoapods/cocoapods/search?q=%5BXcodeproj%5D%20Unable%20to%20find%20compatibility%20version%20string%20for%20object%20version%20%6070%60.&type=Issues&utf8=✓
-ll@LLdeMacBook-Pro ios %
+Encountered error while building for device.
+ll@LLdeMacBook-Pro open-webui-app %
