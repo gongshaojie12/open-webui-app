@@ -32,7 +32,17 @@
       "Bash(git checkout *)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "Bash(cp lib/l10n/app_zh.arb /tmp/app_zh_test.arb)",
+      "Bash(sed -E ':a; s/\\(\": *\"[^\"]*\\)Conduit\\([^\"]*\"\\)/\\\\1众小智AI\\\\2/g; ta' lib/l10n/app_zh.arb)",
+      "Read(//tmp/**)",
+      "Bash(py --version)",
+      "Bash(sed -i -e '487,593d' -e '480d' lib/features/auth/views/authentication_page.dart)",
+      "Bash(grep -n *)",
+      "Bash(java -version)",
+      "Bash(flutter doctor *)",
+      "Bash(flutter build *)",
+      "Bash(powershell *)"
     ]
   },
   "hooks": {

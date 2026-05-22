@@ -1,0 +1,254 @@
+ll@LLdeMacBook-Pro ios % pod install --repo-update
+Updating local specs repositories
+Analyzing dependencies
+Downloading dependencies
+Installing CryptoSwift (1.10.0)
+Installing CwlCatchException (2.2.1)
+Installing CwlCatchExceptionSupport (2.2.1)
+Installing DKImagePickerController (4.3.9)
+Installing DKPhotoGallery (0.0.19)
+Installing Flutter (1.0.0)
+Installing Mantle (2.2.0)
+Installing SDWebImage (5.21.7)
+Installing SDWebImageWebPCoder (0.15.0)
+Installing SwiftyGif (5.4.5)
+Installing adaptive_platform_ui (0.1.0)
+Installing audio_session (0.0.1)
+Installing connectivity_plus (0.0.1)
+Installing file_picker (0.0.1)
+Installing flutter_callkit_incoming (0.0.1)
+Installing flutter_image_compress_common (1.0.0)
+Installing flutter_local_notifications (0.0.1)
+Installing flutter_native_splash (2.4.3)
+Installing flutter_secure_storage_darwin (10.0.0)
+Installing flutter_tts (0.0.1)
+Installing gaimon (0.0.1)
+Installing home_widget (0.0.1)
+Installing image_picker_ios (0.0.1)
+Installing just_audio (0.0.1)
+Installing libwebp (1.5.0)
+Installing onnxruntime-c (1.22.0)
+Installing onnxruntime-objc (1.22.0)
+Installing package_info_plus (0.4.5)
+Installing permission_handler_apple (9.3.0)
+Installing quick_actions_ios (0.0.1)
+Installing record_ios (1.2.0)
+Installing share_handler_ios (0.0.14)
+Installing share_handler_ios_models (0.0.9)
+Installing share_plus (0.0.1)
+Installing shared_preferences_foundation (0.0.1)
+Installing speech_to_text (7.2.0)
+Installing sqflite_darwin (0.0.4)
+Installing url_launcher_ios (0.0.1)
+Installing vad (0.0.6)
+Installing wakelock_plus (0.0.1)
+Installing webview_flutter_wkwebview (0.0.1)
+Generating Pods project
+  
+――― MARKDOWN TEMPLATE ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+  
+### Command
+  
+```
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/bin/pod install --repo-update
+```
+  
+### Report
+  
+* What did you do?
+  
+* What did you expect to happen?
+  
+* What happened instead?
+  
+  
+### Stack
+  
+```
+   CocoaPods : 1.16.2
+        Ruby : ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin25]
+    RubyGems : 4.0.8
+        Host : macOS 26.4.1 (25E253)
+       Xcode : 26.4 (17E192)
+         Git : git version 2.53.0
+Ruby lib dir : /opt/homebrew/Cellar/ruby/4.0.2/lib
+Repositories : trunk - CDN - https://cdn.cocoapods.org/
+```
+  
+### Plugins
+  
+```
+cocoapods-deintegrate : 1.0.5
+cocoapods-plugins     : 1.0.0
+cocoapods-search      : 1.0.1
+cocoapods-trunk       : 1.6.0
+cocoapods-try         : 1.2.0
+```
+  
+### Podfile
+  
+```ruby
+# Uncomment this line to define a global platform for your project
+platform :ios, '16.0'
+  
+# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+  
+# Work around Xcode cycle false-positives by letting CocoaPods not declare IO paths
+install! 'cocoapods', :disable_input_output_paths => true
+  
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+  
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), **FILE**)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+  end
+  
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+end
+  
+require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+  
+flutter_ios_podfile_setup
+  
+target 'Runner' do
+  # Use dynamic frameworks for native extension compatibility
+  use_frameworks! :linkage => :dynamic
+  use_modular_headers!
+  
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+  
+  # share_handler addition start
+  target 'ShareExtension' do
+    inherit! :search_paths
+    # Only models are needed in extension to avoid app-only APIs
+    pod "share_handler_ios_models", :path => ".symlinks/plugins/share_handler_ios/ios/Models"
+  end
+  # share_handler addition end
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end
+  
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      defs = config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || ['$(inherited)']
+      defs = [defs] if defs.is_a?(String)
+      %w[
+        PERMISSION_MICROPHONE=1
+        PERMISSION_SPEECH_RECOGNIZER=1
+        PERMISSION_NOTIFICATIONS=1
+      ].each do |flag|
+        defs << flag unless defs.include?(flag)
+      end
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = defs
+  
+      # Flutter engine in this setup is arm64-only for simulator.
+      # Exclude x86_64 simulator architecture to avoid unresolved Flutter
+      # symbols when Xcode attempts a universal simulator link.
+      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
+    end
+  end
+  
+  # Add -ObjC linker flag for objective_c native assets (required for Release builds)
+  # This fixes: "dlsym(RTLD_DEFAULT, DOBJC_initializeApi): symbol not found"
+  installer.aggregate_targets.each do |aggregate_target|
+    user_project = aggregate_target.user_project
+    user_project.native_targets.each do |native_target|
+      if ['Runner', 'ShareExtension'].include?(native_target.name)
+        native_target.build_configurations.each do |config|
+          config.build_settings['ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES'] = 'NO'
+          config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
+
+          # Add -ObjC and -lc++ flags for native extensions support
+          other_ldflags = config.build_settings['OTHER_LDFLAGS'] || ['$(inherited)']
+          other_ldflags = [other_ldflags] if other_ldflags.is_a?(String)
+          unless other_ldflags.include?('-ObjC')
+            other_ldflags << '-ObjC'
+          end
+          unless other_ldflags.include?('-lc++')
+            other_ldflags << '-lc++'
+          end
+          config.build_settings['OTHER_LDFLAGS'] = other_ldflags
+  
+          if native_target.name == 'Runner' && ['Release', 'Profile'].include?(config.name)
+            # The VAD package uses ONNX Runtime through FFI. Archived iOS
+            # builds can strip the exported OrtGetApiBase symbol unless the
+            # Runner target keeps the linked product intact.
+            config.build_settings['STRIP_INSTALLED_PRODUCT'] = 'NO'
+            config.build_settings['STRIP_STYLE'] = 'non-global'
+          end
+        end
+      end
+    end
+    user_project.save
+  end
+end
+```
+  
+### Error
+  
+```
+ArgumentError - [Xcodeproj] Unable to find compatibility version string for object version `70`.
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/xcodeproj-1.27.0/lib/xcodeproj/project.rb:85:in 'Xcodeproj::Project#initialize'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/project.rb:48:in 'Pod::Project#initialize'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer/xcode/pods_project_generator/project_generator.rb:82:in 'Pod::Installer::Xcode::ProjectGenerator#create_project'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer/xcode/pods_project_generator/project_generator.rb:73:in 'Pod::Installer::Xcode::ProjectGenerator#generate!'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer/xcode/single_pods_project_generator.rb:16:in 'Pod::Installer::Xcode::SinglePodsProjectGenerator#generate!'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer.rb:320:in 'block in Pod::Installer#create_and_save_projects'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/user_interface.rb:64:in 'Pod::UserInterface.section'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer.rb:315:in 'Pod::Installer#create_and_save_projects'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer.rb:307:in 'Pod::Installer#generate_pods_project'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer.rb:183:in 'Pod::Installer#integrate'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/installer.rb:170:in 'Pod::Installer#install!'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/command/install.rb:52:in 'Pod::Command::Install#run'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/claide-1.1.0/lib/claide/command.rb:334:in 'CLAide::Command.run'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/lib/cocoapods/command.rb:52:in 'Pod::Command.run'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/gems/cocoapods-1.16.2/bin/pod:55:in '<top (required)>'
+/opt/homebrew/Cellar/ruby/4.0.2/lib/ruby/4.0.0/rubygems.rb:304:in 'Kernel#load'
+/opt/homebrew/Cellar/ruby/4.0.2/lib/ruby/4.0.0/rubygems.rb:304:in 'Gem.activate_and_load_bin_path'
+/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec/bin/pod:25:in '<main>'
+```
+  
+――― TEMPLATE END ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+  
+[!] Oh no, an error occurred.
+  
+Search for existing GitHub issues similar to yours:
+https://github.com/CocoaPods/CocoaPods/search?q=%5BXcodeproj%5D+Unable+to+find+compatibility+version+string+for+object+version+%6070%60.&type=Issues
+  
+If none exists, create a ticket, with the template displayed above, on:
+https://github.com/CocoaPods/CocoaPods/issues/new
+  
+Be sure to first read the contributing guide for details on how to properly submit a ticket:
+https://github.com/CocoaPods/CocoaPods/blob/master/CONTRIBUTING.md
+  
+Don't forget to anonymize any private data!
+  
+Looking for related issues on cocoapods/cocoapods...
+ - Unable to find compatibility version string for object version `70`
+   https://github.com/CocoaPods/CocoaPods/issues/12889 [open] [2 comments]
+   27 Feb 2026
+  
+ - Unable to find compatibility version string for object version `70`
+   https://github.com/CocoaPods/CocoaPods/issues/12840 [open] [18 comments]
+   12 Feb 2026
+  
+ - CocoaPods don't install in my project
+   https://github.com/CocoaPods/CocoaPods/issues/12764 [open] [5 comments]
+   28 Jan 2026
+  
+and 7 more at:
+https://github.com/cocoapods/cocoapods/search?q=%5BXcodeproj%5D%20Unable%20to%20find%20compatibility%20version%20string%20for%20object%20version%20%6070%60.&type=Issues&utf8=✓
+ll@LLdeMacBook-Pro ios %

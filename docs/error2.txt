@@ -1,0 +1,43 @@
+ll@LLdeMacBook-Pro open-webui-app % ls -la ios/.symlinks/plugins | grep super
+ll@LLdeMacBook-Pro open-webui-app % ls ios/Pods | grep -i super
+ll@LLdeMacBook-Pro open-webui-app % cd ios && pod install
+Analyzing dependencies
+Downloading dependencies
+Generating Pods project
+Integrating client project
+Pod installation complete! There are 29 dependencies from the Podfile and 41 total pods installed.
+  
+[!] CocoaPods did not set the base configuration of your project because your project already has a custom config set. In order for CocoaPods integration to work at all, please either set the base configurations of the target `Runner` to `Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig` or include the `Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig` in your build configuration `Flutter/Release.xcconfig`).
+  
+[!] The `Runner [Debug]` target overrides the `ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES` build setting defined in `Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig'. This can lead to problems with the CocoaPods installation
+    - Use the `$(inherited)` flag, or
+    - Remove the build settings from the target.
+  
+[!] The `Runner [Release]` target overrides the `ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES` build setting defined in `Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig'. This can lead to problems with the CocoaPods installation
+    - Use the `$(inherited)` flag, or
+    - Remove the build settings from the target.
+  
+[!] The `Runner [Profile]` target overrides the `ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES` build setting defined in `Pods/Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig'. This can lead to problems with the CocoaPods installation
+    - Use the `$(inherited)` flag, or
+    - Remove the build settings from the target.
+  
+[!] The `ShareExtension [Debug]` target overrides the `CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER` build setting defined in `Pods/Target Support Files/Pods-ShareExtension/Pods-ShareExtension.debug.xcconfig'. This can lead to problems with the CocoaPods installation
+    - Use the `$(inherited)` flag, or
+    - Remove the build settings from the target.
+  
+[!] The `ShareExtension [Release]` target overrides the `CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER` build setting defined in `Pods/Target Support Files/Pods-ShareExtension/Pods-ShareExtension.release.xcconfig'. This can lead to problems with the CocoaPods installation
+    - Use the `$(inherited)` flag, or
+    - Remove the build settings from the target.
+  
+[!] The `ShareExtension [Profile]` target overrides the `CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER` build setting defined in `Pods/Target Support Files/Pods-ShareExtension/Pods-ShareExtension.profile.xcconfig'. This can lead to problems with the CocoaPods installation
+    - Use the `$(inherited)` flag, or
+    - Remove the build settings from the target.
+ll@LLdeMacBook-Pro ios % cd ..
+ll@LLdeMacBook-Pro open-webui-app % echo "退出码:$?"
+退出码:0
+ll@LLdeMacBook-Pro open-webui-app % ls ios/Pods/onnxruntime-c/onnxruntime.xcframework
+Info.plist ios-arm64_x86_64-simulator
+ios-arm64 macos-arm64_x86_64
+ll@LLdeMacBook-Pro open-webui-app % grep objectVersion ios/Runner.xcodeproj/project.pbxproj 
+objectVersion = 54;
+ll@LLdeMacBook-Pro open-webui-app %
