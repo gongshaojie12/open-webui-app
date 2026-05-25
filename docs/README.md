@@ -51,25 +51,86 @@ open ios/Runner.xcworkspace       # macOS
 flutter config | grep -i swift
 # 期望输出：  enable-swift-package-manager: false
 
-ls ios/Flutter/ephemeral 2>/dev/null
-# 期望输出：(空，目录不存在)
+ls ios/Flutter/ephemeral/Packages 2>/dev/null
+# 期望输出：(空，目录不存在)。注意要看 Packages/ 子目录，
+# ephemeral/ 根目录下的 flutter_lldb_helper.py / flutter_lldbinit / flutter_native_integration.env
+# 是 LLDB 调试辅助文件，无论开不开 SPM 都会生成，不影响。
 ```
 
-### 副作用评估
+> ⚠️ **如果上面 `ls` 仍然能看到 `FlutterGeneratedPluginSwiftPackage`**，说明本项目的 `ios/Runner.xcodeproj/project.pbxproj` 已经被 Flutter 在更早版本时**"SPM 迁移"**过了（pbxproj 里硬编码了 `XCLocalSwiftPackageReference` 指向 `ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage`）。这种情况下，**全局 `flutter config --no-enable-swift-package-manager` 会被忽略**，每次 `flutter pub get` 仍然会再生成那个 `Package.swift`，build 仍然会挂在 iOS 13.0 上。
+>
+> 本项目目前**就是这个状态**，所以请走下面的"方案 B（sed 补丁）"。
 
-几乎没有。本项目当前所有 iOS 插件（`home_widget`、`vad`、`flutter_callkit_incoming`、`flutter_secure_storage`、`flutter_tex` 等）**全部都同时提供 CocoaPods podspec**，关掉 SPM 不影响任何功能。
+---
 
-只有极少数"SPM-only"的插件会受影响，目前 `pubspec.yaml` 里**一个都没有**。如果后续引入新插件时报 "No podspec found"，再考虑单独处理。
+## 方案 B：已 SPM 迁移项目的补丁（本项目当前实际方案）
 
-### 为什么不用脚本/Build Phase patch 那个文件？
+### 适用场景
 
-也可以写 `sed` 脚本在每次 `flutter pub get` 后把 `13.0` 改成 `16.0`，但：
+`flutter config --no-enable-swift-package-manager` 已执行但无效——`ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/` 每次 `flutter pub get` 都会重新生成，且 `Package.swift` 顶部 `platforms` 里始终是 `.iOS("13.0")`。
 
-- 每次 `flutter clean` / 切分支 / CI 重新初始化都得跑
-- 团队新人 clone 之后跑 build 必踩坑
-- 在 Xcode Build Phase 里加 Run Script 会污染 pbxproj
+### 根因
 
-而 `flutter config --no-enable-swift-package-manager` 是 **Flutter 官方支持的回退路径**，零维护、零侵入。
+`ios/Runner.xcodeproj/project.pbxproj` 在历史某次升级时被 Flutter 工具链改成了 SPM 模式（Runner target 含有 `XCLocalSwiftPackageReference` / `XCSwiftPackageProductDependency`，product 名为 `FlutterGeneratedPluginSwiftPackage`）。Flutter 看到 pbxproj 已经持有该本地包引用，就**绕过全局开关**继续生成它。
+
+要彻底回退到纯 CocoaPods 需要改动 pbxproj（删 `XCLocalSwiftPackageReference` 与 `XCSwiftPackageProductDependency`），风险高、和上游 diff 大。所以采用**一次 sed 补丁**把 `13.0` 改成 `16.0`，与 `ios/Podfile` 的 `platform :ios, '16.0'` 对齐，让 `home_widget` 等 iOS 14+ 插件通过最低版本检查。
+
+### 操作（每次 `flutter clean` / `flutter pub get` 之后跑一遍）
+
+```bash
+cd /path/to/open-webui-app
+
+sed -i '' 's/\.iOS("13\.0")/.iOS("16.0")/' \
+  ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift
+
+# 验证一行就够，应该输出：  .iOS("16.0")
+grep iOS ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift
+```
+
+> macOS 自带的 BSD `sed` 需要 `-i ''`（空字符串作为备份后缀），Linux GNU sed 写法是 `sed -i 's/.../.../'`。本项目 iOS 只能在 Mac 上 build，所以用 BSD 写法。
+
+### 然后在 Xcode 里
+
+1. **File → Packages → Reset Package Caches**（让 Xcode 重读 `Package.swift`，重新解析最低版本）
+2. **Product → Clean Build Folder**（`⇧⌘K`）
+3. **Product → Run**（`⌘R`）
+
+之前那条 `package product 'home-widget' requires minimum platform version 14.0` 报错应该消失。
+
+### 什么时候要重跑这条 sed
+
+- 每次 `flutter clean` 后第一次 build 前
+- 每次 `flutter pub get` 后（包括 `flutter pub upgrade`、改了 `pubspec.yaml` 之后）
+- 切分支导致 `ios/Flutter/ephemeral/` 被清空之后
+- `flutter upgrade` 之后
+
+**怎么省事**：把上面三行命令在 Mac 终端跑过一次后，按 `Ctrl+R` 输入 `sed` 即可从历史里复用，0.5 秒搞定。也可以考虑把它加进 `ios/Podfile` 的 `post_install` 里自动化（但要小心 `pub get` 是发生在 `pod install` 之前还是之后；目前不加是为了减少和上游 diff）。
+
+### 上游同步注意
+
+这条 sed 是**纯本地补丁**，不写进任何被 git 跟踪的文件：
+- `ios/Flutter/ephemeral/` 整个目录已被 `.gitignore` 忽略
+- `ios/Runner.xcodeproj/project.pbxproj` 不会改动
+- `pubspec.yaml` / `Podfile` 不会改动
+
+所以从上游 merge 后**只需重跑这条 sed**即可继续 build，不会产生冲突。
+
+### 长期想彻底解决？
+
+两条路，但都不推荐现在做（侵入性 vs 收益不成正比）：
+
+1. **手动改 pbxproj 删掉 SPM 引用**：找到 `XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage"` 整段、`XCSwiftPackageProductDependency` 中对应的 product、Runner target 的 `packageProductDependencies` 数组里的引用，三处一起删。删完之后 `flutter config --no-enable-swift-package-manager` 才会真正生效。但每次上游升级 Flutter 都可能把它写回去。
+2. **等 Flutter 修复 SPM 模板**：Flutter 团队已知此问题，预期在 SPM 模板里读 `IPHONEOS_DEPLOYMENT_TARGET` 而不是写死 `13.0`。届时升级 Flutter 后此 sed 可移除。
+
+在那之前，**sed 补丁是最低成本方案**。
+
+---
+
+## 副作用评估（方案 A / B 共通）
+
+几乎没有。本项目当前所有 iOS 插件（`home_widget`、`vad`、`flutter_callkit_incoming`、`flutter_secure_storage`、`flutter_tex` 等）**全部都同时提供 CocoaPods podspec**，把最低版本拉到 16.0 不影响任何功能（pbxproj 里所有 target 本来就是 iOS 16.0）。
+
+只有极少数"SPM-only"的插件会受影响，目前 `pubspec.yaml` 里**一个都没有**。如果后续引入新插件时报 "No podspec found" 或 "requires minimum platform version X.0"（X > 16），再考虑单独处理。
 
 ---
 
