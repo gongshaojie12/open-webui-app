@@ -177,8 +177,29 @@ Future<List<ServerConfig>> serverConfigs(Ref ref) async {
 @Riverpod(keepAlive: true)
 Future<ServerConfig?> activeServer(Ref ref) async {
   final storage = ref.watch(optimizedStorageServiceProvider);
-  final configs = await ref.watch(serverConfigsProvider.future);
+  var configs = await ref.watch(serverConfigsProvider.future);
   final activeId = await storage.getActiveServerId();
+
+  // Auto-sync the persisted 'default' config with AppConfig so that
+  // switching environments via app_config.dart (e.g. test→prod) takes
+  // effect on existing installs without requiring a reinstall. Only the
+  // auto-provisioned entry (id == 'default') is touched — user-added
+  // server configs are left alone.
+  final defaultIdx = configs.indexWhere((c) => c.id == 'default');
+  if (defaultIdx != -1) {
+    final existing = configs[defaultIdx];
+    if (existing.url != AppConfig.serverUrl ||
+        existing.allowSelfSignedCertificates !=
+            AppConfig.allowSelfSignedCertificates) {
+      final updated = existing.copyWith(
+        url: AppConfig.serverUrl,
+        allowSelfSignedCertificates: AppConfig.allowSelfSignedCertificates,
+      );
+      configs = [...configs]..[defaultIdx] = updated;
+      await storage.saveServerConfigs(configs);
+      ref.invalidate(serverConfigsProvider);
+    }
+  }
 
   if (configs.isNotEmpty) {
     ServerConfig? fallback;

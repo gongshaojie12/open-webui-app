@@ -147,32 +147,19 @@ class AppConfig {
 
 ---
 
-## 4. 服务器自动配置（免手动输入）
+## 4. 服务器自动配置（免手动输入）+ AppConfig 自动同步
 
-**文件：** `lib/core/providers/app_providers.dart`（第 175-199 行）
+**文件：** `lib/core/providers/app_providers.dart` 中的 `activeServer` provider
 
-### 原代码（main）
+包含两块改动：**(A) 首次启动自动创建 default 配置**，**(B) 每次启动自动把 default 配置同步到当前 AppConfig**。
 
-```dart
-if (activeId == null || configs.isEmpty) return null;
-for (final config in configs) {
-  if (config.id == activeId) return config;
-}
-return null;
-```
+### A. 首次启动自动创建 default 配置
 
-当没有配置服务器时返回 `null`，用户需要手动在服务器连接页输入 URL。
+**原代码（main）：** 没有服务器配置时返回 `null`，用户必须手动在服务器连接页输入 URL。
 
-### 新代码（dev-0.0.1）
+**新代码（dev-0.0.1）：** 存储为空时自动用 `AppConfig.serverUrl` 创建一个 `id='default'` 的配置：
 
 ```dart
-if (activeId != null && configs.isNotEmpty) {
-  for (final config in configs) {
-    if (config.id == activeId) return config;
-  }
-}
-
-// 自动使用 AppConfig 中的默认服务器
 final defaultConfig = ServerConfig(
   id: 'default',
   name: 'Default Server',
@@ -186,7 +173,33 @@ ref.invalidate(serverConfigsProvider);
 return defaultConfig;
 ```
 
-当没有已保存的服务器时，自动创建一个使用 `AppConfig.serverUrl` 的默认配置，用户无需手动输入服务器地址。
+### B. 每次启动自动同步 default 配置到 AppConfig
+
+**为什么需要：** A 块只在"首装、存储为空"时生效。一旦 default 配置写入存储，后续修改 `AppConfig.serverUrl` 完全不被读取（`activeServer` 直接返回持久化的旧值）。结果：升级 App 切换环境时，老用户还是连旧服务器。
+
+**做法：** `activeServer` 开头加一段自动同步逻辑，检测持久化的 default 配置和当前 `AppConfig` 是否漂移，漂移就 in-place 更新：
+
+```dart
+final defaultIdx = configs.indexWhere((c) => c.id == 'default');
+if (defaultIdx != -1) {
+  final existing = configs[defaultIdx];
+  if (existing.url != AppConfig.serverUrl ||
+      existing.allowSelfSignedCertificates !=
+          AppConfig.allowSelfSignedCertificates) {
+    final updated = existing.copyWith(
+      url: AppConfig.serverUrl,
+      allowSelfSignedCertificates: AppConfig.allowSelfSignedCertificates,
+    );
+    configs = [...configs]..[defaultIdx] = updated;
+    await storage.saveServerConfigs(configs);
+    ref.invalidate(serverConfigsProvider);
+  }
+}
+```
+
+**关键不变量：** 只动 `id == 'default'` 那条（自动生成的）。用户通过 UI 手动加的其它 ServerConfig 一概不动。
+
+**副作用：** 服务器地址变了，旧服务器签的 auth token 在新服务器上无效，用户被踢回登录页（这是预期行为，跨环境不可能共享 session）。
 
 ---
 

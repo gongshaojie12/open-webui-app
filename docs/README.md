@@ -320,6 +320,14 @@ flutter build ipa --release
 
 **切回测试环境的方法**：把上面两行同时改回测试值，重新 build。详见 [dev-0.0.1_升级改动记录.md §3](./dev-0.0.1_升级改动记录.md)。
 
+**关于已装 App 是否需要重装**：不需要。`activeServer` provider 启动时会自动比对持久化的 `id='default'` 配置和当前 `AppConfig`，发现漂移就 in-place 更新存储。所以：
+
+- 切环境（test↔prod）只需改 `app_config.dart` 两个常量 → 提交 → 用户升级 App → 启动时自动迁移到新地址
+- 用户会被踢回登录页（旧 token 在新服务器无效，这是预期行为）
+- 用户通过 UI 手动添加的其它服务器配置不会被这套同步逻辑动到（只动 `id == 'default'`）
+
+详见 [dev-0.0.1_升级改动记录.md §4](./dev-0.0.1_升级改动记录.md)。
+
 **如何自行验证 chat.focusmedia.cn 仍是 CA 签**（未来证书变化时复查）：
 
 ```bash
