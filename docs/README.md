@@ -57,17 +57,29 @@ ls ios/Flutter/ephemeral/Packages 2>/dev/null
 # 是 LLDB 调试辅助文件，无论开不开 SPM 都会生成，不影响。
 ```
 
-> ⚠️ **如果上面 `ls` 仍然能看到 `FlutterGeneratedPluginSwiftPackage`**，说明本项目的 `ios/Runner.xcodeproj/project.pbxproj` 已经被 Flutter 在更早版本时**"SPM 迁移"**过了（pbxproj 里硬编码了 `XCLocalSwiftPackageReference` 指向 `ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage`）。这种情况下，**全局 `flutter config --no-enable-swift-package-manager` 会被忽略**，每次 `flutter pub get` 仍然会再生成那个 `Package.swift`，build 仍然会挂在 iOS 13.0 上。
->
-> 本项目目前**就是这个状态**，所以请走下面的"方案 B（sed 补丁）"。
+> ⚠️ **如果上面 `ls` 仍然能看到 `FlutterGeneratedPluginSwiftPackage`**，说明本项目的 `ios/Runner.xcodeproj/project.pbxproj` 已经被 Flutter 在更早版本时**"SPM 迁移"**过了（pbxproj 里硬编码了 `XCLocalSwiftPackageReference` 指向 `ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage`）。这种情况下 `Package.swift` 文件会一直被生成出来，但是否真的卡 build，取决于它的 `dependencies` 数组里有没有插件 —— 看下面"方案 B"的判定。
 
 ---
 
-## 方案 B：已 SPM 迁移项目的补丁（本项目当前实际方案）
+## 方案 B：已 SPM 迁移项目的补丁（保留作为回退方案）
 
-### 适用场景
+> **当前状态（Flutter 3.44.0 + 本项目插件集）：不需要执行此方案。**
+> 实测 `ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift` 生成出来是这样的：
+>
+> ```swift
+> platforms: [ .iOS("13.0") ],
+> dependencies: [
+>     // 空
+> ],
+> ```
+>
+> `dependencies` 是空数组 —— 即没有任何插件走 SPM，全部插件（包括 `home_widget`）都走 CocoaPods（`ios/Podfile`，`platform :ios, '16.0'`）。在这种状态下，umbrella 包顶部的 `.iOS("13.0")` 不会触发任何 14.0 最低版本检查，build 直接通过，**无需 sed**。
+>
+> **何时本方案重新生效**：如果将来升级 Flutter / 某个插件后，`cat Package.swift` 看到 `dependencies` 里出现 `.package(...home_widget...)` 之类的条目，并且 Xcode 报回老错误 `requires minimum platform version 14.0`，再回来按下面步骤跑 sed。
 
-`flutter config --no-enable-swift-package-manager` 已执行但无效——`ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/` 每次 `flutter pub get` 都会重新生成，且 `Package.swift` 顶部 `platforms` 里始终是 `.iOS("13.0")`。
+### 适用场景（仅当 dependencies 数组非空且出现 14.0 报错时）
+
+`flutter config --no-enable-swift-package-manager` 已执行但无效——`ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/` 每次 `flutter pub get` 都会重新生成，`Package.swift` 顶部 `platforms` 里写着 `.iOS("13.0")`，**且 `dependencies` 里已经塞了至少一个 iOS 14+ 的插件**。
 
 ### 根因
 
@@ -171,8 +183,6 @@ dart run build_runner build --delete-conflicting-outputs
 
 ### Mac 上完整 build iOS 的标准 checklist
 
-把上面方案 B 的 sed 一起串起来就是每次在 Mac 上完整 build 的固定流程：
-
 ```bash
 cd /path/to/open-webui-app
 
@@ -186,18 +196,20 @@ flutter pub get
 # 3. 跑代码生成器（freezed / riverpod_generator / json_serializable）
 dart run build_runner build --delete-conflicting-outputs
 
-# 4. 把 SPM 模板硬编码的 iOS 13.0 改成 16.0（见方案 B 的根因说明）
-sed -i '' 's/\.iOS("13\.0")/.iOS("16.0")/' \
-  ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift
-
-# 5. CocoaPods
+# 4. CocoaPods
 cd ios && pod install --repo-update && cd ..
 
-# 6. 打开 workspace
+# 5. 打开 workspace
 open ios/Runner.xcworkspace
 ```
 
-然后在 Xcode：`⇧⌘K` Clean Build Folder → `⌘R` Run。
+然后在 Xcode：
+
+1. Scheme → Edit Scheme → Run → Build Configuration 设为 **Release**（脱离 Xcode 启动必须 Release，见下方"已修复的崩溃记录"第二条根因 A）
+2. `⇧⌘K` Clean Build Folder
+3. `⌘R` Run
+
+> **可选第 4 步（仅当 Xcode 报 `requires minimum platform version 14.0` 时）**：先 `cat ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift` 看 `dependencies` 数组是否非空。如果非空且报 14.0 错误，按方案 B 跑 sed 把 `.iOS("13.0")` 改成 `.iOS("16.0")`。当前 Flutter 3.44.0 + 本项目插件集下，`dependencies` 是空的，不会触发。
 
 ### 什么时候要重跑 build_runner
 
@@ -228,9 +240,18 @@ open ios/Runner.xcworkspace
 
 ### iPhone 17 Pro / iOS 26.4 启动闪退（已修复）
 
-- **根因**：Flutter 3.41 UIScene 架构与旧 `Main.storyboard` 中 `customClass="FlutterViewController"` 冲突
-- **详情**：[fix_ios_launch_crash_uiscene.md](./fix_ios_launch_crash_uiscene.md)
-- **崩溃日志**：[crash/Runner-2026-05-25-15144[6-9].ips](./crash/)
+修复分两步，按顺序排查到位才能完整复现：
+
+1. **第一步：`Main.storyboard` 残留 `customClass="FlutterViewController"`**
+   - **根因**：Flutter 3.41 UIScene 架构下，VC 由 SceneDelegate 代码创建；storyboard 里若再指定 `customClass`，UIScene 启动会走 storyboard 路径多实例化一个孤儿 VC，与 SceneDelegate 创建的 VC 冲突
+   - **详情**：[fix_ios_launch_crash_uiscene.md](./fix_ios_launch_crash_uiscene.md)
+   - **崩溃日志**：[crash/Runner-2026-05-25-15144[6-9].ips](./crash/)
+
+2. **第二步：SceneDelegate 中 `engine.run()` 顺序错误 + Debug 构建脱离 Xcode**
+   - **根因 A**：Debug 构建在 iOS 14+ 脱离调试器启动时，`FlutterEngine(name:)` 会返回 nil（ptrace 失败），透传给 `FlutterViewController(engine:)` 触发 `FML_CHECK(engine)` abort
+   - **根因 B**：`FlutterViewController(engine:)` 假设 engine 已 `run`（init 内部置 `_engineNeedsLaunch = NO` 并 `setViewController:`）；若顺序反了，VC init 会访问 nil shell 的 mutex 字段 → `pthread_mutex_lock(0x80)` 崩溃
+   - **详情**：[fix_ios_scene_engine_order.md](./fix_ios_scene_engine_order.md)
+   - **崩溃日志**：`Runner-2026-05-26-115452.ips`、`Runner-2026-05-26-134730.ips`
 
 ### 历史安装错误修复
 
