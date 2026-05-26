@@ -126,6 +126,96 @@ grep iOS ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Packa
 
 ---
 
+## Mac 首次 build / `flutter clean` 后必须重跑 build_runner
+
+### 现象
+
+Xcode build 失败，错误数量动辄成百上千，但**全部收敛到几类样板报错**：
+
+```
+lib/core/models/chat_message.dart:7:6: Error: Error when reading 'lib/core/models/chat_message.freezed.dart': No such file or directory
+lib/core/models/chat_message.dart:8:6: Error: Error when reading 'lib/core/models/chat_message.g.dart': No such file or directory
+lib/core/models/chat_message.dart:11:31: Error: Type '_$ChatMessage' not found.
+lib/core/models/chat_message.dart:50:8: Error: Couldn't find constructor '_ChatMessage'.
+lib/features/chat/providers/chat_providers.dart:1538:20: Error: The getter 'error' isn't defined for the type 'ChatMessage'.
+lib/features/chat/providers/chat_providers.dart:3547:30: Error: The method 'copyWith' isn't defined for the type 'ChatMessage'.
+lib/core/providers/app_providers.dart:343:40: Error: Undefined name 'authStateManagerProvider'.
+```
+
+第一组 `Error when reading 'XXX.freezed.dart' / 'XXX.g.dart': No such file or directory` 是**真正的根因**，其余几百条都是它的下游症状（freezed 没生成 → 类型 `_$ChatMessage` 不存在 → 构造器 `_ChatMessage` 找不到 → `copyWith` / `error` / `versions` 等成员缺失）。
+
+### 根因
+
+项目用了 `freezed` + `riverpod_generator` + `json_serializable` 三个代码生成器（见 `pubspec.yaml` 的 `dev_dependencies`），它们在编译前要由 `build_runner` 把每个数据类 / Provider 编译成 `*.freezed.dart` / `*.g.dart` 同名 part 文件。
+
+`.gitignore` 把 `*.g.dart` 和 `*.freezed.dart` **全部忽略**了 —— 它们是中间产物，不进 git。后果：
+
+- **每台开发机要各自跑一次 build_runner**（Windows 上跑过 ≠ Mac 上有）
+- 任何**清空了 `.dart_tool/` 或生成文件**的动作之后都要重跑
+
+Mac 上第一次 clone 或 `flutter clean` 之后直接进 Xcode build，编译器就会因为 part 文件全部缺失而炸出几百条错误。
+
+### 修复（在 **Mac** 上跑）
+
+```bash
+cd /path/to/open-webui-app
+
+flutter clean
+flutter pub get
+dart run build_runner build --delete-conflicting-outputs
+```
+
+`--delete-conflicting-outputs` 是必须的：升级 `freezed` / `riverpod_generator` 版本后，旧的生成文件签名会和新模板冲突，加上这个参数让 build_runner 直接覆盖。
+
+跑完后 `lib/core/models/` 下会出现一堆新的 `*.freezed.dart` / `*.g.dart`，**不要 commit**（`.gitignore` 已经管了）。
+
+### Mac 上完整 build iOS 的标准 checklist
+
+把上面方案 B 的 sed 一起串起来就是每次在 Mac 上完整 build 的固定流程：
+
+```bash
+cd /path/to/open-webui-app
+
+# 1. 清掉旧产物
+flutter clean
+rm -rf ios/Flutter/ephemeral
+
+# 2. 拉依赖
+flutter pub get
+
+# 3. 跑代码生成器（freezed / riverpod_generator / json_serializable）
+dart run build_runner build --delete-conflicting-outputs
+
+# 4. 把 SPM 模板硬编码的 iOS 13.0 改成 16.0（见方案 B 的根因说明）
+sed -i '' 's/\.iOS("13\.0")/.iOS("16.0")/' \
+  ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift
+
+# 5. CocoaPods
+cd ios && pod install --repo-update && cd ..
+
+# 6. 打开 workspace
+open ios/Runner.xcworkspace
+```
+
+然后在 Xcode：`⇧⌘K` Clean Build Folder → `⌘R` Run。
+
+### 什么时候要重跑 build_runner
+
+- 第一次 clone 项目（或换一台新机器）
+- `flutter clean` 之后
+- `flutter upgrade` 之后
+- `flutter pub get` 后如果改了带 `part 'xxx.g.dart';` 或 `part 'xxx.freezed.dart';` 声明的文件
+- 升级了 `freezed` / `json_serializable` / `riverpod_generator` 任意一个之后
+- 改了任何 `@freezed` 类或 `@riverpod` provider 之后
+
+> **省力做法**：开发期可以挂一个长跑的 `dart run build_runner watch --delete-conflicting-outputs`，改完文件立刻自动重生，不用手动触发。
+
+### 副作用 / 风险
+
+无。这条命令只生成本地中间产物，不改任何被 git 跟踪的源文件，不影响其它平台 build，也不会污染上游 diff。
+
+---
+
 ## 副作用评估（方案 A / B 共通）
 
 几乎没有。本项目当前所有 iOS 插件（`home_widget`、`vad`、`flutter_callkit_incoming`、`flutter_secure_storage`、`flutter_tex` 等）**全部都同时提供 CocoaPods podspec**，把最低版本拉到 16.0 不影响任何功能（pbxproj 里所有 target 本来就是 iOS 16.0）。
