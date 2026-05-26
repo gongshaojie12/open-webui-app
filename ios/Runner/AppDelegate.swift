@@ -818,7 +818,11 @@ struct AppShortcuts: AppShortcutsProvider {
 }
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+@objc class AppDelegate: FlutterAppDelegate {
+  // Single Flutter engine shared across the app's single scene.
+  // Created eagerly so SceneDelegate can call engine.run() during scene connection.
+  let flutterEngine = FlutterEngine(name: "conduit")
+
   private var backgroundStreamingHandler: BackgroundStreamingHandler?
 
   /// Checks if a cookie matches a given URL based on domain.
@@ -842,56 +846,34 @@ struct AppShortcuts: AppShortcutsProvider {
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
-  func didInitializeImplicitFlutterEngine(
-    _ engineBridge: FlutterImplicitEngineBridge
-  ) {
-    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+  // Wires native method channels and plugin bridges onto the given engine.
+  // Called from SceneDelegate after engine.run() + GeneratedPluginRegistrant.register().
+  func configureMethodChannels(on engine: FlutterEngine) {
+    let messenger = engine.binaryMessenger
 
-    // Setup App Intents method channel for native -> Flutter communication
-    let appIntentRegistrar = engineBridge.applicationRegistrar
-    AppIntentMethodChannel.shared = AppIntentMethodChannel(
-      messenger: appIntentRegistrar.messenger()
-    )
+    AppIntentMethodChannel.shared = AppIntentMethodChannel(messenger: messenger)
 
-    let pasteRegistrar = engineBridge.applicationRegistrar
-    NativePasteBridge.shared.configure(messenger: pasteRegistrar.messenger())
+    NativePasteBridge.shared.configure(messenger: messenger)
+    NativeKeyboardAttachmentBridge.shared.configure(messenger: messenger)
+    NativeSheetBridge.shared.configure(messenger: messenger)
+    NativeDropdownBridge.shared.configure(messenger: messenger)
 
-    let keyboardAttachmentRegistrar = engineBridge.applicationRegistrar
-    NativeKeyboardAttachmentBridge.shared.configure(
-      messenger: keyboardAttachmentRegistrar.messenger()
-    )
-
-    let nativeSheetRegistrar = engineBridge.applicationRegistrar
-    NativeSheetBridge.shared.configure(
-      messenger: nativeSheetRegistrar.messenger()
-    )
-
-    let nativeDropdownRegistrar = engineBridge.applicationRegistrar
-    NativeDropdownBridge.shared.configure(
-      messenger: nativeDropdownRegistrar.messenger()
-    )
-
-    // Setup background streaming handler
-    let bgRegistrar = engineBridge.applicationRegistrar
     let channel = FlutterMethodChannel(
       name: "conduit/background_streaming",
-      binaryMessenger: bgRegistrar.messenger()
+      binaryMessenger: messenger
     )
 
     backgroundStreamingHandler?.setup(with: channel)
 
-    // Register method call handler
     channel.setMethodCallHandler { [weak self] (call, result) in
       Task { @MainActor [weak self] in
         self?.backgroundStreamingHandler?.handle(call, result: result)
       }
     }
 
-    // Setup cookie manager channel for WebView cookie access
-    let cookieRegistrar = engineBridge.applicationRegistrar
     let cookieChannel = FlutterMethodChannel(
       name: "com.conduit.app/cookies",
-      binaryMessenger: cookieRegistrar.messenger()
+      binaryMessenger: messenger
     )
 
     cookieChannel.setMethodCallHandler { [weak self] (call, result) in
@@ -903,17 +885,14 @@ struct AppShortcuts: AppShortcutsProvider {
           return
         }
 
-        // Get cookies from WKWebView's cookie store
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { [weak self] cookies in
           guard let self = self else {
-            // Always call result to avoid leaving Dart side hanging
             result([:])
             return
           }
           var cookieDict: [String: String] = [:]
 
           for cookie in cookies {
-            // Filter cookies for this domain
             if self.cookieMatchesUrl(cookie: cookie, url: url) {
               cookieDict[cookie.name] = cookie.value
             }
@@ -925,5 +904,49 @@ struct AppShortcuts: AppShortcutsProvider {
         result(FlutterMethodNotImplemented)
       }
     }
+  }
+}
+
+/// Owns the window and FlutterViewController for this app's single scene.
+///
+/// Follows the Flutter 3.41+ UIScene migration pattern from
+/// https://docs.flutter.dev/release/breaking-changes/uiscenedelegate
+///
+/// IMPORTANT: super.scene(...) MUST be called LAST — after rootViewController is set and
+/// makeKeyAndVisible() has run — otherwise super may instantiate a duplicate
+/// FlutterViewController bound to a nil engine, which crashes on ProMotion devices
+/// inside -[VSyncClient initWithTaskRunner:callback:] (see flutter/flutter#183900 and
+/// docs/fix_ios_launch_crash_uiscene.md).
+class SceneDelegate: FlutterSceneDelegate {
+  override func scene(
+    _ scene: UIScene,
+    willConnectTo session: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions
+  ) {
+    guard let windowScene = scene as? UIWindowScene else {
+      super.scene(scene, willConnectTo: session, options: connectionOptions)
+      return
+    }
+
+    guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else {
+      assertionFailure("AppDelegate unavailable during scene connection")
+      super.scene(scene, willConnectTo: session, options: connectionOptions)
+      return
+    }
+
+    let engine = appDelegate.flutterEngine
+
+    window = UIWindow(windowScene: windowScene)
+
+    engine.run()
+    GeneratedPluginRegistrant.register(with: engine)
+    appDelegate.configureMethodChannels(on: engine)
+    self.registerSceneLifeCycle(with: engine)
+
+    let viewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
+    window?.rootViewController = viewController
+    window?.makeKeyAndVisible()
+
+    super.scene(scene, willConnectTo: session, options: connectionOptions)
   }
 }
