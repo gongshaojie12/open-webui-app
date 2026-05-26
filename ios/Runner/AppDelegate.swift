@@ -912,12 +912,28 @@ struct AppShortcuts: AppShortcutsProvider {
 /// Follows the Flutter 3.41+ UIScene migration pattern from
 /// https://docs.flutter.dev/release/breaking-changes/uiscenedelegate
 ///
-/// Ordering mirrors FlutterViewController.sharedSetupWithProject in implicit-engine mode
-/// (see FlutterViewController.mm:297-308): FlutterView/VC must be attached to the engine
-/// BEFORE GeneratedPluginRegistrant.register runs. Registering plugins on an engine whose
-/// viewController is still nil makes adaptive_platform_ui's iOS26NativeTabBarManager.shared
-/// initialiser dereference nil → swift_getObjectType crash on iOS 26+
-/// (see docs/Runner-2026-05-26-110640.ips).
+/// Order matches Flutter's own FlutterLaunchEngine.m (which is the canonical
+/// pattern for explicit-engine + FlutterViewController):
+///
+///   1. engine.run()              — -[FlutterViewController initWithEngine:] sets
+///                                   _engineNeedsLaunch = NO, i.e. the engine MUST
+///                                   already have a live shell before VC init.
+///                                   Calling init on an un-run engine ends up
+///                                   locking a mutex on a nil shell pointer
+///                                   (pthread_mutex_lock @ 0x80; see
+///                                   docs/Runner-2026-05-26-134730.ips).
+///   2. FlutterViewController(engine:)  — init internally calls
+///                                   [engine setViewController:self], so
+///                                   engine.viewController becomes non-nil.
+///   3. GeneratedPluginRegistrant   — plugins like adaptive_platform_ui's
+///                                   iOS26NativeTabBarManager read engine state
+///                                   on register; they need a running engine
+///                                   with a viewController attached
+///                                   (see docs/Runner-2026-05-26-110640.ips).
+///   4. window.rootViewController + makeKeyAndVisible — by the time UIKit
+///                                   triggers loadView / viewDidLoad, the engine
+///                                   is fully wired and plugins have published
+///                                   their channels.
 class SceneDelegate: FlutterSceneDelegate {
   override func scene(
     _ scene: UIScene,
@@ -937,22 +953,21 @@ class SceneDelegate: FlutterSceneDelegate {
 
     let engine = appDelegate.flutterEngine
 
-    window = UIWindow(windowScene: windowScene)
-
-    // 1. Attach VC to engine first (FlutterViewController.init calls
-    //    [engine setViewController:self]; engine.viewController becomes non-nil).
-    let viewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
-    window?.rootViewController = viewController
-    window?.makeKeyAndVisible()
-
-    // 2. Now create shell + launch isolate.
+    // 1. Start the shell + Dart isolate.
     engine.run()
 
-    // 3. Register plugins on an engine that already has a viewController + live shell,
-    //    matching the implicit-engine path's invariants.
+    // 2. Create the VC; init binds it to the engine via setViewController:.
+    let viewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
+
+    // 3. Register plugins now that engine has a shell AND a viewController.
     GeneratedPluginRegistrant.register(with: engine)
     appDelegate.configureMethodChannels(on: engine)
     self.registerSceneLifeCycle(with: engine)
+
+    // 4. Present.
+    window = UIWindow(windowScene: windowScene)
+    window?.rootViewController = viewController
+    window?.makeKeyAndVisible()
 
     super.scene(scene, willConnectTo: session, options: connectionOptions)
   }
