@@ -121,8 +121,10 @@ flutter_native_splash:
   # Splash background matches the light theme; `color_dark` handles dark mode.
   color: "#FFFFFF"
   color_dark: "#000000"
-  # Image to display on the splash screen
-  image: assets/icons/icon.png
+  # Image to display on the splash screen.
+  # Reuses the app icon source so the launch screen matches the home-screen
+  # icon (avoids the "two different logos flash by" effect on cold start).
+  image: assets/icons/app_icon.png
 
   
   # Android specific settings
