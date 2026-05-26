@@ -912,11 +912,12 @@ struct AppShortcuts: AppShortcutsProvider {
 /// Follows the Flutter 3.41+ UIScene migration pattern from
 /// https://docs.flutter.dev/release/breaking-changes/uiscenedelegate
 ///
-/// IMPORTANT: super.scene(...) MUST be called LAST — after rootViewController is set and
-/// makeKeyAndVisible() has run — otherwise super may instantiate a duplicate
-/// FlutterViewController bound to a nil engine, which crashes on ProMotion devices
-/// inside -[VSyncClient initWithTaskRunner:callback:] (see flutter/flutter#183900 and
-/// docs/fix_ios_launch_crash_uiscene.md).
+/// Ordering mirrors FlutterViewController.sharedSetupWithProject in implicit-engine mode
+/// (see FlutterViewController.mm:297-308): FlutterView/VC must be attached to the engine
+/// BEFORE GeneratedPluginRegistrant.register runs. Registering plugins on an engine whose
+/// viewController is still nil makes adaptive_platform_ui's iOS26NativeTabBarManager.shared
+/// initialiser dereference nil → swift_getObjectType crash on iOS 26+
+/// (see docs/Runner-2026-05-26-110640.ips).
 class SceneDelegate: FlutterSceneDelegate {
   override func scene(
     _ scene: UIScene,
@@ -938,14 +939,20 @@ class SceneDelegate: FlutterSceneDelegate {
 
     window = UIWindow(windowScene: windowScene)
 
-    engine.run()
-    GeneratedPluginRegistrant.register(with: engine)
-    appDelegate.configureMethodChannels(on: engine)
-    self.registerSceneLifeCycle(with: engine)
-
+    // 1. Attach VC to engine first (FlutterViewController.init calls
+    //    [engine setViewController:self]; engine.viewController becomes non-nil).
     let viewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
     window?.rootViewController = viewController
     window?.makeKeyAndVisible()
+
+    // 2. Now create shell + launch isolate.
+    engine.run()
+
+    // 3. Register plugins on an engine that already has a viewController + live shell,
+    //    matching the implicit-engine path's invariants.
+    GeneratedPluginRegistrant.register(with: engine)
+    appDelegate.configureMethodChannels(on: engine)
+    self.registerSceneLifeCycle(with: engine)
 
     super.scene(scene, willConnectTo: session, options: connectionOptions)
   }
