@@ -137,6 +137,11 @@ flutter_launcher_icons:
   android: true
   ios: true
   image_path: "assets/icons/app_icon.png"
+  # iOS App Store requires opaque icons. The source PNG has an alpha channel,
+  # so strip it and flatten the transparent area onto white — otherwise iOS
+  # composites transparency against black on the home screen.
+  remove_alpha_ios: true
+  background_color_ios: "#FFFFFF"
   # Adaptive icon for Android 8.0+ (API 26+)
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/icons/app_icon.png"

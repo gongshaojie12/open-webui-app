@@ -236,6 +236,100 @@ open ios/Runner.xcworkspace
 
 ---
 
+## 安装到 iPhone：本地测试与分发
+
+`flutter build ios --release` 只产出 `build/ios/iphoneos/Runner.app`（未签名的 .app bundle），iOS 不接受直接拖装。下面是把 App 装上 iPhone 的三个方案。
+
+### 方案 1（最简单，推荐用于自测）：`flutter run --release`
+
+iPhone 用 USB 连 Mac，已在 Trust 列表里：
+
+```bash
+flutter devices                          # 确认能看到你的 iPhone
+flutter run --release -d <device-id>     # 编译 + 签名 + 安装 + 启动，一气呵成
+```
+
+内部会调 Xcode 工具链做签名、用 `devicectl` 装到设备。优点是不用手动开 Xcode；缺点是必须 USB 连着启动（启动后可拔，App 留在设备上能脱机跑）。
+
+签名身份用 `ios/Runner.xcworkspace` 里已经配过的（个人免费 Apple ID 或付费开发者账号都行）。免费 Apple ID 签出来的 App **证书 7 天有效**，过期要重装；付费账号 1 年。
+
+### 方案 2：在 Xcode 里 `⌘R`
+
+1. `open ios/Runner.xcworkspace`
+2. Scheme → Edit Scheme → Run → Build Configuration = **Release**
+3. 顶部目标选你的 iPhone（不是模拟器）
+4. `⌘R`
+
+跟方案 1 等价，只是 UI 走 Xcode。出问题时错误信息更直观。
+
+### 方案 3：打 `.ipa` 分发（给别人装 / 上 TestFlight）
+
+```bash
+flutter build ipa --release
+```
+
+产出在 `build/ios/ipa/conduit.ipa`。但是：
+
+- **必须有付费 Apple Developer 账号**（$99/年），免费 Apple ID 跑这条命令会直接报错
+- 装 ipa 到 iPhone 的方式：
+  - **Apple Configurator 2**（Mac App Store 免费）：拖 .ipa 到设备图标
+  - **Xcode → Window → Devices and Simulators**：点设备 → "+" → 选 ipa
+  - **TestFlight**：上传到 App Store Connect，邀请测试者安装（正式的远程 beta 测试方式）
+
+### 给别人测试是否必须付费账号？
+
+**是的，付费 $99/年是硬性要求。** 免费 Apple ID 有几个限制堵死了"给别人测试"这个场景：
+
+- 签出来的 App 只能装在**已登录该 Apple ID 的设备**，且必须通过你的 Mac + Xcode 直连安装
+- 每个 Apple ID 最多 3 台设备
+- **证书 7 天后过期**，App 自动失效要重装
+- 打不了 `.ipa`，没有 TestFlight 权限
+
+付费 $99/年（Apple Developer Program）后有两条分发路：
+
+| 方式 | 测试人数 | 是否需要 UDID | 用户体验 |
+|---|---|---|---|
+| **TestFlight** | 最多 10000 人 | 不需要 | 装 TestFlight App，点邀请链接，一键安装。每个版本 90 天可用 |
+| **Ad-Hoc** | 最多 100 台 iPhone/年 | **需要**先收集每个测试者的 UDID 注册 | 你打针对这些设备的 ipa，用 Apple Configurator / Diawi 等装 |
+
+**强烈推荐 TestFlight**：不用收集 UDID、安装体验接近正式 App、自带崩溃日志与反馈、后续上架 App Store 时这条流程是必经之路。
+
+#### 实际建议
+
+- **短期内部自测（3~5 人、几天）**：让人带 iPhone 来你 Mac 这边用方案 1 直接装，免费够用，但 7 天失效
+- **正式 beta、远程测试、用户量 >5 人或周期 >1 周**：交 $99 注册 Apple Developer，走 TestFlight
+- **灰色方案（不推荐）**：第三方签名工具（爱思助手、AltStore、Sideloadly）用别人证书重签，证书随时可能被吊销导致 App 全部失效，公司项目不要走
+
+---
+
+## 配置变更记录
+
+### 2026-05-26：服务器地址切换到生产环境
+
+**改动文件：** `lib/core/config/app_config.dart`
+
+| 常量 | 旧值（测试） | 新值（生产） |
+|---|---|---|
+| `serverUrl` | `https://1.94.62.87` | `https://chat.focusmedia.cn` |
+| `allowSelfSignedCertificates` | `true` | `false` |
+
+**为什么 SSL 开关也要跟着改**：
+
+- 测试环境用 IP 直连 + 自签证书 → 必须 `true`，否则 SSL 握手失败
+- 生产域名 `chat.focusmedia.cn` 用公网 CA 签的证书（已用 `curl --ssl-revoke-best-effort` 验证握手正常） → 必须 `false`，否则等于关掉中间人攻击的最后一道防线
+
+**切回测试环境的方法**：把上面两行同时改回测试值，重新 build。详见 [dev-0.0.1_升级改动记录.md §3](./dev-0.0.1_升级改动记录.md)。
+
+**如何自行验证 chat.focusmedia.cn 仍是 CA 签**（未来证书变化时复查）：
+
+```bash
+curl -v https://chat.focusmedia.cn/ 2>&1 | grep -E "issuer|subject"
+# issuer 是 Let's Encrypt / DigiCert 等 CA 公司 → CA 签，allowSelfSignedCertificates 保持 false
+# issuer 与 subject 相同 / 出现 self-signed 字样 → 改回自签，需要把开关切 true
+```
+
+---
+
 ## 已修复的崩溃记录
 
 ### iPhone 17 Pro / iOS 26.4 启动闪退（已修复）

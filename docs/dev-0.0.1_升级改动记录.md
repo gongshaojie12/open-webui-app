@@ -124,15 +124,26 @@ ClipRRect(
 
 **新增文件：** `lib/core/config/app_config.dart`
 
+**当前值（2026-05-26 起，指向生产环境）：**
+
 ```dart
 class AppConfig {
   AppConfig._();
-  static const String serverUrl = 'https://1.94.62.87';
-  static const bool allowSelfSignedCertificates = true;
+  static const String serverUrl = 'https://chat.focusmedia.cn';
+  static const bool allowSelfSignedCertificates = false;
 }
 ```
 
-**作用：** 将服务器地址和 SSL 配置集中管理，供 `activeServerProvider` 自动配置时使用。升级时需要根据环境修改 `serverUrl`。
+**作用：** 将服务器地址和 SSL 配置集中管理，供 `activeServerProvider` 自动配置时使用。升级合并上游时需要保留这两个常量，并按环境调整。
+
+### 历史值与环境切换
+
+| 环境 | `serverUrl` | `allowSelfSignedCertificates` | 启用时间 |
+|---|---|---|---|
+| 测试 | `https://1.94.62.87` | `true`（IP 直连 + 自签证书） | 初始引入 ~ 2026-05-26 |
+| 生产 | `https://chat.focusmedia.cn` | `false`（公网 CA 签证书） | 2026-05-26 起 |
+
+**切回测试环境的方法**：把上述两个常量同时改回测试值即可。`allowSelfSignedCertificates` 必须跟着改 —— 生产环境用 CA 签时**必须保持 `false`**，否则失去对中间人攻击的拦截；测试环境用 IP + 自签时**必须改 `true`**，否则 SSL 握手就直接失败。
 
 ---
 
