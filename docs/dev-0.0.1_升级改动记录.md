@@ -24,7 +24,8 @@
 12. [新增文件清单](#12-新增文件清单)
 13. [删除文件清单](#13-删除文件清单)
 14. [移除个人赞助入口（Profile 页面）](#14-移除个人赞助入口profile-页面)
-15. [升级操作检查清单](#15-升级操作检查清单)
+15. [合并上游 + 移除 CarPlay 语音 entitlement](#15-合并上游--移除-carplay-语音-entitlement)
+16. [升级操作检查清单](#16-升级操作检查清单)
 
 ---
 
@@ -619,7 +620,52 @@ org.gradle.jvmargs=-Xmx2G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m
 
 ---
 
-## 15. 升级操作检查清单
+## 15. 合并上游 + 移除 CarPlay 语音 entitlement
+
+### 背景
+
+2026-06-10 从上游 `cogwheel0/conduit:main` 合并了 77 个提交（保留全部定制 + 合入上游全部更新）。上游本次引入了 **CarPlay 语音对话** 新功能，附带受限 entitlement，导致使用个人免费苹果账号（Personal Team）编译时签名失败。
+
+### CarPlay 语音功能（来自上游）
+
+让用户在车载 CarPlay 屏幕上用纯语音与 AI 对话，复用 app 既有的语音模块（`chatVoiceModeControllerProvider`）。仅 iOS、需 iOS 26.4+。相关文件：
+
+| 文件 | 作用 |
+|------|------|
+| `lib/core/services/carplay_service.dart` | Dart 侧 `CarPlayCoordinator`，处理 start/pause/resume/end 及状态同步 |
+| `ios/Runner/ConduitCarPlaySceneDelegate.swift` | CarPlay 屏幕界面（`CPVoiceControlTemplate`） |
+| `ios/Runner/ConduitCarPlayBridge.swift` | 原生 ↔ Dart 桥接（MethodChannel `conduit/carplay`） |
+
+### 签名错误与修复
+
+**错误信息**：
+
+> Cannot create a iOS App Development provisioning profile for 'com.gongshaojie.zhongxiaozhiAI.debug'. Personal development teams, including 'focusmedia jiang', do not support the CarPlay Voice Based Conversation capability.
+
+**根因**：`ios/Runner/Runner.entitlements` 中的 `com.apple.developer.carplay-voice-based-conversation` 属 Apple 受限能力，免费个人账号无权使用，Xcode 无法生成 provisioning profile。
+
+**修复**（最小改动）：移除该 entitlement 的两行键值。
+
+```diff
+  <key>com.apple.security.application-groups</key>
+  <array>
+      <string>group.com.gongshaojie.zhongxiaozhiAI</string>
+  </array>
+- <key>com.apple.developer.carplay-voice-based-conversation</key>
+- <true/>
+```
+
+### 说明
+
+- CarPlay 的代码、`Info.plist` 中的 CarPlay scene 声明、`CarPlay.framework` 引用**均保留**：无 entitlement 时 CarPlay 场景运行时不会被系统激活，对正常 App 无影响。
+- 将来若换**付费开发者账号**并向 Apple 申请到 CarPlay 权限，把上述 entitlement 加回 `Runner.entitlements` 即可恢复功能。
+- 合并后 `flutter analyze lib` 通过（No issues found）；iOS 原生改动需在 Mac 上 `pod install` + 编译验证。
+
+> 遗留：CarPlay 界面文案仍为英文（"Ask Conduit"、"Conduit is listening" 等，见 `ConduitCarPlaySceneDelegate.swift`），未跟随品牌改为"众小智AI"。因 CarPlay 当前不启用，暂未处理。
+
+---
+
+## 16. 升级操作检查清单
 
 从上游合并新版本后，按以下清单逐项检查：
 
