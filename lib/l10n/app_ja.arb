@@ -842,6 +842,14 @@
   "@japanese": {
     "description": "Language name: Japanese."
   },
+  "czech": "Čeština",
+  "@czech": {
+    "description": "Language name: Czech."
+  },
+  "slovak": "Slovenčina",
+  "@slovak": {
+    "description": "Language name: Slovak."
+  },
   "deleteMessagesTitle": "メッセージを削除",
   "@deleteMessagesTitle": {
     "description": "Dialog title asking to confirm deletion of messages."
@@ -1400,6 +1408,30 @@
   "sttSilenceDurationDescription": "無音後に自動停止するまでの待機時間",
   "@sttSilenceDurationDescription": {
     "description": "Description for the silence duration slider in server speech-to-text settings."
+  },
+  "sttTranscriptionLanguage": "文字起こし言語",
+  "@sttTranscriptionLanguage": {
+    "description": "Title for the server speech-to-text language setting."
+  },
+  "sttTranscriptionLanguageDescription": "Auto ではこのデバイスの言語を使用します。必要に応じて pl などのコードを入力してください。",
+  "@sttTranscriptionLanguageDescription": {
+    "description": "Description for the server speech-to-text language setting."
+  },
+  "sttTranscriptionLanguageAuto": "Auto",
+  "@sttTranscriptionLanguageAuto": {
+    "description": "Option label for using the device language as the server speech-to-text language hint."
+  },
+  "sttTranscriptionLanguageCustom": "カスタム言語コード",
+  "@sttTranscriptionLanguageCustom": {
+    "description": "Option label for entering an explicit speech-to-text language code."
+  },
+  "sttTranscriptionLanguagePlaceholder": "ISO-639-1 コード（例: pl）",
+  "@sttTranscriptionLanguagePlaceholder": {
+    "description": "Placeholder for entering a two-letter speech-to-text language code."
+  },
+  "sttTranscriptionLanguageInvalid": "pl などの 2 文字の言語コードを使用してください。",
+  "@sttTranscriptionLanguageInvalid": {
+    "description": "Validation message for invalid speech-to-text language codes."
   },
   "ttsEngineLabel": "エンジン",
   "@ttsEngineLabel": {
@@ -3070,5 +3102,17 @@
   "securityCertificateError": "セキュリティ証明書エラーです。サーバーの識別情報を確認できません。",
   "@securityCertificateError": {
     "description": "Error shown when the server TLS certificate cannot be trusted or verified."
-  }
+  },
+  "terminalExpandAction": "全画面",
+  "terminalReopenFullscreen": "全画面で開いています - タップして再度開く",
+  "terminalKeyTab": "Tab",
+  "terminalKeyUp": "上",
+  "terminalKeyDown": "下",
+  "terminalKeyCtrlC": "Ctrl-C",
+  "terminalCopyAction": "コピー",
+  "terminalPasteAction": "ペースト",
+  "terminalNothingToCopy": "コピーする選択範囲がありません",
+  "terminalCopied": "クリップボードにコピーしました",
+  "terminalPasteWhileDisconnected": "ペーストするには接続してください",
+  "terminalPortsToggle": "待ち受けポート"
 }

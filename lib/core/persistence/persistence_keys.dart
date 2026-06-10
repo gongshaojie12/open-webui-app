@@ -7,13 +7,13 @@ final class PreferenceKeys {
   static const String disableHapticsWhileStreaming =
       'disable_haptics_while_streaming';
   static const String highContrast = 'high_contrast';
-  static const String largeText = 'large_text';
   static const String darkMode = 'dark_mode';
   static const String defaultModel = 'default_model';
   static const String voiceLocaleId = 'voice_locale_id';
   static const String voiceHoldToTalk = 'voice_hold_to_talk';
   static const String voiceAutoSendFinal = 'voice_auto_send_final';
   static const String voiceSttPreference = 'voice_stt_preference';
+  static const String voiceSttLanguageCode = 'voice_stt_language_code';
   static const String socketTransportMode = 'socket_transport_mode';
   static const String quickPills = 'quick_pills';
   static const String chatWebSearchEnabled = 'chat_web_search_enabled';
@@ -35,6 +35,7 @@ final class PreferenceKeys {
   static const String voiceSilenceDuration = 'voice_silence_duration';
   static const String androidAssistantTrigger = 'android_assistant_trigger';
   static const String temporaryChatByDefault = 'temporary_chat_by_default';
+  static const String pinnedModels = 'pinned_models';
 
   // Drawer section collapsed states
   static const String drawerShowPinned = 'drawer_show_pinned';

@@ -9,6 +9,12 @@ private func appLocalized(_ key: String, _ fallback: String) -> String {
     NSLocalizedString(key, tableName: nil, bundle: .main, value: fallback, comment: "")
 }
 
+private let conduitShareChannelName = "conduit/share_receiver_text"
+private let conduitShareUserDefaultsKey = "SharingKey"
+private let conduitShareMessageKey = "SharingMessageKey"
+private let conduitShareImportStatusKey = "ShareImportStatusKey"
+private let conduitShareAppGroupIdKey = "AppGroupId"
+
 /// Manages AVAudioSession for voice calls in the background.
 ///
 /// IMPORTANT: This manager is ONLY used for server-side STT (speech-to-text).
@@ -122,10 +128,38 @@ private struct BackgroundStreamingLease {
     let id: String
     let kind: String
     let requiresMicrophone: Bool
+    let startedAtMillis: Int64
 
     var isChat: Bool { kind == "chat" }
     var isVoice: Bool { kind == "voice" }
     var isSocket: Bool { id == "socket-keepalive" }
+}
+
+private extension PlatformBackgroundStreamKind {
+    var payloadName: String {
+        switch self {
+        case .chat: "chat"
+        case .voice: "voice"
+        }
+    }
+}
+
+private extension BackgroundStreamingLease {
+    init(_ lease: PlatformBackgroundStreamLease) {
+        id = lease.id
+        kind = lease.kind.payloadName
+        requiresMicrophone = lease.requiresMicrophone
+        startedAtMillis = lease.startedAtMillis
+    }
+
+    func asPlatformLease() -> PlatformBackgroundStreamLease {
+        PlatformBackgroundStreamLease(
+            id: id,
+            kind: isVoice ? .voice : .chat,
+            requiresMicrophone: requiresMicrophone,
+            startedAtMillis: startedAtMillis
+        )
+    }
 }
 
 private final class BGProcessingCompletionState {
@@ -134,11 +168,11 @@ private final class BGProcessingCompletionState {
 
 // Background streaming handler class
 @MainActor
-class BackgroundStreamingHandler: NSObject {
+class BackgroundStreamingHandler: NSObject, BackgroundStreamingHostApi {
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var bgProcessingTask: BGTask?
     private var activeLeases: [String: BackgroundStreamingLease] = [:]
-    private var channel: FlutterMethodChannel?
+    private var flutterApi: BackgroundStreamingFlutterApi?
 
     static let processingTaskIdentifier = "app.cogwheel.conduit.refresh"
 
@@ -147,8 +181,12 @@ class BackgroundStreamingHandler: NSObject {
         setupNotifications()
     }
     
-    func setup(with channel: FlutterMethodChannel) {
-        self.channel = channel
+    func setup(messenger: FlutterBinaryMessenger) {
+        flutterApi = BackgroundStreamingFlutterApi(binaryMessenger: messenger)
+        BackgroundStreamingHostApiSetup.setUp(
+            binaryMessenger: messenger,
+            api: self
+        )
     }
     
     private func setupNotifications() {
@@ -180,80 +218,57 @@ class BackgroundStreamingHandler: NSObject {
         endBackgroundTask()
     }
     
-    func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        switch call.method {
-        case "startBackgroundExecution":
-            if let args = call.arguments as? [String: Any],
-               let streamIds = args["streamIds"] as? [String] {
-                let requiresMic = args["requiresMicrophone"] as? Bool ?? false
-                let leases = parseLeases(
-                    args["leases"] as? [[String: Any]],
-                    streamIds: streamIds,
-                    requiresMic: requiresMic
-                )
-                startBackgroundExecution(leases: leases)
-                result(nil)
-            } else {
-                result(FlutterError(code: "INVALID_ARGS", message: "Invalid arguments", details: nil))
-            }
-            
-        case "stopBackgroundExecution":
-            if let args = call.arguments as? [String: Any],
-               let streamIds = args["streamIds"] as? [String] {
-                stopBackgroundExecution(streamIds: streamIds)
-                result(nil)
-            } else {
-                result(FlutterError(code: "INVALID_ARGS", message: "Invalid arguments", details: nil))
-            }
-            
-        case "keepAlive":
-            keepAlive()
-            result(nil)
-            
-        case "checkBackgroundRefreshStatus":
-            // Check if background app refresh is enabled by the user
-            let status = UIApplication.shared.backgroundRefreshStatus
-            switch status {
-            case .available:
-                result(true)
-            case .denied, .restricted:
-                result(false)
-            @unknown default:
-                result(true) // Assume available for future cases
-            }
-        
-        case "setExternalAudioSessionOwner":
-            // Coordinate with speech_to_text plugin to prevent audio session conflicts
-            if let args = call.arguments as? [String: Any],
-               let isExternal = args["isExternal"] as? Bool {
-                VoiceBackgroundAudioManager.shared.setExternalSessionOwner(isExternal)
-                result(nil)
-            } else {
-                result(FlutterError(code: "INVALID_ARGS", message: "Missing isExternal argument", details: nil))
-            }
+    func startBackgroundExecution(request: PlatformBackgroundStartRequest) throws {
+        startBackgroundExecution(
+            leases: parseLeases(
+                request.leases,
+                streamIds: request.streamIds,
+                requiresMic: request.requiresMicrophone
+            )
+        )
+    }
 
-        case "getActiveStreamCount":
-            // Return count for Flutter-native state reconciliation
-            result(activeLeases.count)
+    func stopBackgroundExecution(request: PlatformBackgroundStopRequest) throws {
+        stopBackgroundExecution(streamIds: request.streamIds)
+    }
 
-        case "getActiveStreamLeases":
-            result(activeLeases.values.map { lease in
-                [
-                    "id": lease.id,
-                    "kind": lease.kind,
-                    "requiresMicrophone": lease.requiresMicrophone,
-                ]
-            })
-            
-        case "stopAllBackgroundExecution":
-            // Stop all streams (used for reconciliation when orphaned service detected)
-            let allStreams = Array(activeLeases.keys)
-            stopBackgroundExecution(streamIds: allStreams)
-            result(nil)
-            
-        default:
-            result(FlutterMethodNotImplemented)
+    func keepAlive(request: PlatformBackgroundKeepAliveRequest) throws {
+        keepAlive()
+    }
+
+    func checkBackgroundRefreshStatus() throws -> Bool {
+        switch UIApplication.shared.backgroundRefreshStatus {
+        case .available:
+            return true
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return true
         }
+    }
+
+    func checkNotificationPermission() throws -> Bool {
+        true
+    }
+
+    func setExternalAudioSessionOwner(
+        request: PlatformBackgroundAudioSessionOwnerRequest
+    ) throws {
+        VoiceBackgroundAudioManager.shared.setExternalSessionOwner(
+            request.isExternal
+        )
+    }
+
+    func getActiveStreamCount() throws -> Int64 {
+        Int64(activeLeases.count)
+    }
+
+    func getActiveStreamLeases() throws -> [PlatformBackgroundStreamLease] {
+        activeLeases.values.map { $0.asPlatformLease() }
+    }
+
+    func stopAllBackgroundExecution() throws {
+        stopBackgroundExecution(streamIds: Array(activeLeases.keys))
     }
     
     private var hasChatLeases: Bool {
@@ -271,29 +286,25 @@ class BackgroundStreamingHandler: NSObject {
     }
 
     private func parseLeases(
-        _ rawLeases: [[String: Any]]?,
+        _ rawLeases: [PlatformBackgroundStreamLease],
         streamIds: [String],
         requiresMic: Bool
     ) -> [BackgroundStreamingLease] {
-        if let rawLeases, !rawLeases.isEmpty {
-            return rawLeases.compactMap { raw in
-                guard let id = raw["id"] as? String, id != "socket-keepalive" else {
-                    return nil
-                }
-                return BackgroundStreamingLease(
-                    id: id,
-                    kind: raw["kind"] as? String ?? "chat",
-                    requiresMicrophone: raw["requiresMicrophone"] as? Bool ?? false
-                )
+        if !rawLeases.isEmpty {
+            return rawLeases.compactMap { lease in
+                guard lease.id != "socket-keepalive" else { return nil }
+                return BackgroundStreamingLease(lease)
             }
         }
 
+        let startedAtMillis = Int64(Date().timeIntervalSince1970 * 1000)
         return streamIds.compactMap { id in
             guard id != "socket-keepalive" else { return nil }
             return BackgroundStreamingLease(
                 id: id,
                 kind: requiresMic ? "voice" : "chat",
-                requiresMicrophone: requiresMic
+                requiresMicrophone: requiresMic,
+                startedAtMillis: startedAtMillis
             )
         }
     }
@@ -345,7 +356,7 @@ class BackgroundStreamingHandler: NSObject {
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 self.notifyStreamsSuspending(reason: "background_task_expiring")
-                self.channel?.invokeMethod("backgroundTaskExpiring", arguments: nil)
+                self.flutterApi?.backgroundTaskExpiring { _ in }
                 if self.backgroundTask == taskIdentifier {
                     self.endBackgroundTask()
                 } else if taskIdentifier != .invalid {
@@ -384,10 +395,12 @@ class BackgroundStreamingHandler: NSObject {
     
     private func notifyStreamsSuspending(reason: String) {
         guard !activeLeases.isEmpty else { return }
-        channel?.invokeMethod("streamsSuspending", arguments: [
-            "streamIds": Array(activeLeases.keys),
-            "reason": reason
-        ])
+        flutterApi?.streamsSuspending(
+            event: PlatformStreamsSuspendingEvent(
+                streamIds: Array(activeLeases.keys),
+                reason: reason
+            )
+        ) { _ in }
     }
 
     // MARK: - BGTaskScheduler Methods
@@ -472,16 +485,18 @@ class BackgroundStreamingHandler: NSObject {
                 guard let self = self else { return }
                 print("BackgroundStreamingHandler: BGProcessingTask expiring")
                 self.notifyStreamsSuspending(reason: "bg_processing_task_expiring")
-                self.channel?.invokeMethod("backgroundTaskExpiring", arguments: nil)
+                self.flutterApi?.backgroundTaskExpiring { _ in }
                 completeTask(success: false)
             }
         }
 
         // Notify Flutter that we have extended background time
-        channel?.invokeMethod("backgroundTaskExtended", arguments: [
-            "streamIds": Array(activeLeases.keys),
-            "estimatedTime": 180 // ~3 minutes typical for BGProcessingTask
-        ])
+        flutterApi?.backgroundTaskExtended(
+            event: PlatformBackgroundTaskExtendedEvent(
+                streamIds: Array(activeLeases.keys),
+                estimatedTime: 180 // ~3 minutes typical for BGProcessingTask
+            )
+        ) { _ in }
 
         Task { @MainActor [weak self] in
             guard let self = self else {
@@ -499,7 +514,7 @@ class BackgroundStreamingHandler: NSObject {
                 elapsedTime += 30
 
                 if !completionState.completed && self.hasChatLeases {
-                    self.channel?.invokeMethod("backgroundKeepAlive", arguments: nil)
+                    self.flutterApi?.backgroundKeepAlive { _ in }
                 }
             }
 
@@ -520,16 +535,13 @@ class BackgroundStreamingHandler: NSObject {
 
 /// Manages the method channel for App Intent invocations to Flutter.
 /// Native Swift intents call this to invoke Flutter-side business logic.
-final class AppIntentMethodChannel {
-    static var shared: AppIntentMethodChannel?
+final class AppIntentBridge {
+    static var shared: AppIntentBridge?
 
-    private let channel: FlutterMethodChannel
+    private let api: AppIntentFlutterApi
 
     init(messenger: FlutterBinaryMessenger) {
-        channel = FlutterMethodChannel(
-            name: "conduit/app_intents",
-            binaryMessenger: messenger
-        )
+        api = AppIntentFlutterApi(binaryMessenger: messenger)
     }
 
     /// Invokes a Flutter handler for the given intent identifier.
@@ -537,21 +549,72 @@ final class AppIntentMethodChannel {
         identifier: String,
         parameters: [String: Any]
     ) async -> [String: Any] {
-        // No [weak self] needed here - the closure executes immediately on the
-        // main queue and there's no retain cycle risk. Using weak self would
-        // risk the continuation never resuming if self became nil.
-        return await withCheckedContinuation { continuation in
+        switch identifier {
+        case "app.cogwheel.conduit.ask_chat":
+            return await invoke { completion in
+                self.api.askChat(
+                    prompt: parameters["prompt"] as? String,
+                    completion: completion
+                )
+            }
+        case "app.cogwheel.conduit.start_voice_call":
+            return await invoke { completion in
+                self.api.startVoiceCall(completion: completion)
+            }
+        case "app.cogwheel.conduit.send_text":
+            return await invoke { completion in
+                self.api.sendText(
+                    text: parameters["text"] as? String ?? "",
+                    completion: completion
+                )
+            }
+        case "app.cogwheel.conduit.send_url":
+            return await invoke { completion in
+                self.api.sendUrl(
+                    url: parameters["url"] as? String ?? "",
+                    completion: completion
+                )
+            }
+        case "app.cogwheel.conduit.send_image":
+            guard let data = parameters["bytes"] as? Data else {
+                return [
+                    "success": false,
+                    "error": "No image data provided."
+                ]
+            }
+            let payload = PlatformAppIntentImagePayload(
+                filename: parameters["filename"] as? String ?? "shared_image.jpg",
+                bytes: FlutterStandardTypedData(bytes: data)
+            )
+            return await invoke { completion in
+                self.api.sendImage(payload: payload, completion: completion)
+            }
+        default:
+            return [
+                "success": false,
+                "error": "Unknown intent: \(identifier)"
+            ]
+        }
+    }
+
+    private func invoke(
+        _ call: @escaping (@escaping (Result<PlatformAppIntentResponse, PigeonError>) -> Void) -> Void
+    ) async -> [String: Any] {
+        await withCheckedContinuation { continuation in
             DispatchQueue.main.async {
-                self.channel.invokeMethod(
-                    identifier,
-                    arguments: parameters
-                ) { result in
-                    if let dict = result as? [String: Any] {
-                        continuation.resume(returning: dict)
-                    } else {
+                call { result in
+                    switch result {
+                    case .success(let response):
+                        var payload: [String: Any] = [
+                            "success": response.success,
+                        ]
+                        payload["value"] = response.value
+                        payload["error"] = response.error
+                        continuation.resume(returning: payload)
+                    case .failure(let error):
                         continuation.resume(returning: [
                             "success": false,
-                            "error": "Invalid response from Flutter"
+                            "error": error.message ?? error.localizedDescription,
                         ])
                     }
                 }
@@ -589,7 +652,7 @@ struct AskConduitIntent: AppIntent {
     func perform() async throws
         -> some IntentResult & ReturnsValue<String> & OpensIntent
     {
-        guard let channel = AppIntentMethodChannel.shared else {
+        guard let channel = AppIntentBridge.shared else {
             throw AppIntentError.executionFailed(appLocalized("appIntent.appNotReady", "App not ready"))
         }
 
@@ -624,7 +687,7 @@ struct StartVoiceCallIntent: AppIntent {
     func perform() async throws
         -> some IntentResult & ReturnsValue<String> & OpensIntent
     {
-        guard let channel = AppIntentMethodChannel.shared else {
+        guard let channel = AppIntentBridge.shared else {
             throw AppIntentError.executionFailed(appLocalized("appIntent.appNotReady", "App not ready"))
         }
 
@@ -662,7 +725,7 @@ struct ConduitSendTextIntent: AppIntent {
     func perform() async throws
         -> some IntentResult & ReturnsValue<String> & OpensIntent
     {
-        guard let channel = AppIntentMethodChannel.shared else {
+        guard let channel = AppIntentBridge.shared else {
             throw AppIntentError.executionFailed(appLocalized("appIntent.appNotReady", "App not ready"))
         }
 
@@ -700,7 +763,7 @@ struct ConduitSendUrlIntent: AppIntent {
     func perform() async throws
         -> some IntentResult & ReturnsValue<String> & OpensIntent
     {
-        guard let channel = AppIntentMethodChannel.shared else {
+        guard let channel = AppIntentBridge.shared else {
             throw AppIntentError.executionFailed(appLocalized("appIntent.appNotReady", "App not ready"))
         }
 
@@ -737,7 +800,7 @@ struct ConduitSendImageIntent: AppIntent {
     func perform() async throws
         -> some IntentResult & ReturnsValue<String> & OpensIntent
     {
-        guard let channel = AppIntentMethodChannel.shared else {
+        guard let channel = AppIntentBridge.shared else {
             throw AppIntentError.executionFailed(appLocalized("appIntent.appNotReady", "App not ready"))
         }
 
@@ -748,14 +811,13 @@ struct ConduitSendImageIntent: AppIntent {
         }
 
         let data = try image.data
-        let base64 = data.base64EncodedString()
         let name = image.filename ?? "shared_image.jpg"
 
         let result = await channel.invokeIntent(
             identifier: "app.cogwheel.conduit.send_image",
             parameters: [
                 "filename": name,
-                "bytes": base64,
+                "bytes": data,
             ]
         )
 
@@ -818,12 +880,13 @@ struct AppShortcuts: AppShortcutsProvider {
 }
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
-  // Single Flutter engine shared across the app's single scene.
-  // Created eagerly so SceneDelegate can call engine.run() during scene connection.
-  let flutterEngine = FlutterEngine(name: "conduit")
-
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var backgroundStreamingHandler: BackgroundStreamingHandler?
+  private var sharedFlutterEngine: FlutterEngine?
+  private weak var sharedFlutterWindowScene: UIWindowScene?
+  private var didConfigureSharedFlutterEngine = false
+  private var cookieChannel: FlutterMethodChannel?
+  private var shareImportChannel: FlutterMethodChannel?
 
   /// Checks if a cookie matches a given URL based on domain.
   private func cookieMatchesUrl(cookie: HTTPCookie, url: URL) -> Bool {
@@ -837,6 +900,124 @@ struct AppShortcuts: AppShortcutsProvider {
     return host == cleanDomain || host.hasSuffix(".\(cleanDomain)")
   }
 
+  private func shareUserDefaults() -> UserDefaults? {
+    let appGroupId = Bundle.main.object(
+      forInfoDictionaryKey: conduitShareAppGroupIdKey
+    ) as? String
+    let defaultGroupId = Bundle.main.bundleIdentifier.map { "group.\($0)" }
+    guard let groupId = appGroupId ?? defaultGroupId else { return nil }
+    return UserDefaults(suiteName: groupId)
+  }
+
+  private func pendingShareImportStatus() -> [String: Any]? {
+    guard let data = shareUserDefaults()?.data(
+      forKey: conduitShareImportStatusKey
+    ) else {
+      return nil
+    }
+
+    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+  }
+
+  private func clearShareImportStatus(id: String?) {
+    guard let defaults = shareUserDefaults() else { return }
+    if let id,
+       let current = pendingShareImportStatus(),
+       let currentId = current["id"] as? String,
+       !currentId.isEmpty,
+       currentId != id {
+      return
+    }
+
+    defaults.removeObject(forKey: conduitShareImportStatusKey)
+    defaults.synchronize()
+  }
+
+  private func takePendingShareImportPayload() -> [String: Any]? {
+    guard let defaults = shareUserDefaults(),
+          let data = defaults.data(forKey: conduitShareUserDefaultsKey),
+          let rawItems = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]]
+    else {
+      return nil
+    }
+
+    let status = pendingShareImportStatus()
+    let payloadId = status?["id"] as? String ?? UUID().uuidString
+    let message = defaults.string(forKey: conduitShareMessageKey)?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    var textParts: [String] = []
+    var seenText = Set<String>()
+    var filePaths: [String] = []
+    var seenFilePaths = Set<String>()
+
+    func addText(_ value: String?) {
+      let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard let trimmed, !trimmed.isEmpty, seenText.insert(trimmed).inserted else {
+        return
+      }
+      textParts.append(trimmed)
+    }
+
+    func addFilePath(_ value: String?) {
+      guard var path = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !path.isEmpty else {
+        return
+      }
+      if path.hasPrefix("file://"),
+         let url = URL(string: path) {
+        path = url.path
+      }
+      guard seenFilePaths.insert(path).inserted else { return }
+      filePaths.append(path)
+    }
+
+    addText(message)
+    for item in rawItems {
+      let type = item["type"]
+      let path = item["path"] as? String ?? item["value"] as? String
+      if isSharedTextType(type) {
+        addText(path)
+      } else {
+        addFilePath(path)
+      }
+    }
+
+    defaults.removeObject(forKey: conduitShareUserDefaultsKey)
+    defaults.removeObject(forKey: conduitShareMessageKey)
+    defaults.synchronize()
+
+    if textParts.isEmpty && filePaths.isEmpty {
+      return nil
+    }
+
+    var payload: [String: Any] = [
+      "id": payloadId,
+      "filePaths": filePaths,
+    ]
+    if !textParts.isEmpty {
+      payload["text"] = textParts.joined(separator: "\n")
+    }
+    return payload
+  }
+
+  private func isSharedTextType(_ type: Any?) -> Bool {
+    if let type = type as? String {
+      return type == "text" || type == "url"
+    }
+    if let type = type as? Int {
+      return type == 0 || type == 1 || type == 5
+    }
+    if let type = type as? NSNumber {
+      let value = type.intValue
+      return value == 0 || value == 1 || value == 5
+    }
+    return false
+  }
+
+  func notifyShareImportEvent() {
+    shareImportChannel?.invokeMethod("stagedSharePayloadReady", arguments: nil)
+  }
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -846,28 +1027,100 @@ struct AppShortcuts: AppShortcutsProvider {
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
-  // Wires native method channels and plugin bridges onto the given engine.
-  // Called from SceneDelegate after engine.run() + GeneratedPluginRegistrant.register().
-  func configureMethodChannels(on engine: FlutterEngine) {
-    let messenger = engine.binaryMessenger
+  func didInitializeImplicitFlutterEngine(
+    _ engineBridge: FlutterImplicitEngineBridge
+  ) {
+    guard sharedFlutterEngine == nil else { return }
 
-    AppIntentMethodChannel.shared = AppIntentMethodChannel(messenger: messenger)
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    configureApplicationFlutterChannels(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
+  }
 
+  @discardableResult
+  func ensureCarPlayFlutterEngine() -> Bool {
+    return ensureSharedFlutterEngine() != nil
+  }
+
+  @discardableResult
+  func ensureSharedFlutterEngine() -> FlutterEngine? {
+    if let engine = sharedFlutterEngine {
+      configureSharedFlutterEngineIfNeeded(engine)
+      return engine
+    }
+
+    let engine = FlutterEngine(
+      name: "conduit.shared",
+      project: nil,
+      allowHeadlessExecution: true
+    )
+    guard engine.run() else {
+      print("AppDelegate: failed to start shared Flutter engine")
+      return nil
+    }
+
+    sharedFlutterEngine = engine
+    configureSharedFlutterEngineIfNeeded(engine)
+    return engine
+  }
+
+  func claimSharedFlutterWindowScene(_ windowScene: UIWindowScene) -> Bool {
+    if let currentScene = sharedFlutterWindowScene, currentScene !== windowScene {
+      return false
+    }
+
+    sharedFlutterWindowScene = windowScene
+    return true
+  }
+
+  func releaseSharedFlutterWindowScene(_ windowScene: UIWindowScene) {
+    if sharedFlutterWindowScene === windowScene {
+      sharedFlutterWindowScene = nil
+    }
+  }
+
+  private func configureSharedFlutterEngineIfNeeded(_ engine: FlutterEngine) {
+    guard !didConfigureSharedFlutterEngine else { return }
+
+    GeneratedPluginRegistrant.register(with: engine)
+    configureApplicationFlutterChannels(messenger: engine.binaryMessenger)
+    didConfigureSharedFlutterEngine = true
+  }
+
+  private func configureApplicationFlutterChannels(
+    messenger: FlutterBinaryMessenger
+  ) {
+    AppIntentBridge.shared = AppIntentBridge(messenger: messenger)
+    ConduitCarPlayBridge.shared.configure(messenger: messenger)
     NativePasteBridge.shared.configure(messenger: messenger)
     NativeKeyboardAttachmentBridge.shared.configure(messenger: messenger)
     NativeSheetBridge.shared.configure(messenger: messenger)
     NativeDropdownBridge.shared.configure(messenger: messenger)
+    backgroundStreamingHandler?.setup(messenger: messenger)
 
-    let channel = FlutterMethodChannel(
-      name: "conduit/background_streaming",
+    let shareImportChannel = FlutterMethodChannel(
+      name: conduitShareChannelName,
       binaryMessenger: messenger
     )
+    self.shareImportChannel = shareImportChannel
+    shareImportChannel.setMethodCallHandler { [weak self] call, result in
+      guard let self = self else {
+        result(nil)
+        return
+      }
 
-    backgroundStreamingHandler?.setup(with: channel)
-
-    channel.setMethodCallHandler { [weak self] (call, result) in
-      Task { @MainActor [weak self] in
-        self?.backgroundStreamingHandler?.handle(call, result: result)
+      switch call.method {
+      case "pendingShareImportStatus":
+        result(self.pendingShareImportStatus())
+      case "takePendingShareImportPayload":
+        result(self.takePendingShareImportPayload())
+      case "clearShareImportStatus":
+        let arguments = call.arguments as? [String: Any]
+        self.clearShareImportStatus(id: arguments?["id"] as? String)
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
       }
     }
 
@@ -875,6 +1128,7 @@ struct AppShortcuts: AppShortcutsProvider {
       name: "com.conduit.app/cookies",
       binaryMessenger: messenger
     )
+    self.cookieChannel = cookieChannel
 
     cookieChannel.setMethodCallHandler { [weak self] (call, result) in
       if call.method == "getCookies" {
@@ -885,14 +1139,17 @@ struct AppShortcuts: AppShortcutsProvider {
           return
         }
 
+        // Get cookies from WKWebView's cookie store
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { [weak self] cookies in
           guard let self = self else {
+            // Always call result to avoid leaving Dart side hanging
             result([:])
             return
           }
           var cookieDict: [String: String] = [:]
 
           for cookie in cookies {
+            // Filter cookies for this domain
             if self.cookieMatchesUrl(cookie: cookie, url: url) {
               cookieDict[cookie.name] = cookie.value
             }
@@ -904,71 +1161,5 @@ struct AppShortcuts: AppShortcutsProvider {
         result(FlutterMethodNotImplemented)
       }
     }
-  }
-}
-
-/// Owns the window and FlutterViewController for this app's single scene.
-///
-/// Follows the Flutter 3.41+ UIScene migration pattern from
-/// https://docs.flutter.dev/release/breaking-changes/uiscenedelegate
-///
-/// Order matches Flutter's own FlutterLaunchEngine.m (which is the canonical
-/// pattern for explicit-engine + FlutterViewController):
-///
-///   1. engine.run()              — -[FlutterViewController initWithEngine:] sets
-///                                   _engineNeedsLaunch = NO, i.e. the engine MUST
-///                                   already have a live shell before VC init.
-///                                   Calling init on an un-run engine ends up
-///                                   locking a mutex on a nil shell pointer
-///                                   (pthread_mutex_lock @ 0x80; see
-///                                   docs/Runner-2026-05-26-134730.ips).
-///   2. FlutterViewController(engine:)  — init internally calls
-///                                   [engine setViewController:self], so
-///                                   engine.viewController becomes non-nil.
-///   3. GeneratedPluginRegistrant   — plugins like adaptive_platform_ui's
-///                                   iOS26NativeTabBarManager read engine state
-///                                   on register; they need a running engine
-///                                   with a viewController attached
-///                                   (see docs/Runner-2026-05-26-110640.ips).
-///   4. window.rootViewController + makeKeyAndVisible — by the time UIKit
-///                                   triggers loadView / viewDidLoad, the engine
-///                                   is fully wired and plugins have published
-///                                   their channels.
-class SceneDelegate: FlutterSceneDelegate {
-  override func scene(
-    _ scene: UIScene,
-    willConnectTo session: UISceneSession,
-    options connectionOptions: UIScene.ConnectionOptions
-  ) {
-    guard let windowScene = scene as? UIWindowScene else {
-      super.scene(scene, willConnectTo: session, options: connectionOptions)
-      return
-    }
-
-    guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else {
-      assertionFailure("AppDelegate unavailable during scene connection")
-      super.scene(scene, willConnectTo: session, options: connectionOptions)
-      return
-    }
-
-    let engine = appDelegate.flutterEngine
-
-    // 1. Start the shell + Dart isolate.
-    engine.run()
-
-    // 2. Create the VC; init binds it to the engine via setViewController:.
-    let viewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
-
-    // 3. Register plugins now that engine has a shell AND a viewController.
-    GeneratedPluginRegistrant.register(with: engine)
-    appDelegate.configureMethodChannels(on: engine)
-    self.registerSceneLifeCycle(with: engine)
-
-    // 4. Present.
-    window = UIWindow(windowScene: windowScene)
-    window?.rootViewController = viewController
-    window?.makeKeyAndVisible()
-
-    super.scene(scene, willConnectTo: session, options: connectionOptions)
   }
 }

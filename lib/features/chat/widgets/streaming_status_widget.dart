@@ -88,25 +88,13 @@ class _StreamingStatusWidgetState extends State<StreamingStatusWidget> {
 
     if (Platform.isIOS) {
       final items = <NativeSheetItemConfig>[
-        for (var index = 0; index < updates.length; index++) ...[
-          NativeSheetItemConfig(
-            id: 'status-update-$index',
-            title: _resolveStatusDescription(updates[index]),
-            subtitle: _collectQueries(updates[index]).isEmpty
-                ? null
-                : _collectQueries(updates[index]).join(', '),
-            sfSymbol: 'circle.dotted',
-            kind: NativeSheetItemKind.info,
+        for (var index = 0; index < updates.length; index++)
+          _buildNativeStatusItem(
+            updates[index],
+            index: index,
+            total: updates.length,
+            isStreaming: isStreaming,
           ),
-          for (final link in _collectLinks(updates[index]))
-            NativeSheetItemConfig(
-              id: 'status-link-$index-${link.url}',
-              title: link.title ?? link.url,
-              subtitle: link.url,
-              sfSymbol: 'link',
-              url: link.url,
-            ),
-        ],
       ];
       try {
         await NativeSheetBridge.instance.presentSheet(
@@ -136,9 +124,9 @@ class _StreamingStatusWidgetState extends State<StreamingStatusWidget> {
       padding: EdgeInsets.zero,
       builder: (ctx) {
         return DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          minChildSize: 0.3,
-          maxChildSize: 0.95,
+          initialChildSize: DraggableModalSheetSizes.initialChildSize,
+          minChildSize: DraggableModalSheetSizes.minChildSize,
+          maxChildSize: DraggableModalSheetSizes.maxChildSize,
           expand: false,
           builder: (_, controller) {
             return Column(
@@ -207,6 +195,51 @@ class _StreamingStatusWidgetState extends State<StreamingStatusWidget> {
       },
     );
   }
+
+  NativeSheetItemConfig _buildNativeStatusItem(
+    ChatStatusUpdate update, {
+    required int index,
+    required int total,
+    required bool isStreaming,
+  }) {
+    final queries = _collectQueries(update);
+    final links = _collectLinks(update);
+
+    return NativeSheetItemConfig(
+      id: 'status-update-$index',
+      title: _resolveStatusDescription(update),
+      subtitle: queries.isEmpty ? null : queries.join(', '),
+      sfSymbol: 'circle.dotted',
+      kind: NativeSheetItemKind.statusUpdate,
+      queries: queries,
+      links: [
+        for (final link in links)
+          NativeSheetLinkConfig(
+            url: link.url,
+            title: link.title,
+            faviconUrl: _nativeFaviconUrl(link.url),
+          ),
+      ],
+      pending: index == total - 1 && update.done != true && isStreaming,
+    );
+  }
+
+  String? _nativeFaviconUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.host.isEmpty) {
+      return null;
+    }
+
+    var domain = uri.host.trim();
+    if (domain.startsWith('www.')) {
+      domain = domain.substring(4);
+    }
+    if (domain.isEmpty) {
+      return null;
+    }
+
+    return 'https://www.google.com/s2/favicons?sz=16&domain=$domain';
+  }
 }
 
 /// Minimal status row - just text with optional chevron.
@@ -239,6 +272,8 @@ class _MinimalHistoryTimeline extends StatelessWidget {
     required this.isStreaming,
   });
 
+  static const double _markerGap = Spacing.sm;
+
   final List<ChatStatusUpdate> updates;
   final bool isStreaming;
 
@@ -256,45 +291,47 @@ class _MinimalHistoryTimeline extends StatelessWidget {
       final queries = _collectQueries(update);
       final links = _collectLinks(update);
 
-      return IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _TimelineMarker(
+      return Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(
+              left: _TimelineMarker._width + _markerGap,
+              bottom: Spacing.sm,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AssistantDetailHeader(
+                  title: description,
+                  showShimmer: isPending,
+                  allowWrap: true,
+                  showChevron: false,
+                ),
+                if (queries.isNotEmpty) ...[
+                  const SizedBox(height: Spacing.xs),
+                  _MinimalQueryChips(queries: queries),
+                ],
+                if (links.isNotEmpty) ...[
+                  const SizedBox(height: Spacing.xs),
+                  _MinimalSourceLinks(links: links),
+                ],
+              ],
+            ),
+          ),
+          Positioned(
+            top: 0,
+            bottom: 0,
+            left: 0,
+            child: _TimelineMarker(
               index: index,
               isFirst: isFirst,
               isLast: isLast,
               isPending: isPending,
               theme: theme,
             ),
-            const SizedBox(width: Spacing.sm),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: Spacing.sm),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    AssistantDetailHeader(
-                      title: description,
-                      showShimmer: isPending,
-                      allowWrap: true,
-                      showChevron: false,
-                    ),
-                    if (queries.isNotEmpty) ...[
-                      const SizedBox(height: Spacing.xs),
-                      _MinimalQueryChips(queries: queries),
-                    ],
-                    if (links.isNotEmpty) ...[
-                      const SizedBox(height: Spacing.xs),
-                      _MinimalSourceLinks(links: links),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       );
     }).toList();
 

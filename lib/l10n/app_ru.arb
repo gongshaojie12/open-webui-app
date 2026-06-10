@@ -169,6 +169,8 @@
   "chineseTraditional": "Китайский (традиционный)",
   "korean": "한국어",
   "japanese": "日本語",
+  "czech": "Čeština",
+  "slovak": "Slovenčina",
   "deleteMessagesTitle": "Удалить сообщения",
   "deleteMessagesMessage": "Удалить {count, plural, one{{count} сообщение} few{{count} сообщения} other{{count} сообщений}}?",
   "@deleteMessagesMessage": {
@@ -332,6 +334,12 @@
   "sttServerUnavailableWarning": "Подключитесь к серверу с включённой транскрибацией, чтобы использовать эту опцию.",
   "sttSilenceDuration": "Длительность тишины",
   "sttSilenceDurationDescription": "Время ожидания после тишины перед автоматической остановкой записи",
+  "sttTranscriptionLanguage": "Язык транскрипции",
+  "sttTranscriptionLanguageDescription": "Авто использует язык этого устройства; либо введите код, например pl.",
+  "sttTranscriptionLanguageAuto": "Авто",
+  "sttTranscriptionLanguageCustom": "Пользовательский код языка",
+  "sttTranscriptionLanguagePlaceholder": "Код ISO-639-1, например pl",
+  "sttTranscriptionLanguageInvalid": "Используйте двухбуквенный код языка, например pl.",
   "ttsSettings": "Преобразование текста в речь",
   "ttsEngineDeviceDescription": "Оставляет синтез на этом устройстве. Воспроизведение голоса не работает, если устройство не поддерживает синтез речи.",
   "ttsEngineServerDescription": "Всегда запрашивает аудио у вашего сервера OpenWebUI.",
@@ -1775,5 +1783,17 @@
   "failedToLoadTools": "Не удалось загрузить инструменты",
   "@failedToLoadTools": {
     "description": "Error shown when the composer overflow menu cannot load tools."
-  }
+  },
+  "terminalExpandAction": "Полный экран",
+  "terminalReopenFullscreen": "Открыто в полноэкранном режиме - нажмите, чтобы открыть снова",
+  "terminalKeyTab": "Tab",
+  "terminalKeyUp": "Вверх",
+  "terminalKeyDown": "Вниз",
+  "terminalKeyCtrlC": "Ctrl-C",
+  "terminalCopyAction": "Копировать",
+  "terminalPasteAction": "Вставить",
+  "terminalNothingToCopy": "Ничего не выбрано для копирования",
+  "terminalCopied": "Скопировано в буфер обмена",
+  "terminalPasteWhileDisconnected": "Подключитесь, чтобы вставить",
+  "terminalPortsToggle": "Прослушиваемые порты"
 }

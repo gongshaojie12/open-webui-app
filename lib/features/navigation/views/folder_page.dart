@@ -12,13 +12,12 @@ import 'package:go_router/go_router.dart';
 import '../../../core/models/conversation.dart';
 import '../../../core/models/folder.dart';
 import '../../../core/models/model.dart';
-import '../../../core/network/image_header_utils.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/services/haptic_service.dart';
 import '../../../core/services/native_sheet_bridge.dart';
+import '../../../core/services/native_sheet_hydration_service.dart';
 import '../../../core/services/navigation_service.dart';
 import '../../../core/services/settings_service.dart';
-import '../../../core/utils/model_icon_utils.dart';
 import '../../../core/widgets/error_boundary.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../shared/theme/conduit_input_styles.dart';
@@ -139,6 +138,7 @@ class _FolderPageState extends ConsumerState<FolderPage> {
       pillWidth: maxModelWidth,
       leadingGap: leadingGap,
     );
+    final overlayStyle = Theme.of(context).appBarTheme.systemOverlayStyle;
 
     return AdaptiveAppBar(
       useNativeToolbar: false,
@@ -147,6 +147,8 @@ class _FolderPageState extends ConsumerState<FolderPage> {
         automaticallyImplyLeading: false,
         border: null,
         backgroundColor: Colors.transparent,
+        automaticBackgroundVisibility: false,
+        brightness: Theme.of(context).brightness,
         enableBackgroundFilterBlur: false,
         leading: leading,
         trailing: Row(mainAxisSize: MainAxisSize.min, children: actions),
@@ -159,6 +161,7 @@ class _FolderPageState extends ConsumerState<FolderPage> {
         elevation: Elevation.none,
         scrolledUnderElevation: Elevation.none,
         toolbarHeight: kTextTabBarHeight,
+        systemOverlayStyle: overlayStyle,
         centerTitle: false,
         titleSpacing: Spacing.sm,
         leadingWidth: leadingWidth,
@@ -248,26 +251,11 @@ class _FolderPageState extends ConsumerState<FolderPage> {
 
   Future<void> _showModelSelector() async {
     final hadFocus = ref.read(chat.composerHasFocusProvider);
-    final api = ref.read(apiServiceProvider);
-    final avatarHeaders =
-        buildImageHeadersFromContainer(
-          ProviderScope.containerOf(context, listen: false),
-        ) ??
-        const <String, String>{};
     _dismissComposerFocus();
 
     try {
-      List<Model> models;
-      final modelsAsync = ref.read(modelsProvider);
-
-      if (modelsAsync.hasValue) {
-        models = modelsAsync.value!;
-      } else {
-        if (modelsAsync.hasError) {
-          ref.invalidate(modelsProvider);
-        }
-        models = await ref.read(modelsProvider.future);
-      }
+      final nativeSheets = ref.read(nativeSheetHydrationServiceProvider);
+      final models = await nativeSheets.loadModels();
 
       if (!mounted) {
         return;
@@ -275,23 +263,14 @@ class _FolderPageState extends ConsumerState<FolderPage> {
 
       if (Platform.isIOS) {
         try {
-          final selectedId = await NativeSheetBridge.instance
-              .presentModelSelector(
-                title: AppLocalizations.of(context)!.chooseModel,
-                selectedModelId: ref.read(selectedModelProvider)?.id,
-                models: models
-                    .map(
-                      (model) => NativeSheetModelOption(
-                        id: model.id,
-                        name: model.name,
-                        subtitle: model.description ?? model.id,
-                        avatarUrl: resolveModelIconUrlForModel(api, model),
-                        avatarHeaders: avatarHeaders,
-                      ),
-                    )
-                    .toList(),
-                rethrowErrors: true,
-              );
+          final selectedId = await nativeSheets.presentModelSelector(
+            context,
+            title: AppLocalizations.of(context)!.chooseModel,
+            selectedModelId: ref.read(selectedModelProvider)?.id,
+            models: models,
+            allowsPinning: true,
+            rethrowErrors: true,
+          );
           if (!mounted) {
             return;
           }
@@ -316,7 +295,7 @@ class _FolderPageState extends ConsumerState<FolderPage> {
       await ThemedSheets.showCustom<void>(
         context: context,
         isScrollControlled: true,
-        builder: (sheetContext) => ModelSelectorSheet(models: models, ref: ref),
+        builder: (sheetContext) => ModelSelectorSheet(models: models),
       );
     } catch (_) {
       return;
@@ -513,7 +492,7 @@ class _FolderPageState extends ConsumerState<FolderPage> {
 
       for (final attachment in attachments) {
         final fileSize = await attachment.file.length();
-        if (!chat.validateFileSize(fileSize, 20)) {
+        if (attachment.isImage && !chat.validateFileSize(fileSize, 20)) {
           return;
         }
       }
@@ -612,27 +591,44 @@ class _FolderPageState extends ConsumerState<FolderPage> {
     }
 
     try {
-      final attachment = fromCamera
-          ? await fileService.takePhoto()
-          : await fileService.pickImage();
-      if (attachment == null) {
+      final List<LocalAttachment> attachments;
+      if (fromCamera) {
+        final attachment = await fileService.takePhoto() as LocalAttachment?;
+        if (attachment == null) {
+          return;
+        }
+        attachments = [attachment];
+      } else {
+        attachments = List<LocalAttachment>.from(
+          await fileService.pickImages(),
+        );
+      }
+
+      if (attachments.isEmpty) {
         return;
       }
 
-      final imageSize = await attachment.file.length();
-      if (!chat.validateFileSize(imageSize, 20)) {
-        return;
+      final imageSizes = <LocalAttachment, int>{};
+      for (final attachment in attachments) {
+        final imageSize = await attachment.file.length();
+        imageSizes[attachment] = imageSize;
+        if (!chat.validateFileSize(imageSize, 20)) {
+          return;
+        }
       }
 
-      ref.read(attachedFilesProvider.notifier).addFiles([attachment]);
-      await ref
-          .read(taskQueueProvider.notifier)
-          .enqueueUploadMedia(
-            conversationId: null,
-            filePath: attachment.file.path,
-            fileName: attachment.displayName,
-            fileSize: imageSize,
-          );
+      ref.read(attachedFilesProvider.notifier).addFiles(attachments);
+      for (final attachment in attachments) {
+        await ref
+            .read(taskQueueProvider.notifier)
+            .enqueueUploadMedia(
+              conversationId: null,
+              filePath: attachment.file.path,
+              fileName: attachment.displayName,
+              fileSize:
+                  imageSizes[attachment] ?? await attachment.file.length(),
+            );
+      }
     } catch (_) {}
   }
 
@@ -1347,6 +1343,7 @@ class _FolderPageState extends ConsumerState<FolderPage> {
     ];
 
     final scrollView = ConduitRefreshIndicator(
+      edgeOffset: MediaQuery.of(context).padding.top + kTextTabBarHeight,
       onRefresh: _refreshFolderContents,
       child: CustomScrollView(
         key: ValueKey<String>('folder-page-${widget.folderId}'),

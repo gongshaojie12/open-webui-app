@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:adaptive_platform_ui/adaptive_platform_ui.dart';
@@ -5,8 +6,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:go_router/go_router.dart';
-import 'package:webview_flutter_plus/webview_flutter_plus.dart';
 
 import '../../../core/auth/webview_cookie_helper.dart';
 import '../../../core/models/server_config.dart';
@@ -47,12 +48,13 @@ class SsoAuthPage extends ConsumerStatefulWidget {
 }
 
 class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
-  WebViewControllerPlus? _controller;
+  InAppWebViewController? _controller;
   bool _isLoading = true;
   bool _tokenCaptured = false;
   String? _error;
   String? _serverUrl;
   int _captureAttemptId = 0; // Used to cancel stale retry sequences
+  bool _shouldRenderWebView = false;
 
   @override
   void initState() {
@@ -109,36 +111,44 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
 
     DebugLogger.auth('Initializing SSO WebView for $_serverUrl');
 
-    final controller = WebViewControllerPlus()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: _onPageStarted,
-          onPageFinished: _onPageFinished,
-          onWebResourceError: _onWebResourceError,
-          onNavigationRequest: _onNavigationRequest,
-          onUrlChange: _onUrlChange,
-          onSslAuthError: _onSslAuthError,
-        ),
-      )
-      ..setUserAgent(_buildUserAgent());
-
     // Clear cookies before loading to ensure fresh session
-    if (isWebViewSupported) {
-      await WebViewCookieManager().clearCookies();
-    }
-
-    if (!mounted) return;
-
-    // Load the auth page or specific OAuth login URL
-    final loginPath = widget.oauthLoginPath ?? '/auth';
-    await controller.loadRequest(Uri.parse('$_serverUrl$loginPath'));
+    await WebViewCookieHelper.clearCookies();
 
     if (!mounted) return;
 
     setState(() {
-      _controller = controller;
+      _controller = null;
+      _shouldRenderWebView = true;
+      _isLoading = true;
+      _error = null;
+      _tokenCaptured = false;
     });
+  }
+
+  Future<void> _loadInitialAuthPage(InAppWebViewController controller) async {
+    final serverUrl = _serverUrl;
+    if (serverUrl == null) {
+      return;
+    }
+
+    try {
+      // Load the auth page or specific OAuth login URL (custom path support)
+      final loginPath = widget.oauthLoginPath ?? '/auth';
+      await controller.loadUrl(
+        urlRequest: URLRequest(url: WebUri('$serverUrl$loginPath')),
+      );
+    } catch (e) {
+      DebugLogger.error(
+        'sso-webview-initial-load-failed',
+        scope: 'auth/sso',
+        error: e,
+      );
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
+    }
   }
 
   String _buildUserAgent() {
@@ -165,15 +175,15 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
   }
 
   /// Called when URL changes (may catch changes that onPageFinished misses)
-  Future<void> _onUrlChange(UrlChange change) async {
-    final url = change.url;
-    if (url == null) return;
-    DebugLogger.auth('SSO URL changed: $url');
+  Future<void> _onUrlChange(WebUri? url) async {
+    final urlText = url?.toString();
+    if (urlText == null || urlText.isEmpty) return;
+    DebugLogger.auth('SSO URL changed: $urlText');
 
     // Try to capture token on URL change as well
     if (_tokenCaptured) return;
 
-    final uri = Uri.parse(url);
+    final uri = Uri.parse(urlText);
     final serverUrl = _serverUrl;
     if (serverUrl == null) return;
 
@@ -292,17 +302,18 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
     // Strategy 1: Check token cookie via JavaScript
     // Open-WebUI sets the token cookie with httponly=False, so it's accessible
     try {
-      final cookieResult = await controller.runJavaScriptReturningResult(
-        '(function() {'
-        '  var cookies = document.cookie.split(";");'
-        '  for (var i = 0; i < cookies.length; i++) {'
-        '    var cookie = cookies[i].trim();'
-        '    if (cookie.startsWith("token=")) {'
-        '      return cookie.substring(6);'
-        '    }'
-        '  }'
-        '  return "";'
-        '})()',
+      final cookieResult = await controller.evaluateJavascript(
+        source:
+            '(function() {'
+            '  var cookies = document.cookie.split(";");'
+            '  for (var i = 0; i < cookies.length; i++) {'
+            '    var cookie = cookies[i].trim();'
+            '    if (cookie.startsWith("token=")) {'
+            '      return cookie.substring(6);'
+            '    }'
+            '  }'
+            '  return "";'
+            '})()',
       );
 
       // Abort if widget disposed or new page load started
@@ -327,8 +338,8 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
 
     // Strategy 2: Check localStorage (fallback - frontend sets this)
     try {
-      final result = await controller.runJavaScriptReturningResult(
-        'localStorage.getItem("token")',
+      final result = await controller.evaluateJavascript(
+        source: 'localStorage.getItem("token")',
       );
 
       // Abort if widget disposed or new page load started
@@ -432,19 +443,19 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
     }
   }
 
-  void _onWebResourceError(WebResourceError error) {
+  void _onWebResourceError(WebResourceRequest request, WebResourceError error) {
     DebugLogger.error(
       'sso-webview-error',
       scope: 'auth/sso',
       data: {
-        'errorCode': error.errorCode,
+        'url': request.url.toString(),
         'description': error.description,
-        'errorType': error.errorType?.name,
+        'errorType': error.type.toString(),
       },
     );
 
     // Only show error for main frame failures
-    if (error.isForMainFrame ?? false) {
+    if (request.isForMainFrame ?? false) {
       setState(() {
         _error = error.description;
         _isLoading = false;
@@ -465,15 +476,21 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
   /// 1. This WebView is only used for authentication flows
   /// 2. The JWT token is validated server-side regardless
   /// 3. The user explicitly initiated the OAuth flow
-  void _onSslAuthError(SslAuthError error) {
+  Future<ServerTrustAuthResponse?> _onReceivedServerTrustAuthRequest(
+    InAppWebViewController controller,
+    URLAuthenticationChallenge challenge,
+  ) async {
     DebugLogger.auth(
-      'SSO WebView SSL certificate error, proceeding to allow OAuth flow',
+      'SSO WebView SSL certificate challenge, proceeding to allow OAuth flow',
     );
-    error.proceed();
+    return ServerTrustAuthResponse(action: ServerTrustAuthResponseAction.PROCEED);
   }
 
-  NavigationDecision _onNavigationRequest(NavigationRequest request) {
-    final url = request.url;
+  Future<NavigationActionPolicy?> _onNavigationRequest(
+    InAppWebViewController controller,
+    NavigationAction request,
+  ) async {
+    final url = request.request.url;
     DebugLogger.auth('SSO navigation request: $url');
 
     // Allow all navigation - OAuth flows require redirects to external
@@ -484,7 +501,7 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
     // 1. OAuth providers may use various redirect URLs
     // 2. The user initiated this flow intentionally
     // 3. Token capture only happens on the configured server's /auth page
-    return NavigationDecision.navigate;
+    return NavigationActionPolicy.ALLOW;
   }
 
   Future<void> _refresh() async {
@@ -497,15 +514,14 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
       _tokenCaptured = false;
     });
 
-    // Clear cookies and reload (with platform guard)
-    if (isWebViewSupported) {
-      await WebViewCookieManager().clearCookies();
-    }
+    await WebViewCookieHelper.clearCookies();
 
     if (!mounted) return;
 
     final loginPath = widget.oauthLoginPath ?? '/auth';
-    await controller.loadRequest(Uri.parse('$_serverUrl$loginPath'));
+    await controller.loadUrl(
+      urlRequest: URLRequest(url: WebUri('$_serverUrl$loginPath')),
+    );
   }
 
   @override
@@ -538,14 +554,49 @@ class _SsoAuthPageState extends ConsumerState<SsoAuthPage> {
       return _buildErrorState(l10n);
     }
 
-    // Guard against rendering WebView on unsupported platforms
-    if (_controller == null || !isWebViewSupported) {
+    // Guard against rendering WebView on unsupported platforms.
+    if (!_shouldRenderWebView || !isWebViewSupported) {
       return _buildLoadingState(l10n);
     }
 
     return Stack(
       children: [
-        WebViewWidget(controller: _controller!),
+        InAppWebView(
+          key: ValueKey<String?>(_serverUrl),
+          initialSettings: InAppWebViewSettings(
+            javaScriptEnabled: true,
+            useShouldOverrideUrlLoading: true,
+            userAgent: _buildUserAgent(),
+          ),
+          onWebViewCreated: (controller) {
+            if (mounted) {
+              setState(() {
+                _controller = controller;
+              });
+            } else {
+              _controller = controller;
+            }
+            unawaited(_loadInitialAuthPage(controller));
+          },
+          onLoadStart: (controller, url) {
+            _onPageStarted(url?.toString() ?? '');
+          },
+          onLoadStop: (controller, url) async {
+            final urlText = url?.toString();
+            if (urlText == null || urlText.isEmpty) {
+              return;
+            }
+            await _onPageFinished(urlText);
+          },
+          onReceivedError: (controller, request, error) {
+            _onWebResourceError(request, error);
+          },
+          onUpdateVisitedHistory: (controller, url, _) async {
+            await _onUrlChange(url);
+          },
+          shouldOverrideUrlLoading: _onNavigationRequest,
+          onReceivedServerTrustAuthRequest: _onReceivedServerTrustAuthRequest,
+        ),
         if (_isLoading) _buildLoadingOverlay(l10n),
       ],
     );

@@ -25,6 +25,7 @@ import '../widgets/customization_tile.dart';
 import '../widgets/expandable_card.dart';
 import '../widgets/settings_page_scaffold.dart';
 import '../widgets/socket_health_card.dart';
+import '../widgets/stt_language_picker.dart';
 
 const _sectionGap = SizedBox(height: Spacing.lg);
 
@@ -994,6 +995,10 @@ class AppCustomizationPage extends ConsumerWidget {
                 const SizedBox(height: Spacing.md),
                 const Divider(),
                 const SizedBox(height: Spacing.md),
+                _buildSttLanguageRow(context, ref, settings),
+                const SizedBox(height: Spacing.md),
+                const Divider(),
+                const SizedBox(height: Spacing.md),
                 Row(
                   children: [
                     Expanded(
@@ -1053,6 +1058,62 @@ class AppCustomizationPage extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildSttLanguageRow(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+  ) {
+    final theme = context.conduitTheme;
+    final l10n = AppLocalizations.of(context)!;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => showSttLanguagePickerSheet(context, ref, settings),
+      child: Row(
+        children: [
+          _buildIconBadge(
+            context,
+            UiUtils.platformIcon(
+              ios: CupertinoIcons.globe,
+              android: Icons.language,
+            ),
+            color: theme.buttonPrimary,
+          ),
+          const SizedBox(width: Spacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.sttTranscriptionLanguage,
+                  style: theme.bodyMedium?.copyWith(
+                    color: theme.sidebarForeground,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: Spacing.xs),
+                Text(
+                  sttLanguageSubtitle(l10n, settings),
+                  style: theme.bodySmall?.copyWith(
+                    color: theme.sidebarForeground.withValues(alpha: 0.7),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: Spacing.sm),
+          Icon(
+            UiUtils.platformIcon(
+              ios: CupertinoIcons.chevron_right,
+              android: Icons.chevron_right,
+            ),
+            color: theme.iconSecondary,
+            size: IconSize.small,
+          ),
+        ],
+      ),
     );
   }
 
@@ -1763,6 +1824,10 @@ class AppCustomizationPage extends ConsumerWidget {
     switch (code) {
       case 'en':
         return AppLocalizations.of(context)!.english;
+      case 'cs':
+        return AppLocalizations.of(context)!.czech;
+      case 'sk':
+        return AppLocalizations.of(context)!.slovak;
       case 'de':
         return AppLocalizations.of(context)!.deutsch;
       case 'fr':
@@ -1795,6 +1860,12 @@ class AppCustomizationPage extends ConsumerWidget {
         }
         if (normalizedCode == 'ja') {
           return AppLocalizations.of(context)!.japanese;
+        }
+        if (normalizedCode == 'cs') {
+          return AppLocalizations.of(context)!.czech;
+        }
+        if (normalizedCode == 'sk') {
+          return AppLocalizations.of(context)!.slovak;
         }
         return AppLocalizations.of(context)!.system;
     }
@@ -2030,6 +2101,8 @@ class AppCustomizationPage extends ConsumerWidget {
     final options = <({String value, String label})>[
       (value: 'system', label: l10n.system),
       (value: 'en', label: l10n.english),
+      (value: 'cs', label: l10n.czech),
+      (value: 'sk', label: l10n.slovak),
       (value: 'de', label: l10n.deutsch),
       (value: 'es', label: l10n.espanol),
       (value: 'fr', label: l10n.francais),

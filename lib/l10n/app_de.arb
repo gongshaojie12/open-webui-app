@@ -169,6 +169,8 @@
   "chineseTraditional": "Chinesisch (Traditionell)",
   "korean": "Koreanisch",
   "japanese": "日本語",
+  "czech": "Čeština",
+  "slovak": "Slovenčina",
   "deleteMessagesTitle": "Nachrichten löschen",
   "deleteMessagesMessage": "{count} Nachrichten löschen?",
   "@deleteMessagesMessage": {
@@ -332,6 +334,12 @@
   "sttServerUnavailableWarning": "Verbinde dich mit einem Server mit aktivierter Transkription, um diese Option zu nutzen.",
   "sttSilenceDuration": "Stille-Dauer",
   "sttSilenceDurationDescription": "Zeit nach Stille warten, bevor die Aufnahme automatisch gestoppt wird",
+  "sttTranscriptionLanguage": "Transkriptionssprache",
+  "sttTranscriptionLanguageDescription": "Auto verwendet die Sprache dieses Geräts. Alternativ kannst du einen Code wie pl eingeben.",
+  "sttTranscriptionLanguageAuto": "Auto",
+  "sttTranscriptionLanguageCustom": "Benutzerdefinierter Sprachcode",
+  "sttTranscriptionLanguagePlaceholder": "ISO-639-1-Code, z. B. pl",
+  "sttTranscriptionLanguageInvalid": "Verwende einen zweibuchstabigen Sprachcode wie pl.",
   "ttsSettings": "Text zu Sprache",
   "ttsEngineDeviceDescription": "Behält die Ausgabe auf diesem Gerät. Sprachausgabe funktioniert nicht, wenn das Gerät keine TTS-Unterstützung bietet.",
   "ttsEngineServerDescription": "Sendet die Ausgabe immer an deinen OpenWebUI-Server.",
@@ -1775,5 +1783,17 @@
   "failedToLoadTools": "Werkzeuge konnten nicht geladen werden",
   "@failedToLoadTools": {
     "description": "Error shown when the composer overflow menu cannot load tools."
-  }
+  },
+  "terminalExpandAction": "Vollbild",
+  "terminalReopenFullscreen": "Im Vollbild geöffnet - zum erneuten Öffnen tippen",
+  "terminalKeyTab": "Tab",
+  "terminalKeyUp": "Nach oben",
+  "terminalKeyDown": "Nach unten",
+  "terminalKeyCtrlC": "Strg-C",
+  "terminalCopyAction": "Kopieren",
+  "terminalPasteAction": "Einfügen",
+  "terminalNothingToCopy": "Nichts zum Kopieren ausgewählt",
+  "terminalCopied": "In die Zwischenablage kopiert",
+  "terminalPasteWhileDisconnected": "Zum Einfügen verbinden",
+  "terminalPortsToggle": "Lauschende Ports"
 }

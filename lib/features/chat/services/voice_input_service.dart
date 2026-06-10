@@ -334,7 +334,10 @@ class VoiceInputService {
       }
 
       // Start and stop quickly to test
-      await _speech.listen(onResult: (_) {}, localeId: _selectedLocaleId);
+      await _speech.listen(
+        onResult: (_) {},
+        listenOptions: SpeechListenOptions(localeId: _selectedLocaleId),
+      );
       await Future.delayed(const Duration(milliseconds: 100));
       await _speech.stop();
 
@@ -488,11 +491,10 @@ class VoiceInputService {
     try {
       await _speech.listen(
         onResult: _handleSttResult,
-        localeId: _selectedLocaleId,
-        listenFor: _localRecognitionMaxDuration,
-        // Use user's silence duration setting for pause detection
-        pauseFor: pauseDuration,
         listenOptions: SpeechListenOptions(
+          localeId: _selectedLocaleId,
+          listenFor: _localRecognitionMaxDuration,
+          pauseFor: pauseDuration,
           listenMode: ListenMode.dictation,
           cancelOnError: false,
           partialResults: true,
@@ -969,6 +971,36 @@ class VoiceInputService {
     return frames.clamp(_minVadRedemptionFrames, _maxVadRedemptionFrames);
   }
 
+  @visibleForTesting
+  static String? resolveServerLanguageHint({
+    String? configuredLanguageCode,
+    String? selectedLocaleId,
+    Locale? fallbackLocale,
+  }) {
+    final configured = SettingsService.normalizeSttLanguageCode(
+      configuredLanguageCode,
+    );
+    if (configured != null) {
+      return configured;
+    }
+
+    final selected = _primaryLanguageFromLocaleId(selectedLocaleId);
+    if (selected != null) {
+      return selected;
+    }
+
+    final fallback = fallbackLocale?.languageCode.toLowerCase();
+    return fallback == null || fallback.isEmpty ? null : fallback;
+  }
+
+  static String? _primaryLanguageFromLocaleId(String? localeId) {
+    if (localeId == null || localeId.isEmpty) {
+      return null;
+    }
+    final primary = localeId.split(RegExp('[-_]')).first.toLowerCase();
+    return primary.length >= 2 ? primary : null;
+  }
+
   int _intensityFromVadFrame(List<double> frame) {
     if (frame.isEmpty) return 0;
     double peak = 0;
@@ -1030,21 +1062,16 @@ class VoiceInputService {
   }
 
   String? _languageForServer() {
-    final locale = _selectedLocaleId;
-    if (locale != null && locale.isNotEmpty) {
-      final primary = locale.split(RegExp('[-_]')).first.toLowerCase();
-      if (primary.length >= 2) {
-        return primary;
-      }
-    }
+    final settings = _ref?.read(appSettingsProvider);
+    Locale? fallbackLocale;
     try {
-      final fallback = WidgetsBinding.instance.platformDispatcher.locale;
-      final primary = fallback.languageCode.toLowerCase();
-      if (primary.isNotEmpty) {
-        return primary;
-      }
+      fallbackLocale = WidgetsBinding.instance.platformDispatcher.locale;
     } catch (_) {}
-    return null;
+    return resolveServerLanguageHint(
+      configuredLanguageCode: settings?.sttLanguageCode,
+      selectedLocaleId: _selectedLocaleId,
+      fallbackLocale: fallbackLocale,
+    );
   }
 
   String? _extractTranscriptionText(Map<String, dynamic> data) {

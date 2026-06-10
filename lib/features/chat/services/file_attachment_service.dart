@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'dart:ui' as ui;
@@ -9,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as path;
 import '../../../core/providers/app_providers.dart';
 import '../../../core/models/file_info.dart';
+import '../../../core/services/share_staging_cleanup.dart';
 import '../../../shared/utils/file_type_utils.dart';
 import '../../../core/services/worker_manager.dart';
 import '../../../core/utils/debug_logger.dart';
@@ -68,6 +70,26 @@ String _mimeTypeForExtension(String extension) {
 String _extractMimeTypeFromDataUrl(String imageDataUrl) {
   final match = RegExp(r'^data:([^;]+);').firstMatch(imageDataUrl);
   return match?.group(1)?.toLowerCase() ?? 'image/png';
+}
+
+Future<List<PlatformFile>> _pickPlatformFiles({
+  required bool allowMultiple,
+  FileType type = FileType.any,
+  List<String>? allowedExtensions,
+}) async {
+  if (allowMultiple) {
+    final result = await FilePicker.pickFiles(
+      type: type,
+      allowedExtensions: allowedExtensions,
+    );
+    return result?.files ?? const [];
+  }
+
+  final file = await FilePicker.pickFile(
+    type: type,
+    allowedExtensions: allowedExtensions,
+  );
+  return file == null ? const [] : [file];
 }
 
 /// Top-level function for base64 encoding in an isolate.
@@ -231,6 +253,30 @@ class LocalAttachment {
   bool get isImage => allSupportedImageFormats.contains(extension);
 }
 
+LocalAttachment _localAttachmentFromPath({
+  required String filePath,
+  required String? preferredName,
+  required String fallbackPrefix,
+}) {
+  final displayName = _deriveDisplayName(
+    preferredName: preferredName,
+    filePath: filePath,
+    fallbackPrefix: fallbackPrefix,
+  );
+  return LocalAttachment(file: File(filePath), displayName: displayName);
+}
+
+LocalAttachment _localAttachmentFromXFile(
+  XFile file, {
+  required String fallbackPrefix,
+}) {
+  return _localAttachmentFromPath(
+    filePath: file.path,
+    preferredName: file.name,
+    fallbackPrefix: fallbackPrefix,
+  );
+}
+
 class FileAttachmentService {
   final ImagePicker _imagePicker = ImagePicker();
 
@@ -242,17 +288,17 @@ class FileAttachmentService {
     List<String>? allowedExtensions,
   }) async {
     try {
-      final result = await FilePicker.pickFiles(
+      final files = await _pickPlatformFiles(
         allowMultiple: allowMultiple,
         type: allowedExtensions != null ? FileType.custom : FileType.any,
         allowedExtensions: allowedExtensions,
       );
 
-      if (result == null || result.files.isEmpty) {
+      if (files.isEmpty) {
         return [];
       }
 
-      return result.files.where((file) => file.path != null).map((file) {
+      return files.where((file) => file.path != null).map((file) {
         final displayName = _deriveDisplayName(
           preferredName: file.name,
           filePath: file.path!,
@@ -284,26 +330,32 @@ class FileAttachmentService {
     return _pickImageWithFilePicker();
   }
 
+  // Pick images from gallery. On iOS this opens PHPicker in multi-select mode.
+  Future<List<LocalAttachment>> pickImages() async {
+    if (Platform.isAndroid || Platform.isIOS) {
+      try {
+        return await _pickImagesWithImagePicker();
+      } catch (e) {
+        DebugLogger.log(
+          'ImagePicker multi image failed: $e',
+          scope: 'attachments/image',
+        );
+      }
+    }
+
+    return _pickImagesWithFilePicker();
+  }
+
   Future<LocalAttachment?> _pickImageWithFilePicker() async {
     try {
-      final result = await FilePicker.pickFiles(
-        allowMultiple: false,
-        type: FileType.image,
-      );
+      final platformFile = await FilePicker.pickFile(type: FileType.image);
 
-      if (result != null && result.files.isNotEmpty) {
-        final platformFile = result.files.first;
-        if (platformFile.path != null) {
-          final displayName = _deriveDisplayName(
-            preferredName: platformFile.name,
-            filePath: platformFile.path!,
-            fallbackPrefix: 'photo',
-          );
-          return LocalAttachment(
-            file: File(platformFile.path!),
-            displayName: displayName,
-          );
-        }
+      if (platformFile != null && platformFile.path != null) {
+        return _localAttachmentFromPath(
+          filePath: platformFile.path!,
+          preferredName: platformFile.name,
+          fallbackPrefix: 'photo',
+        );
       }
     } catch (e) {
       DebugLogger.log(
@@ -316,6 +368,33 @@ class FileAttachmentService {
     return _pickImageWithImagePicker();
   }
 
+  Future<List<LocalAttachment>> _pickImagesWithFilePicker() async {
+    try {
+      final result = await FilePicker.pickFiles(type: FileType.image);
+
+      if (result == null || result.files.isEmpty) {
+        return [];
+      }
+
+      return result.files.where((file) => file.path != null).map((file) {
+        return _localAttachmentFromPath(
+          filePath: file.path!,
+          preferredName: file.name,
+          fallbackPrefix: 'photo',
+        );
+      }).toList();
+    } catch (e) {
+      DebugLogger.log(
+        'FilePicker images failed: $e',
+        scope: 'attachments/image',
+      );
+    }
+
+    if (Platform.isAndroid || Platform.isIOS) return [];
+    final attachment = await _pickImageWithImagePicker();
+    return attachment == null ? [] : [attachment];
+  }
+
   Future<LocalAttachment?> _pickImageWithImagePicker() async {
     try {
       final XFile? image = await _imagePicker.pickImage(
@@ -324,15 +403,23 @@ class FileAttachmentService {
       );
 
       if (image == null) return null;
-      final file = File(image.path);
-      final displayName = _deriveDisplayName(
-        preferredName: image.name,
-        filePath: image.path,
-        fallbackPrefix: 'photo',
-      );
-      return LocalAttachment(file: file, displayName: displayName);
+      return _localAttachmentFromXFile(image, fallbackPrefix: 'photo');
     } catch (e) {
       throw Exception('Failed to pick image: $e');
+    }
+  }
+
+  Future<List<LocalAttachment>> _pickImagesWithImagePicker() async {
+    try {
+      final images = await _imagePicker.pickMultiImage(imageQuality: 85);
+      return images
+          .map(
+            (image) =>
+                _localAttachmentFromXFile(image, fallbackPrefix: 'photo'),
+          )
+          .toList();
+    } catch (e) {
+      throw Exception('Failed to pick images: $e');
     }
   }
 
@@ -345,13 +432,7 @@ class FileAttachmentService {
       );
 
       if (photo == null) return null;
-      final file = File(photo.path);
-      final displayName = _deriveDisplayName(
-        preferredName: photo.name,
-        filePath: photo.path,
-        fallbackPrefix: 'photo',
-      );
-      return LocalAttachment(file: file, displayName: displayName);
+      return _localAttachmentFromXFile(photo, fallbackPrefix: 'photo');
     } catch (e) {
       throw Exception('Failed to take photo: $e');
     }
@@ -544,17 +625,17 @@ class MockFileAttachmentService {
     List<String>? allowedExtensions,
   }) async {
     try {
-      final result = await FilePicker.pickFiles(
+      final files = await _pickPlatformFiles(
         allowMultiple: allowMultiple,
         type: allowedExtensions != null ? FileType.custom : FileType.any,
         allowedExtensions: allowedExtensions,
       );
 
-      if (result == null || result.files.isEmpty) {
+      if (files.isEmpty) {
         return [];
       }
 
-      return result.files.where((file) => file.path != null).map((file) {
+      return files.where((file) => file.path != null).map((file) {
         final displayName = _deriveDisplayName(
           preferredName: file.name,
           filePath: file.path!,
@@ -577,15 +658,23 @@ class MockFileAttachmentService {
         imageQuality: 85,
       );
       if (image == null) return null;
-      final file = File(image.path);
-      final displayName = _deriveDisplayName(
-        preferredName: image.name,
-        filePath: image.path,
-        fallbackPrefix: 'photo',
-      );
-      return LocalAttachment(file: file, displayName: displayName);
+      return _localAttachmentFromXFile(image, fallbackPrefix: 'photo');
     } catch (e) {
       throw Exception('Failed to pick image: $e');
+    }
+  }
+
+  Future<List<LocalAttachment>> pickImages() async {
+    try {
+      final images = await _imagePicker.pickMultiImage(imageQuality: 85);
+      return images
+          .map(
+            (image) =>
+                _localAttachmentFromXFile(image, fallbackPrefix: 'photo'),
+          )
+          .toList();
+    } catch (e) {
+      throw Exception('Failed to pick images: $e');
     }
   }
 
@@ -596,13 +685,7 @@ class MockFileAttachmentService {
         imageQuality: 85,
       );
       if (photo == null) return null;
-      final file = File(photo.path);
-      final displayName = _deriveDisplayName(
-        preferredName: photo.name,
-        filePath: photo.path,
-        fallbackPrefix: 'photo',
-      );
-      return LocalAttachment(file: file, displayName: displayName);
+      return _localAttachmentFromXFile(photo, fallbackPrefix: 'photo');
     } catch (e) {
       throw Exception('Failed to take photo: $e');
     }
@@ -673,12 +756,16 @@ class AttachedFilesNotifier extends Notifier<List<FileUploadState>> {
   }
 
   void removeFile(String filePath) {
+    unawaited(deleteShareStagingFile(filePath));
     state = state
         .where((fileState) => fileState.file.path != filePath)
         .toList();
   }
 
   void clearAll() {
+    for (final fileState in state) {
+      unawaited(deleteShareStagingFile(fileState.file.path));
+    }
     state = [];
   }
 }

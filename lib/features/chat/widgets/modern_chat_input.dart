@@ -31,12 +31,15 @@ import '../../../core/models/toggle_filter.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/services/navigation_service.dart';
 import '../../../core/services/native_sheet_bridge.dart';
+import '../../../core/services/location_service.dart';
 import '../../../core/services/settings_service.dart';
 import '../../chat/services/voice_input_service.dart';
 import '../../../core/models/knowledge_base.dart';
 import '../../../core/models/knowledge_base_file.dart';
 
 import '../../../shared/utils/platform_utils.dart';
+import '../../../shared/utils/adaptive_glass.dart';
+import '../../../shared/utils/ask_conduit_context_menu.dart';
 import 'package:conduit/l10n/app_localizations.dart';
 import '../../../shared/widgets/modal_safe_area.dart';
 import '../../../shared/widgets/model_avatar.dart';
@@ -77,6 +80,13 @@ class ModernChatInput extends ConsumerStatefulWidget {
   /// Callback invoked when images or files are pasted from clipboard.
   final Future<void> Function(List<LocalAttachment>)? onPastedAttachments;
 
+  /// Target id for app-level text insertion requests.
+  ///
+  /// When null, this composer uses a private per-instance target so its own
+  /// text-selection menu can still insert back into itself without receiving
+  /// events meant for another composer.
+  final String? composerTextInsertionTargetId;
+
   const ModernChatInput({
     super.key,
     required this.onSendMessage,
@@ -92,6 +102,7 @@ class ModernChatInput extends ConsumerStatefulWidget {
     this.onCameraCapture,
     this.onWebAttachment,
     this.onPastedAttachments,
+    this.composerTextInsertionTargetId,
   });
 
   @override
@@ -106,10 +117,15 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
   static const int _maxContextSuggestionsPerType = 4;
 
   static const double _composerRadius = AppBorderRadius.card;
+  static int _nextGeneratedInsertionTargetId = 0;
 
   final MentionTextEditingController _controller =
       MentionTextEditingController();
   final FocusNode _focusNode = FocusNode();
+  late final String _generatedInsertionTargetId =
+      'modern-chat-input-${_nextGeneratedInsertionTargetId++}';
+  String get _composerTextInsertionTargetId =>
+      widget.composerTextInsertionTargetId ?? _generatedInsertionTargetId;
 
   /// Preserves the text field widget across parent shell swaps.
   /// Without this, different parent ValueKeys cause Flutter to unmount and
@@ -475,40 +491,45 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     final items = List<ContextMenuButtonItem>.from(
       editableTextState.contextMenuButtonItems,
     );
-    if (kIsWeb || !Platform.isIOS || widget.onPastedAttachments == null) {
-      return items;
-    }
 
-    final pasteIndex = items.indexWhere(
-      (item) => item.type == ContextMenuButtonType.paste,
-    );
-    if (pasteIndex >= 0) {
-      final defaultPaste = items[pasteIndex];
-      items[pasteIndex] = ContextMenuButtonItem(
-        type: defaultPaste.type,
-        label: defaultPaste.label,
-        onPressed: () {
-          unawaited(
-            _handleFallbackPaste(
-              editableTextState,
-              defaultPaste: defaultPaste.onPressed,
-            ),
-          );
-        },
+    if (!kIsWeb && Platform.isIOS && widget.onPastedAttachments != null) {
+      final pasteIndex = items.indexWhere(
+        (item) => item.type == ContextMenuButtonType.paste,
       );
-      return items;
+      if (pasteIndex >= 0) {
+        final defaultPaste = items[pasteIndex];
+        items[pasteIndex] = ContextMenuButtonItem(
+          type: defaultPaste.type,
+          label: defaultPaste.label,
+          onPressed: () {
+            unawaited(
+              _handleFallbackPaste(
+                editableTextState,
+                defaultPaste: defaultPaste.onPressed,
+              ),
+            );
+          },
+        );
+      } else {
+        items.add(
+          ContextMenuButtonItem(
+            type: ContextMenuButtonType.paste,
+            label: MaterialLocalizations.of(context).pasteButtonLabel,
+            onPressed: () {
+              unawaited(_handleFallbackPaste(editableTextState));
+            },
+          ),
+        );
+      }
     }
 
-    items.add(
-      ContextMenuButtonItem(
-        type: ContextMenuButtonType.paste,
-        label: MaterialLocalizations.of(context).pasteButtonLabel,
-        onPressed: () {
-          unawaited(_handleFallbackPaste(editableTextState));
-        },
-      ),
+    return withAskConduitContextMenuItem(
+      items: items,
+      ref: ref,
+      selectedText: selectedTextFromEditableTextState(editableTextState),
+      composerTargetId: _composerTextInsertionTargetId,
+      hideToolbar: () => editableTextState.hideToolbar(false),
     );
-    return items;
   }
 
   Future<void> _handleFallbackPaste(
@@ -543,6 +564,31 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
       composing: TextRange.empty,
     );
     // Ensure field stays focused
+    _ensureFocusedIfEnabled();
+  }
+
+  void _insertTextAtCurrentSelection(String content) {
+    if (content.isEmpty) {
+      return;
+    }
+
+    final text = _controller.text;
+    final selection = _controller.selection;
+    final int start = selection.isValid
+        ? selection.start.clamp(0, text.length).toInt()
+        : text.length;
+    final int end = selection.isValid
+        ? selection.end.clamp(0, text.length).toInt()
+        : text.length;
+    final before = text.substring(0, start);
+    final after = text.substring(end);
+    final caret = before.length + content.length;
+
+    _controller.value = TextEditingValue(
+      text: '$before$content$after',
+      selection: TextSelection.collapsed(offset: caret),
+      composing: TextRange.empty,
+    );
     _ensureFocusedIfEnabled();
   }
 
@@ -1139,13 +1185,28 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
       orElse: () => authUser,
     );
     final locale = Localizations.localeOf(context);
+    String? userLocation;
+    const parser = PromptVariableParser();
+    final needsUserLocation = parser.parse(prompt.content).any(
+      (variable) =>
+          variable.isSystemVariable &&
+          variable.name.toUpperCase() == 'USER_LOCATION',
+    );
+
+    if (needsUserLocation) {
+      final locationResult = await ref
+          .read(locationServiceProvider)
+          .resolveCurrentLocation();
+      userLocation = locationResult.hasLocation
+          ? locationResult.location
+          : 'LOCATION_UNKNOWN';
+    }
 
     // Create the processor with system variable context
-    const parser = PromptVariableParser();
     final systemResolver = SystemVariableResolver(
       userName: user?.name ?? user?.email,
       userLanguage: locale.languageCode,
-      // userLocation requires permission - left empty for now
+      userLocation: userLocation,
     );
     final processor = PromptProcessor(
       parser: parser,
@@ -1842,6 +1903,23 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
         );
         try {
           ref.read(prefilledInputTextProvider.notifier).clear();
+        } catch (_) {}
+      });
+    });
+    ref.listen<ComposerTextInsertion?>(composerTextInsertionProvider, (
+      previous,
+      next,
+    ) {
+      if (next == null ||
+          next.text.isEmpty ||
+          next.targetId != _composerTextInsertionTargetId) {
+        return;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _isDeactivated) return;
+        _insertTextAtCurrentSelection(next.text);
+        try {
+          ref.read(composerTextInsertionProvider.notifier).clear(next.id);
         } catch (_) {}
       });
     });
@@ -2941,10 +3019,10 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
         : theme.cardBorder;
 
     final Color textColor = isActive
-        ? theme.buttonPrimary
+        ? theme.textPrimary
         : theme.textSecondary.withValues(alpha: enabled ? 1.0 : Alpha.disabled);
 
-    final Color iconColor = textColor;
+    final Color iconColor = isActive ? theme.buttonPrimary : textColor;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
@@ -2993,7 +3071,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                   style: AppTypography.labelMediumStyle.copyWith(
                     color: textColor,
                     fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
-                    letterSpacing: -0.1,
+                    letterSpacing: AppTypography.letterSpacingNormal,
                   ),
                   child: Text(
                     label,
@@ -3011,8 +3089,8 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
 
   /// Builds a circular icon button for the composer.
   ///
-  /// Uses native glass on iOS while keeping Material composer buttons native to
-  /// Android instead of using the adaptive glass tonal fallback.
+  /// Uses native glass only where iOS supports it; older iOS follows the same
+  /// opaque fallback treatment as Android.
   Widget _buildComposerIconButton({
     Key? key,
     required VoidCallback? onPressed,
@@ -3026,7 +3104,8 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     final effectiveColor = color ?? theme.buttonPrimary;
     final androidBackgroundColor =
         color ?? theme.surfaceContainerHighest.withValues(alpha: 0.95);
-    final buttonStyle = Platform.isAndroid
+    final usesOpaqueFallback = conduitUsesOpaqueGlassFallback();
+    final buttonStyle = usesOpaqueFallback
         ? (isProminent || androidShowBackground
               ? AdaptiveButtonStyle.filled
               : AdaptiveButtonStyle.plain)
@@ -3039,7 +3118,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
       onPressed: onPressed,
       enabled: onPressed != null,
       style: buttonStyle,
-      color: Platform.isAndroid && androidShowBackground && !isProminent
+      color: usesOpaqueFallback && androidShowBackground && !isProminent
           ? androidBackgroundColor
           : effectiveColor,
       size: size > 40 ? AdaptiveButtonSize.large : AdaptiveButtonSize.medium,
@@ -3053,7 +3132,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
 
   /// Builds the composer shell container.
   ///
-  /// Uses package-provided glass on iOS and a themed Material surface elsewhere.
+  /// Uses native glass on iOS 26+ and a themed opaque surface elsewhere.
   Widget _buildComposerShell({
     Key? key,
     required Widget child,
@@ -3062,7 +3141,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
   }) {
     final theme = context.conduitTheme;
 
-    if (!kIsWeb && Platform.isIOS) {
+    if (conduitSupportsNativeGlass()) {
       return Stack(
         key: key,
         fit: StackFit.passthrough,

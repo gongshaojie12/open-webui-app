@@ -117,6 +117,14 @@ private struct NativeSheetItem {
     let value: Any?
     let placeholder: String?
     let options: [NativeSheetOption]
+    let sourceIndex: Int?
+    let sourceUrl: String?
+    let sourceType: String?
+    let snippet: String?
+    let faviconUrl: String?
+    let queries: [String]
+    let links: [NativeSheetLink]
+    let pending: Bool
     let sliderMin: Double?
     let sliderMax: Double?
     let sliderDivisions: Int?
@@ -146,6 +154,19 @@ private struct NativeSheetItem {
         placeholder = payload["placeholder"] as? String
         options = (payload["options"] as? [[String: Any]] ?? [])
             .compactMap(NativeSheetOption.init)
+        sourceIndex = NativeSheetItem.optionalInt(payload["sourceIndex"])
+        sourceUrl = payload["sourceUrl"] as? String
+        sourceType = payload["sourceType"] as? String
+        snippet = payload["snippet"] as? String
+        faviconUrl = payload["faviconUrl"] as? String
+        queries = (payload["queries"] as? [Any] ?? []).compactMap { value in
+            guard let raw = value as? String else { return nil }
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        links = (payload["links"] as? [[String: Any]] ?? [])
+            .compactMap(NativeSheetLink.init)
+        pending = payload["pending"] as? Bool ?? false
         sliderMin = NativeSheetItem.optionalDouble(payload["min"])
         sliderMax = NativeSheetItem.optionalDouble(payload["max"])
         if let n = payload["divisions"] as? NSNumber {
@@ -163,6 +184,17 @@ private struct NativeSheetItem {
             return d
         case let i as Int:
             return Double(i)
+        default:
+            return nil
+        }
+    }
+
+    private static func optionalInt(_ value: Any?) -> Int? {
+        switch value {
+        case let n as NSNumber:
+            return n.intValue
+        case let i as Int:
+            return i
         default:
             return nil
         }
@@ -191,6 +223,72 @@ private extension NativeSheetItem {
         guard let selectedOptionId else { return nil }
         return options.first(where: { $0.id == selectedOptionId })?.label
     }
+
+    var sourceDisplayUrl: String? {
+        if let sourceUrl, !sourceUrl.isEmpty {
+            return sourceUrl
+        }
+        return url?.absoluteString
+    }
+
+    var sourceDisplayType: String? {
+        guard let sourceType, !sourceType.isEmpty else { return nil }
+        return sourceType
+    }
+
+    var sourceDisplaySnippet: String? {
+        if let snippet, !snippet.isEmpty {
+            return snippet
+        }
+        return subtitle
+    }
+}
+
+private struct NativeSheetLink {
+    let title: String?
+    let rawUrl: String
+    let url: URL?
+    let faviconUrl: String?
+
+    init?(_ payload: [String: Any]) {
+        guard
+            let rawUrl = payload["url"] as? String,
+            !rawUrl.isEmpty
+        else {
+            return nil
+        }
+
+        self.rawUrl = rawUrl
+        url = URL(string: rawUrl)
+        title = payload["title"] as? String
+        faviconUrl = payload["faviconUrl"] as? String
+    }
+}
+
+private enum NativeSheetURLFormatting {
+    static func extractDomain(from rawUrl: String?) -> String? {
+        guard let rawUrl,
+              let url = URL(string: rawUrl),
+              var host = url.host,
+              !host.isEmpty
+        else {
+            return nil
+        }
+
+        if host.hasPrefix("www.") {
+            host.removeFirst(4)
+        }
+        return host
+    }
+
+    static func googleFaviconUrl(rawUrl: String?, size: Int) -> String? {
+        guard let domain = extractDomain(from: rawUrl) else { return nil }
+        return "https://www.google.com/s2/favicons?sz=\(size)&domain=\(domain)"
+    }
+
+    static func displayLabel(for rawUrl: String) -> String {
+        extractDomain(from: rawUrl) ?? rawUrl
+    }
 }
 
 private extension NativeSheetOption {
@@ -205,7 +303,9 @@ private struct NativeModelSelectorOption {
     let subtitle: String?
     let sfSymbol: String?
     let avatarUrl: String?
+    let avatarData: Data?
     let avatarHeaders: [String: String]
+    let tags: [String]
 
     init?(_ payload: [String: Any]) {
         guard
@@ -222,7 +322,16 @@ private struct NativeModelSelectorOption {
         subtitle = payload["subtitle"] as? String
         sfSymbol = payload["sfSymbol"] as? String
         avatarUrl = payload["avatarUrl"] as? String
+        avatarData = (payload["avatarBytes"] as? FlutterStandardTypedData)?.data
         avatarHeaders = payload["avatarHeaders"] as? [String: String] ?? [:]
+        var seenTags = Set<String>()
+        tags = (payload["tags"] as? [String] ?? []).compactMap { rawTag in
+            let tag = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !tag.isEmpty, seenTags.insert(tag.lowercased()).inserted else {
+                return nil
+            }
+            return tag
+        }
     }
 }
 
@@ -230,6 +339,10 @@ private struct NativeModelSelectorConfiguration {
     let title: String
     let selectedModelId: String?
     let models: [NativeModelSelectorOption]
+    let pinnedModelIds: [String]
+    let allowsPinning: Bool
+    let pinTitle: String
+    let unpinTitle: String
 
     init?(_ arguments: Any?) {
         guard let payload = arguments as? [String: Any] else {
@@ -240,6 +353,17 @@ private struct NativeModelSelectorConfiguration {
         selectedModelId = payload["selectedModelId"] as? String
         models = (payload["models"] as? [[String: Any]] ?? [])
             .compactMap(NativeModelSelectorOption.init)
+        var seenPinnedIds = Set<String>()
+        pinnedModelIds = (payload["pinnedModelIds"] as? [String] ?? []).compactMap { modelId in
+            let trimmed = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seenPinnedIds.insert(trimmed).inserted else {
+                return nil
+            }
+            return trimmed
+        }
+        allowsPinning = payload["allowsPinning"] as? Bool ?? false
+        pinTitle = (payload["pinTitle"] as? String) ?? nativeLocalized("native.pin", "Pin")
+        unpinTitle = (payload["unpinTitle"] as? String) ?? nativeLocalized("native.unpin", "Unpin")
         if models.isEmpty {
             return nil
         }
@@ -577,6 +701,257 @@ private struct NativeSheetConfiguration {
     }
 }
 
+private extension PlatformNativeProfileSheetConfig {
+    func asPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "profile": profile.asPayload(),
+            "editProfileLabel": editProfileLabel,
+            "menuItems": menuItems.map { $0.asPayload() },
+            "supportItems": supportItems.map { $0.asPayload() },
+            "sections": sections.map { $0.asPayload() },
+            "detailSheets": detailSheets.map { $0.asPayload() },
+        ]
+        payload["profileMenuTitle"] = profileMenuTitle
+        payload["editProfileSheet"] = editProfileSheet?.asPayload()
+        payload["supportTitle"] = supportTitle
+        payload["supportSubtitle"] = supportSubtitle
+        return payload
+    }
+}
+
+private extension PlatformNativeProfileSheetUser {
+    func asPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "displayName": displayName,
+            "email": email,
+            "initials": initials,
+            "avatarHeaders": avatarHeaders,
+        ]
+        payload["avatarUrl"] = avatarUrl
+        payload["avatarBytes"] = avatarBytes
+        payload["bio"] = bio
+        payload["gender"] = gender
+        payload["dateOfBirth"] = dateOfBirth
+        payload["profileImageUrl"] = profileImageUrl
+        return payload
+    }
+}
+
+private extension PlatformNativeEditProfileSheetConfig {
+    func asPayload() -> [String: Any] {
+        [
+            "title": title,
+            "saveLabel": saveLabel,
+            "cancelLabel": cancelLabel,
+            "okLabel": okLabel,
+            "footerText": footerText,
+            "nameLabel": nameLabel,
+            "nameRequiredMessage": nameRequiredMessage,
+            "customGenderRequiredMessage": customGenderRequiredMessage,
+            "bioLabel": bioLabel,
+            "bioHint": bioHint,
+            "genderLabel": genderLabel,
+            "genderPreferNotToSay": genderPreferNotToSay,
+            "genderMale": genderMale,
+            "genderFemale": genderFemale,
+            "genderCustom": genderCustom,
+            "customGenderLabel": customGenderLabel,
+            "customGenderHint": customGenderHint,
+            "birthDateLabel": birthDateLabel,
+            "selectBirthDateLabel": selectBirthDateLabel,
+            "clearLabel": clearLabel,
+            "uploadFromDeviceLabel": uploadFromDeviceLabel,
+            "useInitialsLabel": useInitialsLabel,
+            "removeAvatarLabel": removeAvatarLabel,
+            "currentAvatarLabel": currentAvatarLabel,
+        ]
+    }
+}
+
+private extension PlatformNativeSheetSection {
+    func asPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "items": items.map { $0.asPayload() },
+        ]
+        payload["title"] = title
+        payload["footer"] = footer
+        return payload
+    }
+}
+
+private extension PlatformNativeSheetDetail {
+    func asPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "id": id,
+            "title": title,
+            "items": items.map { $0.asPayload() },
+            "sections": sections.map { $0.asPayload() },
+        ]
+        payload["subtitle"] = subtitle
+        payload["confirmActionId"] = confirmActionId
+        payload["confirmActionLabel"] = confirmActionLabel
+        payload["maxHeightFraction"] = maxHeightFraction
+        return payload
+    }
+}
+
+private extension PlatformNativeSheetItem {
+    func asPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "id": id,
+            "title": title,
+            "sfSymbol": sfSymbol,
+            "destructive": destructive,
+            "kind": kind.payloadName,
+            "options": options.map { $0.asPayload() },
+            "queries": queries,
+            "links": links.map { $0.asPayload() },
+            "pending": pending,
+        ]
+        payload["subtitle"] = subtitle
+        payload["url"] = url
+        payload["value"] = value
+        payload["placeholder"] = placeholder
+        if let sourceIndex { payload["sourceIndex"] = Int(sourceIndex) }
+        payload["sourceUrl"] = sourceUrl
+        payload["sourceType"] = sourceType
+        payload["snippet"] = snippet
+        payload["faviconUrl"] = faviconUrl
+        payload["min"] = min
+        payload["max"] = max
+        if let divisions { payload["divisions"] = Int(divisions) }
+        return payload
+    }
+}
+
+private extension PlatformNativeSheetItemKind {
+    var payloadName: String {
+        switch self {
+        case .navigation: "navigation"
+        case .textField: "textField"
+        case .multilineTextField: "multilineTextField"
+        case .secureTextField: "secureTextField"
+        case .dropdown: "dropdown"
+        case .searchablePicker: "searchablePicker"
+        case .toggle: "toggle"
+        case .segment: "segment"
+        case .slider: "slider"
+        case .info: "info"
+        case .readOnlyText: "readOnlyText"
+        case .source: "source"
+        case .statusUpdate: "statusUpdate"
+        }
+    }
+}
+
+private extension PlatformNativeSheetOption {
+    func asPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "id": id,
+            "label": label,
+            "enabled": enabled,
+            "destructive": destructive,
+            "ancestorHasMoreSiblings": ancestorHasMoreSiblings,
+            "showBranch": showBranch,
+            "hasMoreSiblings": hasMoreSiblings,
+        ]
+        payload["subtitle"] = subtitle
+        payload["sfSymbol"] = sfSymbol
+        return payload
+    }
+}
+
+private extension PlatformNativeSheetLink {
+    func asPayload() -> [String: Any] {
+        var payload: [String: Any] = ["url": url]
+        payload["title"] = title
+        payload["faviconUrl"] = faviconUrl
+        return payload
+    }
+}
+
+private extension PlatformNativeSheetModelOption {
+    func asPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "id": id,
+            "name": name,
+            "avatarHeaders": avatarHeaders,
+        ]
+        payload["subtitle"] = subtitle
+        payload["sfSymbol"] = sfSymbol
+        payload["avatarUrl"] = avatarUrl
+        payload["avatarBytes"] = avatarBytes
+        payload["tags"] = tags
+        return payload
+    }
+}
+
+private extension PlatformNativeSheetModelSelectorRequest {
+    func asPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "title": title,
+            "models": models.map { $0.asPayload() },
+            "pinnedModelIds": pinnedModelIds,
+            "allowsPinning": allowsPinning,
+        ]
+        payload["selectedModelId"] = selectedModelId
+        payload["pinTitle"] = pinTitle
+        payload["unpinTitle"] = unpinTitle
+        return payload
+    }
+}
+
+private extension PlatformNativeSheetOptionsSelectorRequest {
+    func asPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "title": title,
+            "searchable": searchable,
+            "options": options.map { $0.asPayload() },
+        ]
+        payload["subtitle"] = subtitle
+        payload["selectedOptionId"] = selectedOptionId
+        return payload
+    }
+}
+
+private extension PlatformNativeSheetDatePickerRequest {
+    func asPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "title": title,
+            "initialDate": initialDateIso8601,
+            "firstDate": firstDateIso8601,
+            "lastDate": lastDateIso8601,
+        ]
+        payload["doneLabel"] = doneLabel
+        payload["cancelLabel"] = cancelLabel
+        return payload
+    }
+}
+
+private extension PlatformNativeSheetTextEditorRequest {
+    func asPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "title": title,
+            "value": value,
+            "valueId": valueId,
+            "sendActionId": sendActionId,
+            "closeActionId": closeActionId,
+        ]
+        payload["placeholder"] = placeholder
+        payload["sendLabel"] = sendLabel
+        return payload
+    }
+}
+
+private extension PlatformNativeSheetResultRequest {
+    func asPayload() -> [String: Any] {
+        [
+            "root": root.asPayload(),
+            "detailSheets": detailSheets.map { $0.asPayload() },
+        ]
+    }
+}
+
 private final class NativeSheetPresentationDelegate:
     NSObject,
     UIAdaptivePresentationControllerDelegate
@@ -605,169 +980,207 @@ private final class NativeSheetPresentationDelegate:
     }
 }
 
-final class NativeSheetBridge {
+final class NativeSheetBridge: NativeSheetHostApi {
     static let shared = NativeSheetBridge()
-
-    private static let channelName = "conduit/native_sheet"
 
     private enum ActiveSheetMode {
         case profileMenu
         case resultSheet
     }
 
-    private var channel: FlutterMethodChannel?
+    private typealias PendingStringResult = (Result<String?, Error>) -> Void
+    private typealias PendingActionResult = (Result<PlatformNativeSheetActionResult?, Error>) -> Void
+
+    private var flutterApi: NativeSheetFlutterApi?
     private var activeController: UIViewController?
     private var presentationDelegate: NativeSheetPresentationDelegate?
     private var configuration: NativeSheetConfiguration?
     private var detailPayloads: [String: NativeSheetDetail] = [:]
     private weak var activeDetailTableController: NativeDetailTableViewController?
     private var activeSheetMode: ActiveSheetMode = .profileMenu
-    private var pendingModelSelectorResult: FlutterResult?
-    private var pendingOptionsSelectorResult: FlutterResult?
-    private var pendingTextEditorResult: FlutterResult?
-    private var pendingResultSheetResult: FlutterResult?
+    private var pendingModelSelectorResult: PendingStringResult?
+    private var pendingOptionsSelectorResult: PendingStringResult?
+    private var pendingTextEditorResult: PendingActionResult?
+    private var pendingResultSheetResult: PendingActionResult?
     private var resultSheetValues: [String: Any] = [:]
     private weak var activeTextEditorController: NativeTextEditorViewController?
 
     private init() {}
 
     func configure(messenger: FlutterBinaryMessenger) {
-        channel = FlutterMethodChannel(
-            name: Self.channelName,
-            binaryMessenger: messenger
+        flutterApi = NativeSheetFlutterApi(binaryMessenger: messenger)
+        NativeSheetHostApiSetup.setUp(
+            binaryMessenger: messenger,
+            api: self
         )
-        channel?.setMethodCallHandler { [weak self] call, result in
-            DispatchQueue.main.async {
-                self?.handle(call, result: result)
-            }
-        }
     }
 
-    private func handle(
-        _ call: FlutterMethodCall,
-        result: @escaping FlutterResult
+    func presentProfileMenu(
+        config: PlatformNativeProfileSheetConfig,
+        completion: @escaping (Result<Bool, Error>) -> Void
     ) {
-        switch call.method {
-        case "presentProfileMenu":
-            guard let configuration = NativeSheetConfiguration(call.arguments)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard let configuration = NativeSheetConfiguration(config.asPayload())
             else {
-                result(FlutterError(
+                completion(.failure(PigeonError(
                     code: "INVALID_ARGS",
                     message: "Missing native profile sheet configuration",
                     details: nil
-                ))
+                )))
                 return
             }
-            activeSheetMode = .profileMenu
+            self.activeSheetMode = .profileMenu
             self.configuration = configuration
             self.detailPayloads = configuration.details
-            result(presentProfileMenu(configuration))
+            completion(.success(self.presentProfileMenu(configuration)))
+        }
+    }
 
-        case "dismiss":
+    func dismiss() throws -> Bool {
+        if Thread.isMainThread {
             dismissActive()
-            result(true)
+        } else {
+            DispatchQueue.main.sync { dismissActive() }
+        }
+        return true
+    }
 
-        case "presentModelSelector":
-            guard let configuration = NativeModelSelectorConfiguration(call.arguments)
+    func presentModelSelector(
+        request: PlatformNativeSheetModelSelectorRequest,
+        completion: @escaping (Result<String?, Error>) -> Void
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard let configuration = NativeModelSelectorConfiguration(request.asPayload())
             else {
-                result(FlutterError(
+                completion(.failure(PigeonError(
                     code: "INVALID_ARGS",
                     message: "Missing native model selector configuration",
                     details: nil
-                ))
+                )))
                 return
             }
-            presentModelSelector(configuration, result: result)
+            self.presentModelSelector(configuration, result: completion)
+        }
+    }
 
-        case "presentOptionsSelector":
-            guard let configuration = NativeOptionsSelectorConfiguration(call.arguments)
+    func presentOptionsSelector(
+        request: PlatformNativeSheetOptionsSelectorRequest,
+        completion: @escaping (Result<String?, Error>) -> Void
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard let configuration = NativeOptionsSelectorConfiguration(request.asPayload())
             else {
-                result(FlutterError(
+                completion(.failure(PigeonError(
                     code: "INVALID_ARGS",
                     message: "Missing native options selector configuration",
                     details: nil
-                ))
+                )))
                 return
             }
-            presentOptionsSelector(configuration, result: result)
+            self.presentOptionsSelector(configuration, result: completion)
+        }
+    }
 
-        case "presentDatePicker":
-            guard let configuration = NativeDatePickerConfiguration(call.arguments)
+    func presentDatePicker(
+        request: PlatformNativeSheetDatePickerRequest,
+        completion: @escaping (Result<String?, Error>) -> Void
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard let configuration = NativeDatePickerConfiguration(request.asPayload())
             else {
-                result(FlutterError(
+                completion(.failure(PigeonError(
                     code: "INVALID_ARGS",
                     message: "Missing native date picker configuration",
                     details: nil
-                ))
+                )))
                 return
             }
-            presentDatePicker(configuration, result: result)
+            self.presentDatePicker(configuration, result: completion)
+        }
+    }
 
-        case "presentTextEditor":
-            guard let configuration = NativeTextEditorConfiguration(call.arguments)
+    func presentTextEditor(
+        request: PlatformNativeSheetTextEditorRequest,
+        completion: @escaping (Result<PlatformNativeSheetActionResult?, Error>) -> Void
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard let configuration = NativeTextEditorConfiguration(request.asPayload())
             else {
-                result(FlutterError(
+                completion(.failure(PigeonError(
                     code: "INVALID_ARGS",
                     message: "Missing native text editor configuration",
                     details: nil
-                ))
+                )))
                 return
             }
-            presentTextEditor(configuration, result: result)
+            self.presentTextEditor(configuration, result: completion)
+        }
+    }
 
-        case "presentResultSheet":
-            guard let configuration = NativeResultSheetConfiguration(call.arguments)
+    func presentResultSheet(
+        request: PlatformNativeSheetResultRequest,
+        completion: @escaping (Result<PlatformNativeSheetActionResult?, Error>) -> Void
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard let configuration = NativeResultSheetConfiguration(request.asPayload())
             else {
-                result(FlutterError(
+                completion(.failure(PigeonError(
                     code: "INVALID_ARGS",
                     message: "Missing native result sheet configuration",
                     details: nil
-                ))
+                )))
                 return
             }
-            presentResultSheet(configuration, result: result)
+            self.presentResultSheet(configuration, result: completion)
+        }
+    }
 
-        case "applyDetailPatch":
-            guard let args = call.arguments as? [String: Any],
-                  let detailId = args["detailId"] as? String,
-                  let itemsPayload = args["items"] as? [[String: Any]]
-            else {
-                result(FlutterError(
-                    code: "INVALID_ARGS",
-                    message: "Missing applyDetailPatch payload",
-                    details: nil
-                ))
-                return
-            }
-            let items = itemsPayload.compactMap(NativeSheetItem.init)
-            let relatedDetails = (args["detailSheets"] as? [[String: Any]] ?? [])
+    func applyDetailPatch(
+        request: PlatformNativeSheetApplyDetailPatchRequest
+    ) throws -> Bool {
+        let apply = {
+            let detailId = request.detailId
+            let items = request.items
+                .map { $0.asPayload() }
+                .compactMap(NativeSheetItem.init)
+            let relatedDetails = (request.detailSheets ?? [])
+                .map { $0.asPayload() }
                 .compactMap(NativeSheetDetail.init)
-            guard let existing = detailPayloads[detailId] else {
-                result(false)
-                return
+            guard let existing = self.detailPayloads[detailId] else {
+                return false
             }
             for detail in relatedDetails {
-                detailPayloads[detail.id] = detail
+                self.detailPayloads[detail.id] = detail
             }
             let patched = NativeSheetDetail(
                 id: existing.id,
-                title: args["title"] as? String ?? existing.title,
-                subtitle: args["subtitle"] as? String ?? existing.subtitle,
+                title: request.title ?? existing.title,
+                subtitle: request.subtitle ?? existing.subtitle,
                 items: items,
                 sections: existing.sections,
                 confirmActionId: existing.confirmActionId,
                 confirmActionLabel: existing.confirmActionLabel,
                 maxHeightFraction: existing.maxHeightFraction
             )
-            detailPayloads[detailId] = patched
-            if activeDetailTableController?.detailId == detailId {
-                activeDetailTableController?.applyUpdatedDetail(patched)
+            self.detailPayloads[detailId] = patched
+            if self.activeDetailTableController?.detailId == detailId {
+                self.activeDetailTableController?.applyUpdatedDetail(patched)
             }
-            result(true)
-
-        default:
-            result(FlutterMethodNotImplemented)
+            return true
         }
+
+        if Thread.isMainThread {
+            return apply()
+        }
+        var applied = false
+        DispatchQueue.main.sync { applied = apply() }
+        return applied
     }
 
     private func presentProfileMenu(_ configuration: NativeSheetConfiguration) -> Bool {
@@ -780,16 +1193,56 @@ final class NativeSheetBridge {
         return present(navigation, initialDetent: .large)
     }
 
+    private func sendControlChanged(id: String, value: Any?) {
+        flutterApi?.onControlChanged(
+            event: PlatformNativeSheetControlChangedEvent(id: id, value: value)
+        ) { _ in }
+    }
+
+    private func sendEditProfileCommitted(_ payload: [String: Any]) {
+        guard let name = payload["name"] as? String,
+              let profileImageUrl = payload["profileImageUrl"] as? String
+        else { return }
+        flutterApi?.commitEditProfile(
+            event: PlatformNativeEditProfileCommittedEvent(
+                name: name,
+                profileImageUrl: profileImageUrl,
+                bio: payload["bio"] as? String ?? "",
+                gender: payload["gender"] as? String,
+                dateOfBirth: payload["dateOfBirth"] as? String
+            )
+        ) { _ in }
+    }
+
+    private func actionResult(
+        actionId: String,
+        values: [String: Any]
+    ) -> PlatformNativeSheetActionResult {
+        PlatformNativeSheetActionResult(actionId: actionId, values: values)
+    }
+
+    private func actionResult(
+        from payload: [String: Any]?
+    ) -> PlatformNativeSheetActionResult? {
+        guard let payload,
+              let actionId = payload["actionId"] as? String
+        else { return nil }
+        return actionResult(
+            actionId: actionId,
+            values: payload["values"] as? [String: Any] ?? [:]
+        )
+    }
+
     private func presentResultSheet(
         _ configuration: NativeResultSheetConfiguration,
-        result: @escaping FlutterResult
+        result: @escaping PendingActionResult
     ) {
         if pendingResultSheetResult != nil {
-            result(FlutterError(
+            result(.failure(PigeonError(
                 code: "ALREADY_PRESENTING",
                 message: "A native result sheet is already open",
                 details: nil
-            ))
+            )))
             return
         }
 
@@ -812,11 +1265,11 @@ final class NativeSheetBridge {
             resultSheetValues = [:]
             detailPayloads = [:]
             activeSheetMode = .profileMenu
-            pending?(FlutterError(
+            pending?(.failure(PigeonError(
                 code: "PRESENTATION_FAILED",
                 message: "Unable to present native result sheet",
                 details: nil
-            ))
+            )))
         }
     }
 
@@ -870,10 +1323,7 @@ final class NativeSheetBridge {
     private func handleCurrentSheetControlChanged(_ item: NativeSheetItem, value: Any?) {
         switch activeSheetMode {
         case .profileMenu:
-            channel?.invokeMethod(
-                "onControlChanged",
-                arguments: ["id": item.id, "value": value]
-            )
+            sendControlChanged(id: item.id, value: value)
         case .resultSheet:
             if let value {
                 resultSheetValues[item.id] = value
@@ -886,15 +1336,11 @@ final class NativeSheetBridge {
     private func handleCurrentSheetConfirmAction(_ actionId: String) {
         switch activeSheetMode {
         case .profileMenu:
-            channel?.invokeMethod(
-                "onControlChanged",
-                arguments: ["id": actionId, "value": true]
-            )
+            sendControlChanged(id: actionId, value: true)
         case .resultSheet:
-            resolvePendingResultSheetAfterDismiss([
-                "actionId": actionId,
-                "values": resultSheetValues
-            ])
+            resolvePendingResultSheetAfterDismiss(
+                actionResult(actionId: actionId, values: resultSheetValues)
+            )
         }
     }
 
@@ -944,20 +1390,23 @@ final class NativeSheetBridge {
             return
         }
 
-        resolvePendingResultSheetAfterDismiss([
-            "actionId": item.id,
-            "values": resultSheetValues
-        ])
+        resolvePendingResultSheetAfterDismiss(
+            actionResult(actionId: item.id, values: resultSheetValues)
+        )
     }
 
-    private func resolvePendingResultSheet(_ payload: Any?) {
+    private func resolvePendingResultSheet(
+        _ payload: PlatformNativeSheetActionResult?
+    ) {
         if let pending = pendingResultSheetResult {
             pendingResultSheetResult = nil
-            pending(payload)
+            pending(.success(payload))
         }
     }
 
-    private func resolvePendingResultSheetAfterDismiss(_ payload: Any?) {
+    private func resolvePendingResultSheetAfterDismiss(
+        _ payload: PlatformNativeSheetActionResult?
+    ) {
         guard let pending = pendingResultSheetResult else {
             dismissActive()
             return
@@ -968,7 +1417,7 @@ final class NativeSheetBridge {
 
         let controller = activeController
         let completion = { [weak self] in
-            pending(payload)
+            pending(.success(payload))
             self?.activeController = nil
             self?.presentationDelegate = nil
             self?.activeDetailTableController = nil
@@ -993,7 +1442,7 @@ final class NativeSheetBridge {
             profile: configuration.profile,
             copy: configuration.editProfileSheet,
             onCommit: { [weak self] payload in
-                self?.channel?.invokeMethod("commitEditProfile", arguments: payload)
+                self?.sendEditProfileCommitted(payload)
             }
         )
         let navigation = NativeSheetNavigationController(rootViewController: controller)
@@ -1010,7 +1459,7 @@ final class NativeSheetBridge {
             profile: configuration.profile,
             copy: configuration.editProfileSheet,
             onCommit: { [weak self] payload in
-                self?.channel?.invokeMethod("commitEditProfile", arguments: payload)
+                self?.sendEditProfileCommitted(payload)
             }
         )
         let navigation = NativeSheetNavigationController(rootViewController: controller)
@@ -1027,7 +1476,7 @@ final class NativeSheetBridge {
             profile: configuration.profile,
             copy: configuration.editProfileSheet,
             onCommit: { [weak self] payload in
-                self?.channel?.invokeMethod("commitEditProfile", arguments: payload)
+                self?.sendEditProfileCommitted(payload)
             }
         )
         let navigation = NativeSheetNavigationController(rootViewController: controller)
@@ -1044,7 +1493,7 @@ final class NativeSheetBridge {
             profile: configuration.profile,
             copy: configuration.editProfileSheet,
             onCommit: { [weak self] payload in
-                self?.channel?.invokeMethod("commitEditProfile", arguments: payload)
+                self?.sendEditProfileCommitted(payload)
             }
         )
         let navigation = NativeSheetNavigationController(rootViewController: controller)
@@ -1067,21 +1516,23 @@ final class NativeSheetBridge {
             onDismiss: { [weak self] in
                 if let pending = self?.pendingModelSelectorResult {
                     self?.pendingModelSelectorResult = nil
-                    pending(nil)
+                    pending(.success(nil))
                 }
                 if let pending = self?.pendingOptionsSelectorResult {
                     self?.pendingOptionsSelectorResult = nil
-                    pending(nil)
+                    pending(.success(nil))
                 }
                 if let pending = self?.pendingTextEditorResult {
                     self?.pendingTextEditorResult = nil
-                    pending(self?.activeTextEditorController?.resultPayload(
-                        actionId: self?.activeTextEditorController?.closeActionId ?? "close"
-                    ))
+                    pending(.success(self?.actionResult(
+                        from: self?.activeTextEditorController?.resultPayload(
+                            actionId: self?.activeTextEditorController?.closeActionId ?? "close"
+                        )
+                    )))
                 }
                 if let pending = self?.pendingResultSheetResult {
                     self?.pendingResultSheetResult = nil
-                    pending(nil)
+                    pending(.success(nil))
                 }
                 self?.activeController = nil
                 self?.presentationDelegate = nil
@@ -1092,7 +1543,7 @@ final class NativeSheetBridge {
                 let shouldNotifyDismiss = self?.activeSheetMode == .profileMenu
                 self?.activeSheetMode = .profileMenu
                 if shouldNotifyDismiss == true {
-                    self?.channel?.invokeMethod("onDismissed", arguments: nil)
+                    self?.flutterApi?.onDismissed { _ in }
                 }
             }
         )
@@ -1110,14 +1561,14 @@ final class NativeSheetBridge {
 
     private func presentModelSelector(
         _ configuration: NativeModelSelectorConfiguration,
-        result: @escaping FlutterResult
+        result: @escaping PendingStringResult
     ) {
         if pendingModelSelectorResult != nil {
-            result(FlutterError(
+            result(.failure(PigeonError(
                 code: "ALREADY_PRESENTING",
                 message: "A native model selector is already open",
                 details: nil
-            ))
+            )))
             return
         }
 
@@ -1127,23 +1578,17 @@ final class NativeSheetBridge {
             configuration: configuration,
             onSelect: { [weak self] modelId in
                 guard let self else { return }
-                let pending = self.pendingModelSelectorResult
-                self.pendingModelSelectorResult = nil
-                self.activeController?.dismiss(animated: true)
-                self.activeController = nil
-                self.presentationDelegate = nil
-                self.activeDetailTableController = nil
-                self.detailPayloads = [:]
-                self.resultSheetValues = [:]
-                self.activeSheetMode = .profileMenu
-                pending?(modelId)
+                self.completeModelSelector(with: modelId)
+            },
+            onTogglePin: { [weak self] modelId in
+                guard let self else { return }
+                self.flutterApi?.onModelPinToggled(
+                    event: PlatformNativeSheetModelPinToggledEvent(modelId: modelId)
+                ) { _ in }
             },
             onClose: { [weak self] in
                 guard let self else { return }
-                let pending = self.pendingModelSelectorResult
-                self.pendingModelSelectorResult = nil
-                self.dismissActive()
-                pending?(nil)
+                self.completeModelSelector(with: nil)
             }
         )
         let navigation = NativeSheetNavigationController(rootViewController: controller)
@@ -1151,24 +1596,38 @@ final class NativeSheetBridge {
         if !present(navigation, initialDetent: .large) {
             pendingModelSelectorResult = nil
             activeSheetMode = .profileMenu
-            result(FlutterError(
+            result(.failure(PigeonError(
                 code: "PRESENTATION_FAILED",
                 message: "Unable to present native model selector",
                 details: nil
-            ))
+            )))
         }
+    }
+
+    private func completeModelSelector(with value: String?) {
+        let pending = pendingModelSelectorResult
+        pendingModelSelectorResult = nil
+        flushActiveSheetEditing()
+        activeController?.dismiss(animated: true)
+        activeController = nil
+        presentationDelegate = nil
+        activeDetailTableController = nil
+        detailPayloads = [:]
+        resultSheetValues = [:]
+        activeSheetMode = .profileMenu
+        pending?(.success(value))
     }
 
     private func presentOptionsSelector(
         _ configuration: NativeOptionsSelectorConfiguration,
-        result: @escaping FlutterResult
+        result: @escaping PendingStringResult
     ) {
         if pendingOptionsSelectorResult != nil {
-            result(FlutterError(
+            result(.failure(PigeonError(
                 code: "ALREADY_PRESENTING",
                 message: "A native options selector is already open",
                 details: nil
-            ))
+            )))
             return
         }
 
@@ -1187,65 +1646,65 @@ final class NativeSheetBridge {
                 self.detailPayloads = [:]
                 self.resultSheetValues = [:]
                 self.activeSheetMode = .profileMenu
-                pending?(optionId)
+                pending?(.success(optionId))
             },
             onClose: { [weak self] in
                 guard let self else { return }
                 let pending = self.pendingOptionsSelectorResult
                 self.pendingOptionsSelectorResult = nil
                 self.dismissActive()
-                pending?(nil)
+                pending?(.success(nil))
             }
         )
         let navigation = NativeSheetNavigationController(rootViewController: controller)
         if !present(navigation, initialDetent: .large) {
             pendingOptionsSelectorResult = nil
             activeSheetMode = .profileMenu
-            result(FlutterError(
+            result(.failure(PigeonError(
                 code: "PRESENTATION_FAILED",
                 message: "Unable to present native options selector",
                 details: nil
-            ))
+            )))
         }
     }
 
     private func presentDatePicker(
         _ configuration: NativeDatePickerConfiguration,
-        result: @escaping FlutterResult
+        result: @escaping PendingStringResult
     ) {
         activeSheetMode = .resultSheet
         let controller = NativeDatePickerViewController(
             configuration: configuration,
             onConfirm: { [weak self] date in
-                result(nativeSheetFormatDate(date))
+                result(.success(nativeSheetFormatDate(date)))
                 self?.dismissActive()
             },
             onClose: { [weak self] in
-                result(nil)
+                result(.success(nil))
                 self?.dismissActive()
             }
         )
         let navigation = NativeSheetNavigationController(rootViewController: controller)
         if !present(navigation, initialDetent: .large) {
             activeSheetMode = .profileMenu
-            result(FlutterError(
+            result(.failure(PigeonError(
                 code: "PRESENTATION_FAILED",
                 message: "Unable to present native date picker",
                 details: nil
-            ))
+            )))
         }
     }
 
     private func presentTextEditor(
         _ configuration: NativeTextEditorConfiguration,
-        result: @escaping FlutterResult
+        result: @escaping PendingActionResult
     ) {
         if pendingTextEditorResult != nil {
-            result(FlutterError(
+            result(.failure(PigeonError(
                 code: "ALREADY_PRESENTING",
                 message: "A native text editor sheet is already open",
                 details: nil
-            ))
+            )))
             return
         }
 
@@ -1275,11 +1734,11 @@ final class NativeSheetBridge {
         pendingTextEditorResult = nil
         activeTextEditorController = nil
         activeSheetMode = .profileMenu
-        result(FlutterError(
+        result(.failure(PigeonError(
             code: "PRESENTATION_FAILED",
             message: "Unable to present native text editor",
             details: nil
-        ))
+        )))
     }
 
     private func resolvePendingTextEditorAfterDismiss(actionId: String) {
@@ -1290,10 +1749,12 @@ final class NativeSheetBridge {
 
         pendingTextEditorResult = nil
         flushActiveSheetEditing()
-        let payload = activeTextEditorController?.resultPayload(actionId: actionId)
+        let payload = actionResult(
+            from: activeTextEditorController?.resultPayload(actionId: actionId)
+        )
         let controller = activeController
         let completion = { [weak self] in
-            pending(payload)
+            pending(.success(payload))
             self?.activeController = nil
             self?.presentationDelegate = nil
             self?.activeTextEditorController = nil
@@ -1381,10 +1842,7 @@ final class NativeSheetBridge {
             return
         }
 
-        channel?.invokeMethod(
-            "onControlChanged",
-            arguments: ["id": item.id, "value": item.value ?? true]
-        )
+        sendControlChanged(id: item.id, value: item.value ?? true)
     }
 
     private func presentDestructiveConfirm(for item: NativeSheetItem) {
@@ -1393,18 +1851,14 @@ final class NativeSheetBridge {
             case .profileMenu:
                 if item.id == "sign-out" {
                     dismissActive()
-                    channel?.invokeMethod("onLogoutRequested", arguments: nil)
+                    flutterApi?.onLogoutRequested { _ in }
                     return
                 }
-                channel?.invokeMethod(
-                    "onControlChanged",
-                    arguments: ["id": item.id, "value": true]
-                )
+                sendControlChanged(id: item.id, value: true)
             case .resultSheet:
-                resolvePendingResultSheetAfterDismiss([
-                    "actionId": item.id,
-                    "values": resultSheetValues
-                ])
+                resolvePendingResultSheetAfterDismiss(
+                    actionResult(actionId: item.id, values: resultSheetValues)
+                )
             }
             return
         }
@@ -1422,18 +1876,17 @@ final class NativeSheetBridge {
             case .profileMenu:
                 if item.id == "sign-out" {
                     self.dismissActive()
-                    self.channel?.invokeMethod("onLogoutRequested", arguments: nil)
+                    self.flutterApi?.onLogoutRequested { _ in }
                     return
                 }
-                self.channel?.invokeMethod(
-                    "onControlChanged",
-                    arguments: ["id": item.id, "value": true]
-                )
+                self.sendControlChanged(id: item.id, value: true)
             case .resultSheet:
-                self.resolvePendingResultSheetAfterDismiss([
-                    "actionId": item.id,
-                    "values": self.resultSheetValues
-                ])
+                self.resolvePendingResultSheetAfterDismiss(
+                    self.actionResult(
+                        actionId: item.id,
+                        values: self.resultSheetValues
+                    )
+                )
             }
         })
         presenter.present(alert, animated: true)
@@ -1454,21 +1907,23 @@ final class NativeSheetBridge {
         resultSheetValues = [:]
         if let pending = pendingModelSelectorResult {
             pendingModelSelectorResult = nil
-            pending(nil)
+            pending(.success(nil))
         }
         if let pending = pendingOptionsSelectorResult {
             pendingOptionsSelectorResult = nil
-            pending(nil)
+            pending(.success(nil))
         }
         if let pending = pendingTextEditorResult {
             pendingTextEditorResult = nil
-            pending(activeTextEditorController?.resultPayload(
-                actionId: activeTextEditorController?.closeActionId ?? "close"
-            ))
+            pending(.success(actionResult(
+                from: activeTextEditorController?.resultPayload(
+                    actionId: activeTextEditorController?.closeActionId ?? "close"
+                )
+            )))
         }
         if let pending = pendingResultSheetResult {
             pendingResultSheetResult = nil
-            pending(nil)
+            pending(.success(nil))
         }
         activeTextEditorController = nil
         activeSheetMode = .profileMenu
@@ -1504,10 +1959,11 @@ final class NativeSheetBridge {
     fileprivate func markDetailVisible(_ controller: NativeDetailTableViewController) {
         activeDetailTableController = controller
         guard activeSheetMode == .profileMenu else { return }
-        channel?.invokeMethod(
-            "onDetailAppeared",
-            arguments: ["detailId": controller.detailId]
-        )
+        flutterApi?.onDetailAppeared(
+            event: PlatformNativeSheetDetailAppearedEvent(
+                detailId: controller.detailId
+            )
+        ) { _ in }
     }
 }
 
@@ -2977,6 +3433,406 @@ private final class NativeSheetSliderTableViewCell: UITableViewCell {
     }
 }
 
+private func clearArrangedSubviews(from stack: UIStackView) {
+    for view in stack.arrangedSubviews {
+        stack.removeArrangedSubview(view)
+        view.removeFromSuperview()
+    }
+}
+
+private func nativeChipConfiguration(
+    title: String,
+    image: UIImage?,
+    foregroundColor: UIColor
+) -> UIButton.Configuration {
+    var configuration = UIButton.Configuration.gray()
+    configuration.title = title
+    configuration.image = image
+    configuration.imagePadding = image == nil ? 0 : 6
+    configuration.baseForegroundColor = foregroundColor
+    configuration.buttonSize = .small
+    configuration.cornerStyle = .capsule
+    configuration.titleLineBreakMode = .byTruncatingTail
+    configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
+        pointSize: 12,
+        weight: .medium
+    )
+    configuration.contentInsets = NSDirectionalEdgeInsets(
+        top: 4,
+        leading: 8,
+        bottom: 4,
+        trailing: 8
+    )
+    return configuration
+}
+
+private final class NativeSheetQueryChipButton: UIButton {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        titleLabel?.font = .preferredFont(forTextStyle: .caption1)
+        titleLabel?.adjustsFontForContentSizeCategory = true
+        titleLabel?.numberOfLines = 1
+        titleLabel?.lineBreakMode = .byTruncatingTail
+        contentHorizontalAlignment = .leading
+        isUserInteractionEnabled = false
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func configure(title: String) {
+        configuration = nativeChipConfiguration(
+            title: title,
+            image: UIImage(systemName: "magnifyingglass"),
+            foregroundColor: .secondaryLabel
+        )
+    }
+}
+
+private final class NativeSheetFaviconView: UIView {
+    private let imageView = UIImageView()
+    private let fallbackView = UIView()
+    private let fallbackIconView = UIImageView()
+    private var expectedImageUrl: String?
+
+    init(side: CGFloat) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        widthAnchor.constraint(equalToConstant: side).isActive = true
+        heightAnchor.constraint(equalToConstant: side).isActive = true
+        layer.cornerRadius = side / 2
+        layer.cornerCurve = .continuous
+        layer.borderWidth = 1
+        layer.borderColor = UIColor.systemBackground.cgColor
+        clipsToBounds = true
+        backgroundColor = .systemBackground
+
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFill
+        imageView.isHidden = true
+        addSubview(imageView)
+
+        fallbackView.translatesAutoresizingMaskIntoConstraints = false
+        fallbackView.backgroundColor = .tertiarySystemFill
+        addSubview(fallbackView)
+
+        fallbackIconView.translatesAutoresizingMaskIntoConstraints = false
+        fallbackIconView.contentMode = .scaleAspectFit
+        fallbackIconView.tintColor = .secondaryLabel
+        fallbackView.addSubview(fallbackIconView)
+
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -1),
+            imageView.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+            fallbackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
+            fallbackView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -1),
+            fallbackView.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            fallbackView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+            fallbackIconView.centerXAnchor.constraint(equalTo: fallbackView.centerXAnchor),
+            fallbackIconView.centerYAnchor.constraint(equalTo: fallbackView.centerYAnchor),
+            fallbackIconView.widthAnchor.constraint(equalTo: fallbackView.widthAnchor, multiplier: 0.6),
+            fallbackIconView.heightAnchor.constraint(equalTo: fallbackView.heightAnchor, multiplier: 0.6),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func configure(rawUrl: String?, faviconUrl: String?, fallbackSystemName: String) {
+        expectedImageUrl = faviconUrl ?? NativeSheetURLFormatting.googleFaviconUrl(rawUrl: rawUrl, size: 32)
+        imageView.image = nil
+        imageView.isHidden = true
+        fallbackView.isHidden = false
+        fallbackIconView.image = UIImage(systemName: fallbackSystemName)
+
+        guard let imageUrl = expectedImageUrl else { return }
+        NativeSheetImageLoader.load(rawUrl: imageUrl) { [weak self] image in
+            guard let self, self.expectedImageUrl == imageUrl else { return }
+            self.imageView.image = image
+            self.imageView.isHidden = false
+            self.fallbackView.isHidden = true
+        }
+    }
+}
+
+private final class NativeSheetLinkChipButton: UIButton {
+    private var actionUrl: URL?
+    private var onOpen: ((URL) -> Void)?
+    private var expectedImageUrl: String?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        titleLabel?.font = .preferredFont(forTextStyle: .caption1)
+        titleLabel?.adjustsFontForContentSizeCategory = true
+        titleLabel?.numberOfLines = 1
+        titleLabel?.lineBreakMode = .byTruncatingTail
+        contentHorizontalAlignment = .leading
+        addAction(
+            UIAction { [weak self] _ in
+                guard let self, let actionUrl = self.actionUrl else { return }
+                self.onOpen?(actionUrl)
+            },
+            for: .touchUpInside
+        )
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func configure(link: NativeSheetLink, onOpen: @escaping (URL) -> Void) {
+        self.onOpen = onOpen
+        actionUrl = link.url
+        expectedImageUrl = link.faviconUrl
+            ?? NativeSheetURLFormatting.googleFaviconUrl(rawUrl: link.rawUrl, size: 16)
+
+        var buttonConfiguration = nativeChipConfiguration(
+            title: link.title ?? NativeSheetURLFormatting.displayLabel(for: link.rawUrl),
+            image: UIImage(systemName: "globe"),
+            foregroundColor: .label
+        )
+        configuration = buttonConfiguration
+        isEnabled = link.url != nil
+        alpha = link.url == nil ? 0.75 : 1
+
+        guard let imageUrl = expectedImageUrl else { return }
+        NativeSheetImageLoader.load(rawUrl: imageUrl) { [weak self] image in
+            guard let self, self.expectedImageUrl == imageUrl else { return }
+            var updated = self.configuration ?? buttonConfiguration
+            updated.image = image.withRenderingMode(.alwaysOriginal)
+            self.configuration = updated
+        }
+    }
+}
+private final class NativeSheetSourceTableViewCell: UITableViewCell {
+    static let reuseId = "NativeSheetSourceTableViewCell"
+
+    private let rootStack = UIStackView()
+    private let headerStack = UIStackView()
+    private let indexLabel = UILabel()
+    private let faviconView = NativeSheetFaviconView(side: NativeSheetSettingsStyle.iconSize)
+    private let textStack = UIStackView()
+    private let titleLabel = UILabel()
+    private let detailLabel = UILabel()
+    private let snippetLabel = UILabel()
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        NativeSheetSettingsStyle.applyCellStyle(self)
+        rootStack.axis = .vertical
+        rootStack.spacing = 6
+        rootStack.translatesAutoresizingMaskIntoConstraints = false
+
+        headerStack.axis = .horizontal
+        headerStack.alignment = .top
+        headerStack.spacing = NativeSheetSettingsStyle.iconSpacing
+
+        indexLabel.font = UIFontMetrics(forTextStyle: .caption1)
+            .scaledFont(for: .systemFont(ofSize: 12, weight: .semibold))
+        indexLabel.adjustsFontForContentSizeCategory = true
+        indexLabel.textColor = .tertiaryLabel
+        indexLabel.textAlignment = .natural
+        indexLabel.setContentHuggingPriority(.required, for: .horizontal)
+        indexLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        textStack.axis = .vertical
+        textStack.spacing = 3
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        titleLabel.font = UIFontMetrics(forTextStyle: .body)
+            .scaledFont(for: .systemFont(ofSize: 17, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = .label
+        titleLabel.numberOfLines = 2
+
+        detailLabel.font = .preferredFont(forTextStyle: .caption1)
+        detailLabel.adjustsFontForContentSizeCategory = true
+        detailLabel.textColor = .secondaryLabel
+        detailLabel.numberOfLines = 1
+        detailLabel.lineBreakMode = .byTruncatingMiddle
+
+        snippetLabel.font = .preferredFont(forTextStyle: .footnote)
+        snippetLabel.adjustsFontForContentSizeCategory = true
+        snippetLabel.textColor = .secondaryLabel
+        snippetLabel.numberOfLines = 4
+
+        contentView.addSubview(rootStack)
+        rootStack.addArrangedSubview(headerStack)
+        rootStack.addArrangedSubview(snippetLabel)
+        headerStack.addArrangedSubview(indexLabel)
+        headerStack.addArrangedSubview(faviconView)
+        headerStack.addArrangedSubview(textStack)
+        textStack.addArrangedSubview(titleLabel)
+        textStack.addArrangedSubview(detailLabel)
+
+        NSLayoutConstraint.activate([
+            rootStack.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
+            rootStack.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            rootStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 11),
+            rootStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -11),
+            indexLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 18),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func configure(item: NativeSheetItem) {
+        titleLabel.text = item.title
+        detailLabel.text = item.sourceDisplayUrl ?? item.sourceDisplayType
+        detailLabel.isHidden = detailLabel.text?.isEmpty ?? true
+        snippetLabel.text = item.sourceDisplaySnippet
+        snippetLabel.isHidden = snippetLabel.text?.isEmpty ?? true
+
+        if let sourceIndex = item.sourceIndex {
+            indexLabel.text = "\(sourceIndex)."
+            indexLabel.isHidden = false
+        } else {
+            indexLabel.text = nil
+            indexLabel.isHidden = true
+        }
+
+        let fallbackSymbol = item.url == nil ? "doc.text" : "globe"
+        faviconView.configure(
+            rawUrl: item.sourceDisplayUrl,
+            faviconUrl: item.faviconUrl,
+            fallbackSystemName: fallbackSymbol
+        )
+
+        accessoryType = item.url == nil ? .none : .disclosureIndicator
+        selectionStyle = item.url == nil ? .none : .default
+        NativeSheetSettingsStyle.applyCellStyle(self)
+    }
+}
+
+private final class NativeSheetStatusTableViewCell: UITableViewCell {
+    static let reuseId = "NativeSheetStatusTableViewCell"
+
+    private let rootStack = UIStackView()
+    private let headerStack = UIStackView()
+    private let iconView = UIImageView()
+    private let contentStack = UIStackView()
+    private let titleLabel = UILabel()
+    private let querySectionLabel = UILabel()
+    private let queryStack = UIStackView()
+    private let linkSectionLabel = UILabel()
+    private let linkStack = UIStackView()
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        selectionStyle = .none
+        NativeSheetSettingsStyle.applyCellStyle(self)
+
+        rootStack.axis = .vertical
+        rootStack.spacing = 10
+        rootStack.translatesAutoresizingMaskIntoConstraints = false
+
+        headerStack.axis = .horizontal
+        headerStack.alignment = .top
+        headerStack.spacing = NativeSheetSettingsStyle.iconSpacing
+
+        iconView.tintColor = .secondaryLabel
+        iconView.contentMode = .scaleAspectFit
+        iconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
+            pointSize: NativeSheetSettingsStyle.iconSize,
+            weight: .regular
+        )
+        iconView.setContentHuggingPriority(.required, for: .horizontal)
+
+        contentStack.axis = .vertical
+        contentStack.spacing = 6
+        contentStack.alignment = .fill
+
+        titleLabel.font = UIFontMetrics(forTextStyle: .body)
+            .scaledFont(for: .systemFont(ofSize: 17, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = .label
+        titleLabel.numberOfLines = 0
+
+        querySectionLabel.text = nativeLocalized("native.sheet.searches", "Searches")
+        querySectionLabel.font = .preferredFont(forTextStyle: .caption1)
+        querySectionLabel.adjustsFontForContentSizeCategory = true
+        querySectionLabel.textColor = .secondaryLabel
+
+        queryStack.axis = .vertical
+        queryStack.spacing = 6
+        queryStack.alignment = .leading
+
+        linkSectionLabel.text = nativeLocalized("native.sheet.sources", "Sources")
+        linkSectionLabel.font = .preferredFont(forTextStyle: .caption1)
+        linkSectionLabel.adjustsFontForContentSizeCategory = true
+        linkSectionLabel.textColor = .secondaryLabel
+
+        linkStack.axis = .vertical
+        linkStack.spacing = 6
+        linkStack.alignment = .leading
+
+        contentView.addSubview(rootStack)
+        rootStack.addArrangedSubview(headerStack)
+        headerStack.addArrangedSubview(iconView)
+        headerStack.addArrangedSubview(contentStack)
+        contentStack.addArrangedSubview(titleLabel)
+        contentStack.addArrangedSubview(querySectionLabel)
+        contentStack.addArrangedSubview(queryStack)
+        contentStack.addArrangedSubview(linkSectionLabel)
+        contentStack.addArrangedSubview(linkStack)
+
+        NSLayoutConstraint.activate([
+            rootStack.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
+            rootStack.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            rootStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 11),
+            rootStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -11),
+            iconView.widthAnchor.constraint(equalToConstant: NativeSheetSettingsStyle.iconSize),
+            iconView.heightAnchor.constraint(equalToConstant: NativeSheetSettingsStyle.iconSize),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        clearArrangedSubviews(from: queryStack)
+        clearArrangedSubviews(from: linkStack)
+    }
+
+    func configure(
+        item: NativeSheetItem,
+        onOpenLink: @escaping (URL) -> Void
+    ) {
+        titleLabel.text = item.title
+        let symbolName = item.pending ? "circle.dotted" : "circle.fill"
+        iconView.image = UIImage(systemName: symbolName)
+        iconView.tintColor = item.pending ? .tintColor : .secondaryLabel
+
+        clearArrangedSubviews(from: queryStack)
+        clearArrangedSubviews(from: linkStack)
+
+        for query in item.queries {
+            let chip = NativeSheetQueryChipButton(frame: .zero)
+            chip.configure(title: query)
+            queryStack.addArrangedSubview(chip)
+        }
+        querySectionLabel.isHidden = item.queries.isEmpty
+        queryStack.isHidden = item.queries.isEmpty
+
+        for link in item.links {
+            let button = NativeSheetLinkChipButton(frame: .zero)
+            button.configure(link: link, onOpen: onOpenLink)
+            linkStack.addArrangedSubview(button)
+        }
+        linkSectionLabel.isHidden = item.links.isEmpty
+        linkStack.isHidden = item.links.isEmpty
+    }
+}
+
 private final class NativeDetailTableViewController: UITableViewController {
     private var detail: NativeSheetDetail
     private let canNavigate: (NativeSheetItem) -> Bool
@@ -3079,6 +3935,14 @@ private final class NativeDetailTableViewController: UITableViewController {
             NativeSheetSliderTableViewCell.self,
             forCellReuseIdentifier: NativeSheetSliderTableViewCell.reuseId
         )
+        tableView.register(
+            NativeSheetSourceTableViewCell.self,
+            forCellReuseIdentifier: NativeSheetSourceTableViewCell.reuseId
+        )
+        tableView.register(
+            NativeSheetStatusTableViewCell.self,
+            forCellReuseIdentifier: NativeSheetStatusTableViewCell.reuseId
+        )
         tableView.estimatedRowHeight = NativeSheetSettingsStyle.defaultCellHeight
         tableView.rowHeight = UITableView.automaticDimension
         NativeSheetSettingsStyle.apply(to: tableView)
@@ -3175,6 +4039,22 @@ private final class NativeDetailTableViewController: UITableViewController {
             ) as! NativeSheetReadOnlyTextTableViewCell
             cell.configure(item: item)
             return cell
+        case "source":
+            let cell = tableView.dequeueReusableCell(
+                withIdentifier: NativeSheetSourceTableViewCell.reuseId,
+                for: indexPath
+            ) as! NativeSheetSourceTableViewCell
+            cell.configure(item: item)
+            return cell
+        case "statusUpdate":
+            let cell = tableView.dequeueReusableCell(
+                withIdentifier: NativeSheetStatusTableViewCell.reuseId,
+                for: indexPath
+            ) as! NativeSheetStatusTableViewCell
+            cell.configure(item: item) { url in
+                UIApplication.shared.open(url)
+            }
+            return cell
         case "slider":
             let cell = tableView.dequeueReusableCell(
                 withIdentifier: NativeSheetSliderTableViewCell.reuseId,
@@ -3203,8 +4083,12 @@ private final class NativeDetailTableViewController: UITableViewController {
                 onControlChanged(item, !(item.value as? Bool ?? false))
             }
         case "info", "textField", "secureTextField", "dropdown", "segment",
-             "multilineTextField", "slider", "readOnlyText":
+             "multilineTextField", "slider", "readOnlyText", "statusUpdate":
             break
+        case "source":
+            guard item.url != nil || canNavigate(item) else { break }
+            commitPendingTextChanges()
+            onSelect(item)
         default:
             commitPendingTextChanges()
             onSelect(item)
@@ -3364,18 +4248,29 @@ private final class NativeDetailTableViewController: UITableViewController {
 private final class NativeModelSelectorTableViewController: UITableViewController {
     private let configuration: NativeModelSelectorConfiguration
     private let onSelect: (String) -> Void
+    private let onTogglePin: (String) -> Void
     private let onClose: () -> Void
     private var filteredModels: [NativeModelSelectorOption]
+    private var pinnedModelIds: [String]
+    private var pinnedModelIdSet: Set<String>
+    private var currentSearchQuery = ""
 
     init(
         configuration: NativeModelSelectorConfiguration,
         onSelect: @escaping (String) -> Void,
+        onTogglePin: @escaping (String) -> Void,
         onClose: @escaping () -> Void
     ) {
         self.configuration = configuration
         self.onSelect = onSelect
+        self.onTogglePin = onTogglePin
         self.onClose = onClose
-        filteredModels = configuration.models
+        pinnedModelIds = configuration.pinnedModelIds
+        pinnedModelIdSet = Set(configuration.pinnedModelIds)
+        filteredModels = Self.sortedModels(
+            configuration.models,
+            pinnedModelIds: configuration.pinnedModelIds
+        )
         super.init(style: .insetGrouped)
     }
 
@@ -3415,9 +4310,9 @@ private final class NativeModelSelectorTableViewController: UITableViewControlle
         ) as! NativeModelSelectorTableViewCell
         cell.configure(
             model: model,
-            isSelected: model.id == configuration.selectedModelId
+            isSelected: model.id == configuration.selectedModelId,
+            isPinned: pinnedModelIdSet.contains(model.id)
         )
-        cell.accessoryType = model.id == configuration.selectedModelId ? .checkmark : .none
         return cell
     }
 
@@ -3426,11 +4321,85 @@ private final class NativeModelSelectorTableViewController: UITableViewControlle
         onSelect(filteredModels[indexPath.row].id)
     }
 
+    override func tableView(
+        _ tableView: UITableView,
+        contextMenuConfigurationForRowAt indexPath: IndexPath,
+        point: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard configuration.allowsPinning else { return nil }
+        let model = filteredModels[indexPath.row]
+        let isPinned = pinnedModelIdSet.contains(model.id)
+        let title = isPinned ? configuration.unpinTitle : configuration.pinTitle
+        let image = UIImage(systemName: isPinned ? "pin.slash" : "pin")
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            let action = UIAction(
+                title: title,
+                image: image
+            ) { [weak self] _ in
+                self?.togglePinnedModel(model.id)
+                self?.onTogglePin(model.id)
+            }
+            return UIMenu(children: [action])
+        }
+    }
+
     private func closeButton() -> UIBarButtonItem {
         UIBarButtonItem(
             systemItem: .close,
             primaryAction: UIAction { [weak self] _ in self?.onClose() }
         )
+    }
+
+    private func togglePinnedModel(_ modelId: String) {
+        if pinnedModelIdSet.contains(modelId) {
+            pinnedModelIdSet.remove(modelId)
+            pinnedModelIds.removeAll { $0 == modelId }
+        } else {
+            pinnedModelIdSet.insert(modelId)
+            pinnedModelIds.append(modelId)
+        }
+        applyFilterAndSort(query: currentSearchQuery)
+    }
+
+    private func applyFilterAndSort(query: String) {
+        currentSearchQuery = query
+        let searchedModels = query.isEmpty
+            ? configuration.models
+            : configuration.models.filter { model in
+                model.name.lowercased().contains(query)
+                    || model.id.lowercased().contains(query)
+                    || model.tags.contains { $0.lowercased().contains(query) }
+            }
+        filteredModels = Self.sortedModels(searchedModels, pinnedModelIds: pinnedModelIds)
+        tableView.reloadData()
+    }
+
+    private static func sortedModels(
+        _ models: [NativeModelSelectorOption],
+        pinnedModelIds: [String]
+    ) -> [NativeModelSelectorOption] {
+        guard !models.isEmpty, !pinnedModelIds.isEmpty else {
+            return models
+        }
+        let pinnedOrder = Dictionary(
+            uniqueKeysWithValues: pinnedModelIds.enumerated().map { index, modelId in
+                (modelId, index)
+            }
+        )
+        return models.enumerated().sorted { lhs, rhs in
+            let leftOrder = pinnedOrder[lhs.element.id]
+            let rightOrder = pinnedOrder[rhs.element.id]
+            switch (leftOrder, rightOrder) {
+            case let (left?, right?):
+                return left == right ? lhs.offset < rhs.offset : left < right
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                return lhs.offset < rhs.offset
+            }
+        }.map(\.element)
     }
 }
 
@@ -3439,13 +4408,44 @@ extension NativeModelSelectorTableViewController: UISearchResultsUpdating {
         let query = searchController.searchBar.text?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
-        filteredModels = query.isEmpty
-            ? configuration.models
-            : configuration.models.filter { model in
-                model.name.lowercased().contains(query)
-                    || model.id.lowercased().contains(query)
-            }
-        tableView.reloadData()
+        applyFilterAndSort(query: query)
+    }
+}
+
+private final class NativeModelTagButton: UIButton {
+    init(text: String) {
+        super.init(frame: .zero)
+
+        var configuration = UIButton.Configuration.gray()
+        configuration.title = text.uppercased()
+        configuration.buttonSize = .mini
+        configuration.cornerStyle = .capsule
+        configuration.contentInsets = NSDirectionalEdgeInsets(
+            top: 2,
+            leading: 6,
+            bottom: 2,
+            trailing: 6
+        )
+        configuration.baseForegroundColor = .secondaryLabel
+        configuration.baseBackgroundColor = .quaternarySystemFill
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
+            incoming in
+            var outgoing = incoming
+            outgoing.font = .preferredFont(forTextStyle: .caption2)
+            return outgoing
+        }
+        self.configuration = configuration
+
+        isUserInteractionEnabled = false
+        titleLabel?.adjustsFontForContentSizeCategory = true
+        titleLabel?.numberOfLines = 1
+        titleLabel?.lineBreakMode = .byTruncatingTail
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
     }
 }
 
@@ -3561,7 +4561,11 @@ private final class NativeModelSelectorTableViewCell: UITableViewCell {
     private let avatarView = NativeModelAvatarView(side: 32)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
+    private let tagsStack = UIStackView()
     private let textStack = UIStackView()
+    private let pinImageView = UIImageView(image: UIImage(systemName: "pin.fill"))
+    private var pinWidthConstraint: NSLayoutConstraint?
+    private var textTrailingToPinConstraint: NSLayoutConstraint?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -3572,38 +4576,76 @@ private final class NativeModelSelectorTableViewCell: UITableViewCell {
         nil
     }
 
-    func configure(model: NativeModelSelectorOption, isSelected: Bool) {
+    func configure(model: NativeModelSelectorOption, isSelected: Bool, isPinned: Bool) {
         titleLabel.text = model.name
         titleLabel.font = .preferredFont(forTextStyle: .body)
         titleLabel.textColor = .label
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.numberOfLines = 2
 
-        let subtitle = model.subtitle?.isEmpty == false ? model.subtitle! : model.id
+        let subtitle = model.subtitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         subtitleLabel.text = subtitle
         subtitleLabel.font = .preferredFont(forTextStyle: .footnote)
         subtitleLabel.textColor = .secondaryLabel
         subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.numberOfLines = 2
-        subtitleLabel.isHidden = subtitle == nil
+        subtitleLabel.isHidden = subtitle.isEmpty
+
+        configureTags(model.tags)
 
         avatarView.configure(
             name: model.name,
             avatarUrl: model.avatarUrl,
+            avatarData: model.avatarData,
             avatarHeaders: model.avatarHeaders,
             sfSymbol: model.sfSymbol
         )
 
         accessoryType = isSelected ? .checkmark : .none
+        pinImageView.isHidden = !isPinned
+        pinWidthConstraint?.constant = isPinned ? 16 : 0
+        textTrailingToPinConstraint?.constant = isPinned ? -NativeSheetSettingsStyle.iconSpacing : 0
         selectionStyle = .default
         isUserInteractionEnabled = true
         NativeSheetSettingsStyle.applyCellStyle(self)
+    }
+
+    private func configureTags(_ tags: [String]) {
+        tagsStack.arrangedSubviews.forEach { view in
+            tagsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        let sortedTags = tags.sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
+        let visibleTags = sortedTags.prefix(3)
+        for tag in visibleTags {
+            addTagLabel(tag)
+        }
+        if sortedTags.count > visibleTags.count {
+            addTagLabel("+\(sortedTags.count - visibleTags.count)")
+        }
+        if !sortedTags.isEmpty {
+            let spacer = UIView()
+            spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            tagsStack.addArrangedSubview(spacer)
+        }
+        tagsStack.isHidden = sortedTags.isEmpty
+    }
+
+    private func addTagLabel(_ text: String) {
+        let button = NativeModelTagButton(text: text)
+        button.widthAnchor.constraint(lessThanOrEqualToConstant: 120).isActive = true
+        tagsStack.addArrangedSubview(button)
     }
 
     private func configureViews() {
         backgroundColor = .secondarySystemGroupedBackground
         contentView.addSubview(avatarView)
         contentView.addSubview(textStack)
+        contentView.addSubview(pinImageView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -3613,6 +4655,22 @@ private final class NativeModelSelectorTableViewCell: UITableViewCell {
         textStack.alignment = .fill
         textStack.addArrangedSubview(titleLabel)
         textStack.addArrangedSubview(subtitleLabel)
+        textStack.addArrangedSubview(tagsStack)
+        tagsStack.translatesAutoresizingMaskIntoConstraints = false
+        tagsStack.axis = .horizontal
+        tagsStack.spacing = 4
+        tagsStack.alignment = .center
+        tagsStack.distribution = .fill
+        tagsStack.isHidden = true
+        pinImageView.translatesAutoresizingMaskIntoConstraints = false
+        pinImageView.contentMode = .scaleAspectFit
+        pinImageView.tintColor = .secondaryLabel
+        pinImageView.isHidden = true
+        pinImageView.setContentHuggingPriority(.required, for: .horizontal)
+        pinWidthConstraint = pinImageView.widthAnchor.constraint(equalToConstant: 0)
+        textTrailingToPinConstraint = textStack.trailingAnchor.constraint(
+            equalTo: pinImageView.leadingAnchor
+        )
 
         NSLayoutConstraint.activate([
             avatarView.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
@@ -3624,9 +4682,13 @@ private final class NativeModelSelectorTableViewCell: UITableViewCell {
                 equalTo: avatarView.trailingAnchor,
                 constant: NativeSheetSettingsStyle.iconSpacing
             ),
-            textStack.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            textTrailingToPinConstraint!,
             textStack.topAnchor.constraint(equalTo: contentView.layoutMarginsGuide.topAnchor),
             textStack.bottomAnchor.constraint(equalTo: contentView.layoutMarginsGuide.bottomAnchor),
+            pinImageView.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            pinImageView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            pinImageView.heightAnchor.constraint(equalToConstant: 16),
+            pinWidthConstraint!,
         ])
     }
 }
@@ -3925,6 +4987,7 @@ private final class NativeModelAvatarView: UIView {
     func configure(
         name: String,
         avatarUrl: String?,
+        avatarData: Data?,
         avatarHeaders: [String: String],
         sfSymbol: String?
     ) {
@@ -3949,6 +5012,14 @@ private final class NativeModelAvatarView: UIView {
                 .uppercased()
             initialsLabel.textColor = accentColor
             initialsLabel.isHidden = false
+        }
+
+        if let avatarData, let image = UIImage(data: avatarData) {
+            imageView.image = image
+            imageView.isHidden = false
+            initialsLabel.isHidden = true
+            symbolView.isHidden = true
+            return
         }
 
         guard let avatarUrl, !avatarUrl.isEmpty else {

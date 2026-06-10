@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/models/chat_message.dart';
 import '../../../../core/services/native_sheet_bridge.dart';
 import '../../../../shared/theme/theme_extensions.dart';
+import '../../../../shared/utils/adaptive_glass.dart';
 import '../../../../shared/widgets/markdown/source_reference_helper.dart';
 import '../../../../shared/widgets/sheet_handle.dart';
 import '../../../../shared/widgets/themed_sheets.dart';
@@ -30,6 +31,7 @@ class OpenWebUISourcesWidget extends StatelessWidget {
     }
 
     final theme = context.conduitTheme;
+    final usesOpaqueFallback = conduitUsesOpaqueGlassFallback();
     final urlSources = sources
         .where((source) {
           return SourceReferenceHelper.getSourceUrl(source) != null;
@@ -65,10 +67,10 @@ class OpenWebUISourcesWidget extends StatelessWidget {
           label: _sourceCountLabel(sources.length),
           child: AdaptiveButton.child(
             onPressed: () => _showSourcesBottomSheet(context),
-            style: Platform.isAndroid
+            style: usesOpaqueFallback
                 ? AdaptiveButtonStyle.filled
                 : AdaptiveButtonStyle.glass,
-            color: Platform.isAndroid
+            color: usesOpaqueFallback
                 ? theme.surfaceContainerHighest.withValues(alpha: 0.95)
                 : null,
             size: AdaptiveButtonSize.small,
@@ -137,18 +139,7 @@ class OpenWebUISourcesWidget extends StatelessWidget {
             title: _sourceCountLabel(sources.length),
             items: [
               for (var index = 0; index < sources.length; index++)
-                NativeSheetItemConfig(
-                  id: 'source-$index',
-                  title: SourceReferenceHelper.getSourceLabel(
-                    sources[index],
-                    index,
-                  ),
-                  subtitle: _sourceSnippet(sources[index]),
-                  sfSymbol: 'link',
-                  url: SourceReferenceHelper.getSourceUrl(
-                    sources[index],
-                  )?.toString(),
-                ),
+                _buildNativeSourceItem(sources[index], index),
             ],
           ),
           rethrowErrors: true,
@@ -363,8 +354,36 @@ class OpenWebUISourcesWidget extends StatelessWidget {
     );
   }
 
+  NativeSheetItemConfig _buildNativeSourceItem(
+    ChatSourceReference source,
+    int index,
+  ) {
+    final url = SourceReferenceHelper.getSourceUrl(source);
+    final snippet = _sourceSnippet(source);
+    final type = _sourceType(source);
+
+    return NativeSheetItemConfig(
+      id: 'source-$index',
+      title: SourceReferenceHelper.getSourceLabel(source, index),
+      subtitle: snippet,
+      sfSymbol: url == null ? 'doc.text' : 'link',
+      url: url,
+      kind: NativeSheetItemKind.source,
+      sourceIndex: index + 1,
+      sourceUrl: url,
+      sourceType: type,
+      snippet: snippet,
+      faviconUrl: _sourceFaviconUrl(url),
+    );
+  }
+
   String _sourceCountLabel(int count) {
     return count == 1 ? '1 Source' : '$count Sources';
+  }
+
+  String? _sourceType(ChatSourceReference source) {
+    final type = source.type?.trim();
+    return type == null || type.isEmpty ? null : type;
   }
 
   String? _sourceSnippet(ChatSourceReference source) {
@@ -418,6 +437,19 @@ class OpenWebUISourcesWidget extends StatelessWidget {
 
     final text = value.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
     return text.isEmpty ? null : text;
+  }
+
+  String? _sourceFaviconUrl(String? url) {
+    if (url == null) {
+      return null;
+    }
+
+    final domain = SourceReferenceHelper.extractDomain(url).trim();
+    if (domain.isEmpty) {
+      return null;
+    }
+
+    return 'https://www.google.com/s2/favicons?sz=32&domain=$domain';
   }
 
   Future<void> _launchUrl(String url) async {

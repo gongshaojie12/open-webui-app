@@ -45,13 +45,14 @@ class SettingsService {
   static const String _disableHapticsWhileStreamingKey =
       PreferenceKeys.disableHapticsWhileStreaming;
   static const String _highContrastKey = PreferenceKeys.highContrast;
-  static const String _largeTextKey = PreferenceKeys.largeText;
   static const String _darkModeKey = PreferenceKeys.darkMode;
   static const String _defaultModelKey = PreferenceKeys.defaultModel;
   // Voice input settings
   static const String _voiceLocaleKey = PreferenceKeys.voiceLocaleId;
   static const String _voiceHoldToTalkKey = PreferenceKeys.voiceHoldToTalk;
   static const String _voiceAutoSendKey = PreferenceKeys.voiceAutoSendFinal;
+  static const String _voiceSttLanguageCodeKey =
+      PreferenceKeys.voiceSttLanguageCode;
   // Realtime transport preference
   static const String _socketTransportModeKey =
       PreferenceKeys.socketTransportMode; // 'polling' or 'ws'
@@ -69,6 +70,7 @@ class SettingsService {
       PreferenceKeys.voiceSilenceDuration;
   static const String _androidAssistantTriggerKey =
       PreferenceKeys.androidAssistantTrigger;
+  static const String _pinnedModelsKey = PreferenceKeys.pinnedModels;
   static Box<dynamic>? _preferencesBox() {
     if (!Hive.isBoxOpen(HiveBoxNames.preferences)) {
       return null;
@@ -143,17 +145,6 @@ class SettingsService {
     return _putPreference(_highContrastKey, value);
   }
 
-  /// Get large text preference
-  static Future<bool> getLargeText() {
-    final value = _getPreference<bool>(_largeTextKey);
-    return Future.value(value ?? false);
-  }
-
-  /// Set large text preference
-  static Future<void> setLargeText(bool value) {
-    return _putPreference(_largeTextKey, value);
-  }
-
   /// Get dark mode preference
   static Future<bool> getDarkMode() {
     final value = _getPreference<bool>(_darkModeKey);
@@ -198,7 +189,6 @@ class SettingsService {
       _hapticFeedbackKey: settings.hapticFeedback,
       _disableHapticsWhileStreamingKey: settings.disableHapticsWhileStreaming,
       _highContrastKey: settings.highContrast,
-      _largeTextKey: settings.largeText,
       _darkModeKey: settings.darkMode,
       _voiceHoldToTalkKey: settings.voiceHoldToTalk,
       _voiceAutoSendKey: settings.voiceAutoSendFinal,
@@ -214,6 +204,7 @@ class SettingsService {
       _androidAssistantTriggerKey:
           settings.androidAssistantTrigger.storageValue,
       PreferenceKeys.temporaryChatByDefault: settings.temporaryChatByDefault,
+      _pinnedModelsKey: settings.pinnedModels.toList(),
     };
 
     await box.putAll(updates);
@@ -243,6 +234,13 @@ class SettingsService {
       await box.put(_voiceLocaleKey, settings.voiceLocaleId);
     } else {
       await box.delete(_voiceLocaleKey);
+    }
+
+    final sttLanguageCode = normalizeSttLanguageCode(settings.sttLanguageCode);
+    if (sttLanguageCode != null) {
+      await box.put(_voiceSttLanguageCodeKey, sttLanguageCode);
+    } else {
+      await box.delete(_voiceSttLanguageCodeKey);
     }
 
     if (settings.ttsVoice != null && settings.ttsVoice!.isNotEmpty) {
@@ -311,6 +309,29 @@ class SettingsService {
     }
   }
 
+  static String? normalizeSttLanguageCode(String? raw) {
+    final trimmed = raw?.trim();
+    if (isSttLanguageAutoInput(trimmed)) {
+      return null;
+    }
+
+    final lower = trimmed!.replaceAll('_', '-').toLowerCase();
+    final primary = lower.split('-').first;
+    if (RegExp(r'^[a-z]{2}$').hasMatch(primary)) {
+      return primary;
+    }
+    return null;
+  }
+
+  static bool isSttLanguageAutoInput(String? raw) {
+    final lower = raw?.trim().toLowerCase();
+    return lower == null ||
+        lower.isEmpty ||
+        lower == 'auto' ||
+        lower == 'default' ||
+        lower == 'system';
+  }
+
   // Voice input specific settings
   static Future<String?> getVoiceLocaleId() {
     final value = _getPreference<String>(_voiceLocaleKey);
@@ -323,6 +344,20 @@ class SettingsService {
       return box?.delete(_voiceLocaleKey) ?? Future.value();
     }
     return box?.put(_voiceLocaleKey, localeId) ?? Future.value();
+  }
+
+  static Future<String?> getSttLanguageCode() {
+    final value = _getPreference<String>(_voiceSttLanguageCodeKey);
+    return Future.value(normalizeSttLanguageCode(value));
+  }
+
+  static Future<void> setSttLanguageCode(String? languageCode) {
+    final box = _preferencesBox();
+    final normalized = normalizeSttLanguageCode(languageCode);
+    if (normalized == null) {
+      return box?.delete(_voiceSttLanguageCodeKey) ?? Future.value();
+    }
+    return box?.put(_voiceSttLanguageCodeKey, normalized) ?? Future.value();
   }
 
   static Future<bool> getVoiceHoldToTalk() {
@@ -426,6 +461,31 @@ class SettingsService {
     return _putPreference(PreferenceKeys.temporaryChatByDefault, value);
   }
 
+  static List<String> sanitizePinnedModels(Iterable<String> modelIds) {
+    final sanitized = <String>[];
+    final seen = <String>{};
+    for (final modelId in modelIds) {
+      final trimmed = modelId.trim();
+      if (trimmed.isEmpty || !seen.add(trimmed)) {
+        continue;
+      }
+      sanitized.add(trimmed);
+    }
+    return sanitized;
+  }
+
+  static Future<List<String>> getPinnedModels() {
+    final raw = _preferencesBox()?.get(_pinnedModelsKey);
+    if (raw is! List) {
+      return Future.value(const []);
+    }
+    return Future.value(sanitizePinnedModels(raw.whereType<String>()));
+  }
+
+  static Future<void> setPinnedModels(List<String> modelIds) {
+    return _putPreference(_pinnedModelsKey, sanitizePinnedModels(modelIds));
+  }
+
   static Future<int> getVoiceSilenceDuration() {
     final value = _getPreference<int>(_voiceSilenceDurationKey);
     return Future.value(
@@ -482,23 +542,6 @@ class SettingsService {
     return Duration(milliseconds: adjustedMs.clamp(50, 1000));
   }
 
-  /// Get text scale factor considering user preferences
-  static double getEffectiveTextScaleFactor(
-    BuildContext context,
-    AppSettings settings,
-  ) {
-    final textScaler = MediaQuery.of(context).textScaler;
-    double baseScale = textScaler.scale(1.0);
-
-    // Apply large text preference
-    if (settings.largeText) {
-      baseScale *= 1.3;
-    }
-
-    // Ensure reasonable bounds
-    return baseScale.clamp(0.8, 3.0);
-  }
-
   static AppSettings _loadSettingsSync(Box<dynamic> box) {
     return AppSettings(
       reduceMotion: (box.get(_reduceMotionKey) as bool?) ?? false,
@@ -507,7 +550,6 @@ class SettingsService {
       disableHapticsWhileStreaming:
           (box.get(_disableHapticsWhileStreamingKey) as bool?) ?? false,
       highContrast: (box.get(_highContrastKey) as bool?) ?? false,
-      largeText: (box.get(_largeTextKey) as bool?) ?? false,
       darkMode: (box.get(_darkModeKey) as bool?) ?? true,
       defaultModel: box.get(_defaultModelKey) as String?,
       voiceLocaleId: box.get(_voiceLocaleKey) as String?,
@@ -533,6 +575,9 @@ class SettingsService {
       sttPreference: _parseSttPreference(
         box.get(PreferenceKeys.voiceSttPreference) as String?,
       ),
+      sttLanguageCode: normalizeSttLanguageCode(
+        box.get(_voiceSttLanguageCodeKey) as String?,
+      ),
       androidAssistantTrigger: _parseAndroidAssistantTrigger(
         box.get(_androidAssistantTriggerKey) as String?,
       ),
@@ -542,6 +587,10 @@ class SettingsService {
               .clamp(minVoiceSilenceDurationMs, maxVoiceSilenceDurationMs),
       temporaryChatByDefault:
           (box.get(PreferenceKeys.temporaryChatByDefault) as bool?) ?? false,
+      pinnedModels: sanitizePinnedModels(
+        ((box.get(_pinnedModelsKey) as List<dynamic>?) ?? const <dynamic>[])
+            .whereType<String>(),
+      ),
     );
   }
 }
@@ -558,7 +607,6 @@ class AppSettings {
   final bool hapticFeedback;
   final bool disableHapticsWhileStreaming;
   final bool highContrast;
-  final bool largeText;
   final bool darkMode;
   final String? defaultModel;
   final String? voiceLocaleId;
@@ -570,6 +618,7 @@ class AppSettings {
   final bool? chatImageGenerationEnabled;
   final bool sendOnEnter;
   final SttPreference sttPreference;
+  final String? sttLanguageCode;
   final String? ttsVoice;
   final double ttsSpeechRate;
   final double ttsPitch;
@@ -580,13 +629,13 @@ class AppSettings {
   final AndroidAssistantTrigger androidAssistantTrigger;
   final int voiceSilenceDuration;
   final bool temporaryChatByDefault;
+  final List<String> pinnedModels;
   const AppSettings({
     this.reduceMotion = false,
     this.animationSpeed = 1.0,
     this.hapticFeedback = true,
     this.disableHapticsWhileStreaming = false,
     this.highContrast = false,
-    this.largeText = false,
     this.darkMode = true,
     this.defaultModel,
     this.voiceLocaleId,
@@ -598,6 +647,7 @@ class AppSettings {
     this.chatImageGenerationEnabled,
     this.sendOnEnter = false,
     this.sttPreference = SttPreference.deviceOnly,
+    this.sttLanguageCode,
     this.ttsVoice,
     this.ttsSpeechRate = 0.5,
     this.ttsPitch = 1.0,
@@ -608,6 +658,7 @@ class AppSettings {
     this.androidAssistantTrigger = AndroidAssistantTrigger.overlay,
     this.voiceSilenceDuration = SettingsService.defaultVoiceSilenceDurationMs,
     this.temporaryChatByDefault = false,
+    this.pinnedModels = const [],
   });
 
   AppSettings copyWith({
@@ -616,7 +667,6 @@ class AppSettings {
     bool? hapticFeedback,
     bool? disableHapticsWhileStreaming,
     bool? highContrast,
-    bool? largeText,
     bool? darkMode,
     Object? defaultModel = const _DefaultValue(),
     Object? voiceLocaleId = const _DefaultValue(),
@@ -628,6 +678,7 @@ class AppSettings {
     bool? chatImageGenerationEnabled,
     bool? sendOnEnter,
     SttPreference? sttPreference,
+    Object? sttLanguageCode = const _DefaultValue(),
     Object? ttsVoice = const _DefaultValue(),
     double? ttsSpeechRate,
     double? ttsPitch,
@@ -638,6 +689,7 @@ class AppSettings {
     int? voiceSilenceDuration,
     AndroidAssistantTrigger? androidAssistantTrigger,
     bool? temporaryChatByDefault,
+    List<String>? pinnedModels,
   }) {
     return AppSettings(
       reduceMotion: reduceMotion ?? this.reduceMotion,
@@ -646,7 +698,6 @@ class AppSettings {
       disableHapticsWhileStreaming:
           disableHapticsWhileStreaming ?? this.disableHapticsWhileStreaming,
       highContrast: highContrast ?? this.highContrast,
-      largeText: largeText ?? this.largeText,
       darkMode: darkMode ?? this.darkMode,
       defaultModel: defaultModel is _DefaultValue
           ? this.defaultModel
@@ -663,6 +714,9 @@ class AppSettings {
           chatImageGenerationEnabled ?? this.chatImageGenerationEnabled,
       sendOnEnter: sendOnEnter ?? this.sendOnEnter,
       sttPreference: sttPreference ?? this.sttPreference,
+      sttLanguageCode: sttLanguageCode is _DefaultValue
+          ? this.sttLanguageCode
+          : sttLanguageCode as String?,
       ttsVoice: ttsVoice is _DefaultValue ? this.ttsVoice : ttsVoice as String?,
       ttsSpeechRate: ttsSpeechRate ?? this.ttsSpeechRate,
       ttsPitch: ttsPitch ?? this.ttsPitch,
@@ -679,6 +733,7 @@ class AppSettings {
       voiceSilenceDuration: voiceSilenceDuration ?? this.voiceSilenceDuration,
       temporaryChatByDefault:
           temporaryChatByDefault ?? this.temporaryChatByDefault,
+      pinnedModels: pinnedModels ?? this.pinnedModels,
     );
   }
 
@@ -691,7 +746,6 @@ class AppSettings {
         other.hapticFeedback == hapticFeedback &&
         other.disableHapticsWhileStreaming == disableHapticsWhileStreaming &&
         other.highContrast == highContrast &&
-        other.largeText == largeText &&
         other.darkMode == darkMode &&
         other.defaultModel == defaultModel &&
         other.voiceLocaleId == voiceLocaleId &&
@@ -700,6 +754,7 @@ class AppSettings {
         other.chatWebSearchEnabled == chatWebSearchEnabled &&
         other.chatImageGenerationEnabled == chatImageGenerationEnabled &&
         other.sttPreference == sttPreference &&
+        other.sttLanguageCode == sttLanguageCode &&
         other.sendOnEnter == sendOnEnter &&
         other.ttsVoice == ttsVoice &&
         other.ttsSpeechRate == ttsSpeechRate &&
@@ -711,6 +766,7 @@ class AppSettings {
         other.androidAssistantTrigger == androidAssistantTrigger &&
         other.voiceSilenceDuration == voiceSilenceDuration &&
         other.temporaryChatByDefault == temporaryChatByDefault &&
+        _listEquals(other.pinnedModels, pinnedModels) &&
         _listEquals(other.quickPills, quickPills);
     // socketTransportMode intentionally not included in == to avoid frequent rebuilds
   }
@@ -723,7 +779,6 @@ class AppSettings {
       hapticFeedback,
       disableHapticsWhileStreaming,
       highContrast,
-      largeText,
       darkMode,
       defaultModel,
       voiceLocaleId,
@@ -732,7 +787,7 @@ class AppSettings {
       chatWebSearchEnabled,
       chatImageGenerationEnabled,
       sttPreference,
-      socketTransportMode,
+      sttLanguageCode,
       sendOnEnter,
       ttsVoice,
       ttsSpeechRate,
@@ -745,6 +800,7 @@ class AppSettings {
       voiceSilenceDuration,
       temporaryChatByDefault,
       Object.hashAllUnordered(quickPills),
+      Object.hashAll(pinnedModels),
     ]);
   }
 }
@@ -818,11 +874,6 @@ class AppSettingsNotifier extends _$AppSettingsNotifier {
     await SettingsService.setHighContrast(value);
   }
 
-  Future<void> setLargeText(bool value) async {
-    state = state.copyWith(largeText: value);
-    await SettingsService.setLargeText(value);
-  }
-
   Future<void> setDarkMode(bool value) async {
     state = state.copyWith(darkMode: value);
     await SettingsService.setDarkMode(value);
@@ -889,11 +940,41 @@ class AppSettingsNotifier extends _$AppSettingsNotifier {
     await SettingsService.setTemporaryChatByDefault(value);
   }
 
+  Future<void> setPinnedModels(List<String> modelIds) async {
+    final sanitized = SettingsService.sanitizePinnedModels(modelIds);
+    state = state.copyWith(pinnedModels: sanitized);
+    await SettingsService.setPinnedModels(sanitized);
+  }
+
+  Future<void> togglePinnedModel(String modelId) async {
+    final trimmed = modelId.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+
+    final current = state.pinnedModels;
+    final updated = current.contains(trimmed)
+        ? current.where((id) => id != trimmed).toList(growable: false)
+        : SettingsService.sanitizePinnedModels([...current, trimmed]);
+
+    state = state.copyWith(pinnedModels: updated);
+    await SettingsService.setPinnedModels(updated);
+  }
+
   Future<void> setSttPreference(SttPreference preference) async {
     if (state.sttPreference == preference) {
       return;
     }
     state = state.copyWith(sttPreference: preference);
+    await SettingsService.saveSettings(state);
+  }
+
+  Future<void> setSttLanguageCode(String? languageCode) async {
+    final normalized = SettingsService.normalizeSttLanguageCode(languageCode);
+    if (state.sttLanguageCode == normalized) {
+      return;
+    }
+    state = state.copyWith(sttLanguageCode: normalized);
     await SettingsService.saveSettings(state);
   }
 

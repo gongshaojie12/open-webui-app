@@ -3,8 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import '../../core/utils/system_ui_style.dart';
 import 'theme_extensions.dart';
 import 'tweakcn_themes.dart';
 import 'color_tokens.dart';
@@ -25,22 +25,6 @@ class AppTheme {
       theme: theme,
       tokens: tokens,
       brightness: Brightness.dark,
-    );
-  }
-
-  static CupertinoThemeData cupertinoTheme(
-    BuildContext context,
-    TweakcnThemeDefinition theme,
-  ) {
-    final brightness = Theme.of(context).brightness;
-    final variant = theme.variantFor(brightness);
-    final tokens = brightness == Brightness.dark
-        ? AppColorTokens.dark(theme: theme)
-        : AppColorTokens.light(theme: theme);
-    return _buildCupertinoThemeData(
-      brightness: brightness,
-      variant: variant,
-      tokens: tokens,
     );
   }
 
@@ -73,7 +57,6 @@ class AppTheme {
   }) {
     final variant = theme.variantFor(brightness);
     final isDark = brightness == Brightness.dark;
-    final typography = TypographyThemeExtension.fromVariant(variant);
     final surfaces = SurfaceThemeExtension.fromVariant(variant);
     final shadows = ShadowThemeExtension.standard();
     final shapes = ShapeThemeExtension.fromVariant(variant);
@@ -82,7 +65,6 @@ class AppTheme {
       theme: theme,
       tokens: tokens,
       brightness: brightness,
-      typography: typography,
       surfaces: surfaces,
       shadows: shadows,
       shapes: shapes,
@@ -107,15 +89,7 @@ class AppTheme {
       ),
     );
 
-    final TextTheme textTheme = _buildTextTheme(tokens: tokens, isDark: isDark)
-        .apply(
-          fontFamily: typography.primaryFont.isEmpty
-              ? null
-              : typography.primaryFont,
-          fontFamilyFallback: typography.primaryFallback.isEmpty
-              ? null
-              : typography.primaryFallback,
-        );
+    final TextTheme textTheme = _buildTextTheme(tokens: tokens, isDark: isDark);
     final cupertinoOverrideTheme = _buildCupertinoThemeData(
       brightness: brightness,
       variant: variant,
@@ -126,12 +100,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
-      fontFamily: typography.primaryFont.isEmpty
-          ? null
-          : typography.primaryFont,
-      fontFamilyFallback: typography.primaryFallback.isEmpty
-          ? null
-          : typography.primaryFallback,
+      fontFamily: AppTypography.fontFamily,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: surfaces.background,
       canvasColor: surfaces.background,
@@ -143,13 +112,7 @@ class AppTheme {
         elevation: Elevation.none,
         backgroundColor: surfaces.background,
         foregroundColor: tokens.neutralOnSurface,
-        systemOverlayStyle: SystemUiOverlayStyle(
-          statusBarBrightness: brightness,
-          statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
-          systemNavigationBarIconBrightness: isDark
-              ? Brightness.light
-              : Brightness.dark,
-        ),
+        systemOverlayStyle: systemUiOverlayStyleForBrightness(brightness),
       ),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: surfaces.card,
@@ -284,18 +247,18 @@ class AppTheme {
       ),
       textTheme: textTheme,
       textSelectionTheme: TextSelectionThemeData(
-        // Use the platform-native selection tint: iOS/macOS use system blue
-        // at ~15% opacity; other platforms use the theme primary at 20%.
+        // Keep cursor, handles, and selection highlight on the same
+        // platform-native accent while using highlight-appropriate opacity.
         cursorColor: textInputAccentColor,
         selectionColor: switch (defaultTargetPlatform) {
-          TargetPlatform.iOS || TargetPlatform.macOS => const Color(0x26007AFF),
-          _ => variant.primary.withValues(alpha: 0.2),
+          TargetPlatform.iOS ||
+          TargetPlatform.macOS => textInputAccentColor.withValues(alpha: 0.15),
+          _ => textInputAccentColor.withValues(alpha: 0.2),
         },
         selectionHandleColor: textInputAccentColor,
       ),
       extensions: <ThemeExtension<dynamic>>[
         tokens,
-        typography,
         surfaces,
         shadows,
         shapes,

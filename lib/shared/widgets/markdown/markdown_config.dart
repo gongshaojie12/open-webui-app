@@ -1,16 +1,17 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 
 import 'package:cached_network_image_ce/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_highlight/themes/github.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:webview_flutter_plus/webview_flutter_plus.dart';
+import 'package:highlight/highlight.dart' show Node, highlight;
 
 import 'package:conduit/l10n/app_localizations.dart';
 
@@ -28,6 +29,12 @@ typedef MarkdownLinkTapCallback = void Function(String url, String title);
 const _chartPreviewMinHeight = 320.0;
 const _mermaidPreviewMinHeight = 360.0;
 const _embeddedPreviewMaxHeight = 1200.0;
+
+bool _isRunningInWidgetTest() {
+  return WidgetsBinding.instance.runtimeType.toString().contains(
+    'TestWidgetsFlutterBinding',
+  );
+}
 
 class ConduitMarkdown {
   const ConduitMarkdown._();
@@ -134,8 +141,6 @@ class ConduitMarkdown {
     required String language,
   }) {
     final theme = context.conduitTheme;
-    final markdownStyle = ConduitMarkdownStyle.fromTheme(context);
-    final previewLabel = _previewTitleForLanguage(language);
 
     return Container(
       margin: const EdgeInsets.only(top: Spacing.sm, bottom: Spacing.xs + 2),
@@ -151,19 +156,11 @@ class ConduitMarkdown {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            previewLabel,
-            style: markdownStyle.codeChrome.copyWith(
-              color: theme.textSecondary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: Spacing.xs),
           WebContentEmbed(
             source: code,
             deferUntilExpanded: false,
             initiallyExpanded: true,
-            previewTitle: previewLabel,
+            previewTitle: _previewTitleForLanguage(language),
           ),
         ],
       ),
@@ -617,6 +614,167 @@ class ConduitMarkdown {
 /// When the code exceeds [collapseThreshold] lines, only the
 /// first [previewLines] are shown with a toggle to reveal the
 /// rest. Short code blocks render normally.
+final _highlightSpanCache = _HighlightSpanCache();
+
+class _HighlightCacheKey {
+  _HighlightCacheKey({
+    required this.language,
+    required this.code,
+    required this.isDark,
+  }) : codeHash = Object.hash(code, code.length);
+
+  final String language;
+  final String code;
+  final bool isDark;
+  final int codeHash;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _HighlightCacheKey &&
+        other.language == language &&
+        other.isDark == isDark &&
+        other.code == code;
+  }
+
+  @override
+  int get hashCode => Object.hash(language, codeHash, isDark);
+}
+
+class _HighlightSpanCache {
+  static const int maxEntries = 48;
+
+  final LinkedHashMap<_HighlightCacheKey, List<TextSpan>> _cache =
+      LinkedHashMap<_HighlightCacheKey, List<TextSpan>>();
+
+  List<TextSpan> resolve(
+    _HighlightCacheKey key,
+    List<TextSpan> Function() build,
+  ) {
+    final cached = _cache.remove(key);
+    if (cached != null) {
+      _cache[key] = cached;
+      return cached;
+    }
+
+    final spans = build();
+    if (_cache.length >= maxEntries) {
+      _cache.remove(_cache.keys.first);
+    }
+    _cache[key] = spans;
+    return spans;
+  }
+}
+
+class _HighlightedCodeText extends StatelessWidget {
+  const _HighlightedCodeText({
+    required this.source,
+    required this.language,
+    required this.theme,
+    required this.textStyle,
+    required this.isDark,
+    this.plainText = false,
+  });
+
+  static const _rootKey = 'root';
+  static const _defaultFontColor = Color(0xff000000);
+  static const _defaultFontFamily = 'monospace';
+
+  final String source;
+  final String language;
+  final Map<String, TextStyle> theme;
+  final TextStyle textStyle;
+  final bool isDark;
+  final bool plainText;
+
+  @override
+  Widget build(BuildContext context) {
+    final rootStyle = TextStyle(
+      fontFamily: _defaultFontFamily,
+      color: theme[_rootKey]?.color ?? _defaultFontColor,
+    ).merge(textStyle);
+
+    final children = plainText
+        ? <TextSpan>[TextSpan(text: source)]
+        : _highlightSpanCache.resolve(
+            _HighlightCacheKey(
+              language: language,
+              code: source,
+              isDark: isDark,
+            ),
+            () => _buildHighlightedSpans(
+              source: source,
+              language: language,
+              theme: theme,
+            ),
+          );
+
+    return RichText(
+      text: TextSpan(style: rootStyle, children: children),
+      textScaler: MediaQuery.textScalerOf(context),
+    );
+  }
+}
+
+List<TextSpan> _buildHighlightedSpans({
+  required String source,
+  required String language,
+  required Map<String, TextStyle> theme,
+}) {
+  try {
+    final nodes = highlight.parse(source, language: language).nodes;
+    if (nodes == null || nodes.isEmpty) {
+      return <TextSpan>[TextSpan(text: source)];
+    }
+    return _convertHighlightNodes(nodes, theme);
+  } catch (_) {
+    return <TextSpan>[TextSpan(text: source)];
+  }
+}
+
+List<TextSpan> _convertHighlightNodes(
+  List<Node> nodes,
+  Map<String, TextStyle> theme,
+) {
+  final spans = <TextSpan>[];
+  var currentSpans = spans;
+  final stack = <List<TextSpan>>[];
+
+  void traverse(Node node) {
+    if (node.value != null) {
+      currentSpans.add(
+        node.className == null
+            ? TextSpan(text: node.value)
+            : TextSpan(text: node.value, style: theme[node.className!]),
+      );
+      return;
+    }
+
+    final children = node.children;
+    if (children == null || children.isEmpty) {
+      return;
+    }
+
+    final nested = <TextSpan>[];
+    currentSpans.add(
+      TextSpan(
+        children: nested,
+        style: node.className == null ? null : theme[node.className!],
+      ),
+    );
+    stack.add(currentSpans);
+    currentSpans = nested;
+    for (final child in children) {
+      traverse(child);
+    }
+    currentSpans = stack.isEmpty ? spans : stack.removeLast();
+  }
+
+  for (final node in nodes) {
+    traverse(node);
+  }
+  return spans;
+}
+
 class _CodeBlockBody extends StatefulWidget {
   const _CodeBlockBody({
     required this.code,
@@ -638,6 +796,9 @@ class _CodeBlockBody extends StatefulWidget {
   /// Number of lines visible when collapsed.
   static const previewLines = 10;
 
+  static const largeJsonPlainPreviewLineThreshold = 60;
+  static const largeJsonPlainPreviewCharThreshold = 4000;
+
   @override
   State<_CodeBlockBody> createState() => _CodeBlockBodyState();
 }
@@ -653,6 +814,12 @@ class _CodeBlockBodyState extends State<_CodeBlockBody> {
         ? lines.take(_CodeBlockBody.previewLines).join('\n')
         : widget.code;
     final hiddenCount = lines.length - _CodeBlockBody.previewLines;
+    final renderPlainPreview =
+        _isCollapsed &&
+        widget.highlightLanguage == 'json' &&
+        (lines.length > _CodeBlockBody.largeJsonPlainPreviewLineThreshold ||
+            widget.code.length >
+                _CodeBlockBody.largeJsonPlainPreviewCharThreshold);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -664,12 +831,13 @@ class _CodeBlockBodyState extends State<_CodeBlockBody> {
             horizontal: Spacing.sm + 2,
             vertical: Spacing.sm,
           ),
-          child: HighlightView(
-            displayCode,
+          child: _HighlightedCodeText(
+            source: displayCode,
             language: widget.highlightLanguage,
             theme: widget.highlightTheme,
-            padding: EdgeInsets.zero,
             textStyle: widget.codeStyle,
+            isDark: widget.isDark,
+            plainText: renderPlainPreview,
           ),
         ),
         if (isCollapsible)
@@ -1018,7 +1186,7 @@ class ChartJsDiagram extends StatefulWidget {
 }
 
 class _ChartJsDiagramState extends State<ChartJsDiagram> {
-  WebViewControllerPlus? _controller;
+  InAppWebViewController? _controller;
   String? _script;
   double _height = _chartPreviewMinHeight;
   bool _isLoading = true;
@@ -1030,10 +1198,7 @@ class _ChartJsDiagramState extends State<ChartJsDiagram> {
         Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
       };
 
-  @override
-  void initState() {
-    super.initState();
-  }
+  bool get _isRunningInTestEnvironment => _isRunningInWidgetTest();
 
   @override
   void didUpdateWidget(ChartJsDiagram oldWidget) {
@@ -1047,33 +1212,59 @@ class _ChartJsDiagramState extends State<ChartJsDiagram> {
         oldWidget.colorScheme != widget.colorScheme ||
         oldWidget.tokens != widget.tokens;
     if (contentChanged || themeChanged) {
-      if (_controller != null && _script != null) {
-        _loadHtml();
-      } else {
-        _loadScheduled = false;
-        _retryLoadScheduled = false;
-      }
+      unawaited(_loadHtml());
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_controller == null) {
+    if (_isRunningInTestEnvironment) {
+      return const SizedBox(
+        height: _chartPreviewMinHeight,
+        width: double.infinity,
+      );
+    }
+
+    if (_script == null) {
       _scheduleInitialization(context);
       return const SizedBox(
         height: _chartPreviewMinHeight,
         child: Center(child: CircularProgressIndicator()),
       );
     }
+
     return SizedBox(
       height: _height,
       width: double.infinity,
       child: Stack(
         children: [
           Positioned.fill(
-            child: WebViewWidget(
-              controller: _controller!,
+            child: InAppWebView(
               gestureRecognizers: _gestureRecognizers,
+              initialSettings: InAppWebViewSettings(
+                javaScriptEnabled: true,
+                transparentBackground: true,
+              ),
+              onWebViewCreated: (controller) {
+                _controller = controller;
+                unawaited(_loadHtml());
+              },
+              onLoadStop: (controller, _) async {
+                if (!mounted || controller != _controller) {
+                  return;
+                }
+                await _scheduleHeightUpdates(_loadRequestId);
+              },
+              onReceivedError: (controller, request, error) {
+                if (!mounted ||
+                    controller != _controller ||
+                    !(request.isForMainFrame ?? false)) {
+                  return;
+                }
+                setState(() {
+                  _isLoading = false;
+                });
+              },
             ),
           ),
           if (_isLoading)
@@ -1089,7 +1280,10 @@ class _ChartJsDiagramState extends State<ChartJsDiagram> {
   }
 
   void _scheduleInitialization(BuildContext context) {
-    if (_loadScheduled || _controller != null || !ChartJsDiagram.isSupported) {
+    if (_isRunningInTestEnvironment ||
+        _loadScheduled ||
+        _script != null ||
+        !ChartJsDiagram.isSupported) {
       return;
     }
 
@@ -1103,7 +1297,7 @@ class _ChartJsDiagramState extends State<ChartJsDiagram> {
           return;
         }
         _retryLoadScheduled = false;
-        if (_controller == null && !_loadScheduled) {
+        if (_script == null && !_loadScheduled) {
           setState(() {});
         }
       });
@@ -1121,7 +1315,9 @@ class _ChartJsDiagramState extends State<ChartJsDiagram> {
   }
 
   Future<void> _initializeController() async {
-    if (!ChartJsDiagram.isSupported || _controller != null) {
+    if (_isRunningInTestEnvironment ||
+        !ChartJsDiagram.isSupported ||
+        _script != null) {
       _loadScheduled = false;
       return;
     }
@@ -1131,36 +1327,46 @@ class _ChartJsDiagramState extends State<ChartJsDiagram> {
       if (!mounted) {
         return;
       }
-      _script = value;
-      _controller = WebViewControllerPlus()
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(Colors.transparent)
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onPageFinished: (_) {
-              _scheduleHeightUpdates(_loadRequestId);
-            },
-          ),
-        );
-      _loadHtml();
-      setState(() {});
+      setState(() {
+        _script = value;
+      });
     } finally {
       _loadScheduled = false;
     }
   }
 
-  void _loadHtml() {
-    if (_controller == null || _script == null) {
+  Future<void> _loadHtml() async {
+    final controller = _controller;
+    final script = _script;
+    if (controller == null || script == null) {
       return;
     }
-    ++_loadRequestId;
+    final requestId = ++_loadRequestId;
     if (mounted) {
       setState(() {
         _height = _chartPreviewMinHeight;
         _isLoading = true;
       });
     }
-    _controller!.loadHtmlString(_buildHtml(widget.htmlContent, _script!));
+    final baseUrl = WebUri('https://chart-preview.conduit.local/');
+    try {
+      await controller.loadData(
+        data: _buildHtml(widget.htmlContent, script),
+        baseUrl: baseUrl,
+        historyUrl: baseUrl,
+      );
+      if (!mounted || controller != _controller || requestId != _loadRequestId) {
+        return;
+      }
+      await _scheduleHeightUpdates(requestId);
+    } catch (_) {
+      if (!mounted || controller != _controller) {
+        return;
+      }
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _scheduleHeightUpdates(int requestId) async {
@@ -1445,7 +1651,7 @@ class MermaidDiagram extends StatefulWidget {
 }
 
 class _MermaidDiagramState extends State<MermaidDiagram> {
-  WebViewControllerPlus? _controller;
+  InAppWebViewController? _controller;
   String? _script;
   double _height = _mermaidPreviewMinHeight;
   bool _isLoading = true;
@@ -1457,10 +1663,7 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
         Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
       };
 
-  @override
-  void initState() {
-    super.initState();
-  }
+  bool get _isRunningInTestEnvironment => _isRunningInWidgetTest();
 
   @override
   void didUpdateWidget(MermaidDiagram oldWidget) {
@@ -1474,33 +1677,59 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
         oldWidget.colorScheme != widget.colorScheme ||
         oldWidget.tokens != widget.tokens;
     if (codeChanged || themeChanged) {
-      if (_controller != null && _script != null) {
-        _loadHtml();
-      } else {
-        _loadScheduled = false;
-        _retryLoadScheduled = false;
-      }
+      unawaited(_loadHtml());
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_controller == null) {
+    if (_isRunningInTestEnvironment) {
+      return const SizedBox(
+        height: _mermaidPreviewMinHeight,
+        width: double.infinity,
+      );
+    }
+
+    if (_script == null) {
       _scheduleInitialization(context);
       return const SizedBox(
         height: _mermaidPreviewMinHeight,
         child: Center(child: CircularProgressIndicator()),
       );
     }
+
     return SizedBox(
       height: _height,
       width: double.infinity,
       child: Stack(
         children: [
           Positioned.fill(
-            child: WebViewWidget(
-              controller: _controller!,
+            child: InAppWebView(
               gestureRecognizers: _gestureRecognizers,
+              initialSettings: InAppWebViewSettings(
+                javaScriptEnabled: true,
+                transparentBackground: true,
+              ),
+              onWebViewCreated: (controller) {
+                _controller = controller;
+                unawaited(_loadHtml());
+              },
+              onLoadStop: (controller, _) async {
+                if (!mounted || controller != _controller) {
+                  return;
+                }
+                await _scheduleHeightUpdates(_loadRequestId);
+              },
+              onReceivedError: (controller, request, error) {
+                if (!mounted ||
+                    controller != _controller ||
+                    !(request.isForMainFrame ?? false)) {
+                  return;
+                }
+                setState(() {
+                  _isLoading = false;
+                });
+              },
             ),
           ),
           if (_isLoading)
@@ -1516,7 +1745,10 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
   }
 
   void _scheduleInitialization(BuildContext context) {
-    if (_loadScheduled || _controller != null || !MermaidDiagram.isSupported) {
+    if (_isRunningInTestEnvironment ||
+        _loadScheduled ||
+        _script != null ||
+        !MermaidDiagram.isSupported) {
       return;
     }
 
@@ -1530,7 +1762,7 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
           return;
         }
         _retryLoadScheduled = false;
-        if (_controller == null && !_loadScheduled) {
+        if (_script == null && !_loadScheduled) {
           setState(() {});
         }
       });
@@ -1548,7 +1780,9 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
   }
 
   Future<void> _initializeController() async {
-    if (!MermaidDiagram.isSupported || _controller != null) {
+    if (_isRunningInTestEnvironment ||
+        !MermaidDiagram.isSupported ||
+        _script != null) {
       _loadScheduled = false;
       return;
     }
@@ -1558,38 +1792,46 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
       if (!mounted) {
         return;
       }
-      _script = value;
-      _controller = WebViewControllerPlus()
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(Colors.transparent)
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onPageFinished: (_) {
-              _scheduleHeightUpdates(_loadRequestId);
-            },
-          ),
-        );
-      _loadHtml();
-      setState(() {});
+      setState(() {
+        _script = value;
+      });
     } finally {
       _loadScheduled = false;
     }
   }
 
-  void _loadHtml() {
-    if (_controller == null || _script == null) {
+  Future<void> _loadHtml() async {
+    final controller = _controller;
+    final script = _script;
+    if (controller == null || script == null) {
       return;
     }
-    ++_loadRequestId;
+    final requestId = ++_loadRequestId;
     if (mounted) {
       setState(() {
         _height = _mermaidPreviewMinHeight;
         _isLoading = true;
       });
     }
-    _controller!.loadHtmlString(
-      _buildHtml(_sanitizeMermaidCode(widget.code), _script!),
-    );
+    final baseUrl = WebUri('https://mermaid-preview.conduit.local/');
+    try {
+      await controller.loadData(
+        data: _buildHtml(_sanitizeMermaidCode(widget.code), script),
+        baseUrl: baseUrl,
+        historyUrl: baseUrl,
+      );
+      if (!mounted || controller != _controller || requestId != _loadRequestId) {
+        return;
+      }
+      await _scheduleHeightUpdates(requestId);
+    } catch (_) {
+      if (!mounted || controller != _controller) {
+        return;
+      }
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _scheduleHeightUpdates(int requestId) async {

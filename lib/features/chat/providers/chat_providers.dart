@@ -14,12 +14,14 @@ import '../../../core/models/model.dart';
 import '../../../core/models/conversation.dart';
 import '../../../core/providers/app_providers.dart';
 
+import '../../../core/services/location_service.dart';
 import '../../../core/services/settings_service.dart';
 import '../../../core/services/socket_service.dart';
 import '../../../core/services/streaming_response_controller.dart';
 import '../../../core/services/performance_profiler.dart';
 import '../../../core/services/worker_manager.dart';
 import '../../../core/utils/debug_logger.dart';
+import '../../../core/utils/json_normalization.dart';
 import '../../../core/utils/message_tree_utils.dart' as message_tree;
 import '../../../core/utils/tool_calls_parser.dart';
 import '../models/chat_context_attachment.dart';
@@ -37,6 +39,123 @@ final chatMessagesProvider =
       ChatMessagesNotifier.new,
     );
 
+@immutable
+class _ChatMessageListStructure {
+  const _ChatMessageListStructure({required this.ids, required this.signature});
+
+  factory _ChatMessageListStructure.fromMessages(List<ChatMessage> messages) {
+    final ids = List<String>.unmodifiable(
+      messages.map((message) => message.id).toList(growable: false),
+    );
+    final buffer = StringBuffer();
+    for (final message in messages) {
+      buffer
+        ..write(message.id)
+        ..write('\u0000')
+        ..write(message.role)
+        ..write('\u0000')
+        ..write(message.model ?? '')
+        ..write('\u0000')
+        ..write(message.isStreaming ? 1 : 0)
+        ..write('\u0000')
+        ..write(message.isStreaming ? -1 : message.content.trim().length)
+        ..write('\u0000')
+        ..write(message.attachmentIds?.length ?? 0)
+        ..write('\u0000')
+        ..write(message.files?.length ?? 0)
+        ..write('\u0000')
+        ..write(message.embeds?.length ?? 0)
+        ..write('\u0000')
+        ..write(message.output?.length ?? 0)
+        ..write('\u0000')
+        ..write(message.statusHistory.length)
+        ..write('\u0000')
+        ..write(message.followUps.length)
+        ..write('\u0000')
+        ..write(message.sources.length)
+        ..write('\u0000')
+        ..write(message.codeExecutions.length)
+        ..write('\u0000')
+        ..write(message.error == null ? 0 : 1)
+        ..write('\u0000')
+        ..write(message.metadata?['archivedVariant'] == true ? 1 : 0)
+        ..write('\u0000')
+        ..write(message.versions.length);
+      for (final version in message.versions) {
+        buffer
+          ..write('\u0000')
+          ..write(version.model ?? '');
+      }
+      buffer.writeln();
+    }
+    return _ChatMessageListStructure(ids: ids, signature: buffer.toString());
+  }
+
+  final List<String> ids;
+  final String signature;
+
+  bool get hasMessages => ids.isNotEmpty;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is _ChatMessageListStructure && other.signature == signature;
+
+  @override
+  int get hashCode => signature.hashCode;
+}
+
+final _chatMessageListStructureProvider = Provider<_ChatMessageListStructure>((
+  ref,
+) {
+  return ref.watch(
+    chatMessagesProvider.select(_ChatMessageListStructure.fromMessages),
+  );
+});
+
+final _chatMessageMapProvider = Provider<Map<String, ChatMessage>>((ref) {
+  return ref.watch(
+    chatMessagesProvider.select((messages) {
+      final byId = <String, ChatMessage>{};
+      for (final message in messages) {
+        byId[message.id] = message;
+      }
+      return Map<String, ChatMessage>.unmodifiable(byId);
+    }),
+  );
+});
+
+final chatMessageStructureSignatureProvider = Provider<String>((ref) {
+  return ref.watch(
+    _chatMessageListStructureProvider.select(
+      (structure) => structure.signature,
+    ),
+  );
+});
+
+final chatMessageIdsProvider = Provider<List<String>>((ref) {
+  return ref.watch(
+    _chatMessageListStructureProvider.select((structure) => structure.ids),
+  );
+});
+
+final hasChatMessagesProvider = Provider<bool>((ref) {
+  return ref.watch(
+    _chatMessageListStructureProvider.select(
+      (structure) => structure.hasMessages,
+    ),
+  );
+});
+
+final chatMessageByIdProvider = Provider.autoDispose
+    .family<ChatMessage?, String>((ref, messageId) {
+      return ref.watch(
+        _chatMessageMapProvider.select(
+          (messagesById) => messagesById[messageId],
+        ),
+      );
+    });
+
 /// Whether chat is currently streaming a response.
 /// Used by router to avoid showing connection issues during active streaming.
 /// Uses select() to only rebuild when the streaming state actually changes,
@@ -48,6 +167,19 @@ final isChatStreamingProvider = Provider<bool>((ref) {
       final last = messages.last;
       return last.role == 'assistant' && last.isStreaming;
     }),
+  );
+});
+
+final shouldProtectLocalStreamingStateProvider = Provider<bool>((ref) {
+  final isStreaming = ref.watch(isChatStreamingProvider);
+  if (isStreaming) {
+    return true;
+  }
+
+  return ref.watch(
+    streamingContentProvider.select(
+      (content) => content != null && content.isNotEmpty,
+    ),
   );
 });
 
@@ -64,6 +196,28 @@ String? _connectedSocketSessionId(SocketService? socketService) {
   return sessionId;
 }
 
+Future<String?> _ensureConnectedSocketSessionId(
+  SocketService? socketService, {
+  Duration timeout = const Duration(milliseconds: 1200),
+}) async {
+  if (socketService == null) {
+    return null;
+  }
+
+  if (!socketService.isConnected) {
+    try {
+      await socketService.ensureConnected(timeout: timeout);
+    } catch (e) {
+      DebugLogger.log(
+        'Socket reconnect before chat send failed: $e',
+        scope: 'chat/providers',
+      );
+    }
+  }
+
+  return _connectedSocketSessionId(socketService);
+}
+
 /// The content of the currently streaming assistant message.
 /// Only the actively streaming message widget should watch this.
 /// This avoids rebuilding all visible messages on every chunk.
@@ -74,6 +228,54 @@ class StreamingContent extends _$StreamingContent {
 
   // ignore: use_setters_to_change_properties
   void set(String? value) => state = value;
+}
+
+@visibleForTesting
+Duration debugStreamingContentUpdateIntervalForBuffer(
+  int length, {
+  bool isWeb = false,
+  TargetPlatform platform = TargetPlatform.android,
+}) {
+  return _streamingContentUpdateIntervalForTarget(
+    length,
+    isMobileTarget:
+        !isWeb &&
+        (platform == TargetPlatform.android || platform == TargetPlatform.iOS),
+  );
+}
+
+Duration _streamingContentUpdateIntervalForTarget(
+  int length, {
+  required bool isMobileTarget,
+}) {
+  if (length >= 16000) {
+    return isMobileTarget
+        ? const Duration(milliseconds: 750)
+        : const Duration(milliseconds: 420);
+  }
+  if (length >= 8000) {
+    return isMobileTarget
+        ? const Duration(milliseconds: 500)
+        : const Duration(milliseconds: 280);
+  }
+  if (length >= 4000) {
+    return isMobileTarget
+        ? const Duration(milliseconds: 300)
+        : const Duration(milliseconds: 180);
+  }
+  if (length >= 2000) {
+    return isMobileTarget
+        ? const Duration(milliseconds: 220)
+        : const Duration(milliseconds: 140);
+  }
+  if (length >= 1000) {
+    return isMobileTarget
+        ? const Duration(milliseconds: 160)
+        : const Duration(milliseconds: 120);
+  }
+  return isMobileTarget
+      ? const Duration(milliseconds: 100)
+      : const Duration(milliseconds: 80);
 }
 
 // Loading state for conversation (used to show chat skeletons during fetch)
@@ -94,6 +296,49 @@ class PrefilledInputText extends _$PrefilledInputText {
   void set(String? value) => state = value;
 
   void clear() => state = null;
+}
+
+const String chatComposerTextInsertionTargetId = 'chat-composer';
+
+class ComposerTextInsertion {
+  const ComposerTextInsertion({
+    required this.id,
+    required this.targetId,
+    required this.text,
+  });
+
+  final int id;
+  final String targetId;
+  final String text;
+}
+
+final composerTextInsertionProvider =
+    NotifierProvider<ComposerTextInsertionNotifier, ComposerTextInsertion?>(
+      ComposerTextInsertionNotifier.new,
+    );
+
+class ComposerTextInsertionNotifier extends Notifier<ComposerTextInsertion?> {
+  int _nextId = 0;
+
+  @override
+  ComposerTextInsertion? build() => null;
+
+  void insert({required String targetId, required String text}) {
+    if (text.trim().isEmpty) {
+      return;
+    }
+    state = ComposerTextInsertion(
+      id: ++_nextId,
+      targetId: targetId,
+      text: text,
+    );
+  }
+
+  void clear(int id) {
+    if (state?.id == id) {
+      state = null;
+    }
+  }
 }
 
 // Trigger to request focus on the chat input (increment to signal)
@@ -146,6 +391,8 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
   Timer? _streamingContentTimer;
   bool _streamingContentFrameScheduled = false;
   DateTime? _lastStreamingContentFlushAt;
+  int _streamingBufferVersion = 0;
+  int _lastFlushedStreamingBufferVersion = -1;
   Timer? _taskStatusTimer;
   Timer? _passiveConversationRefreshTimer;
   bool _taskStatusCheckInFlight = false;
@@ -246,7 +493,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     if (_hasStreamingAssistant ||
         (serverMessages.lastOrNull?.role == 'assistant' &&
             serverMessages.lastOrNull?.isStreaming == true)) {
-      return false;
+      return _messagesDifferByStreamingSignatures(serverMessages, state);
     }
     return !listEquals(serverMessages, state);
   }
@@ -271,6 +518,199 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     return false;
   }
 
+  bool _messagesDifferByStreamingSignatures(
+    List<ChatMessage> left,
+    List<ChatMessage> right,
+  ) {
+    if (left.length != right.length) {
+      return true;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      if (_streamingMessageSignature(left[index]) !=
+          _streamingMessageSignature(right[index])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  int _streamingMessageSignature(ChatMessage message) {
+    return Object.hash(
+      message.id,
+      message.role,
+      message.model,
+      message.isStreaming,
+      message.content,
+      message.error?.content,
+      _statusHistoryStreamingSignature(message.statusHistory),
+      _stringListStreamingSignature(message.followUps),
+      _stringListStreamingSignature(message.attachmentIds ?? const <String>[]),
+      _dynamicMapListStreamingSignature(message.files),
+      _dynamicMapListStreamingSignature(message.output),
+      _dynamicMapListStreamingSignature(message.embeds),
+      _sourceStreamingSignature(message.sources),
+      _codeExecutionStreamingSignature(message.codeExecutions),
+      _versionStreamingSignature(message.versions),
+      _mapStreamingSignature(message.metadata),
+      _mapStreamingSignature(message.usage),
+    );
+  }
+
+  int _statusHistoryStreamingSignature(List<ChatStatusUpdate> statuses) {
+    return Object.hashAll(
+      statuses.map(
+        (status) => Object.hash(
+          status.action,
+          status.description,
+          status.done,
+          status.hidden,
+          status.count,
+          status.query,
+          Object.hashAll(status.queries),
+          Object.hashAll(status.urls),
+          _statusItemsStreamingSignature(status.items),
+          status.occurredAt?.millisecondsSinceEpoch,
+        ),
+      ),
+    );
+  }
+
+  int _stringListStreamingSignature(List<String> values) =>
+      Object.hashAll(values);
+
+  int _sourceStreamingSignature(List<ChatSourceReference> sources) {
+    return Object.hashAll(
+      sources.map(
+        (source) => Object.hash(
+          source.id,
+          source.title,
+          source.url,
+          source.snippet,
+          source.type,
+          _mapStreamingSignature(source.metadata),
+        ),
+      ),
+    );
+  }
+
+  int _codeExecutionStreamingSignature(List<ChatCodeExecution> executions) {
+    return Object.hashAll(
+      executions.map(
+        (execution) => Object.hash(
+          execution.id,
+          execution.name,
+          execution.language,
+          execution.code,
+          execution.result?.output,
+          execution.result?.error,
+          _executionFilesStreamingSignature(
+            execution.result?.files ?? const <ChatExecutionFile>[],
+          ),
+          _mapStreamingSignature(execution.result?.metadata),
+          _mapStreamingSignature(execution.metadata),
+        ),
+      ),
+    );
+  }
+
+  int _versionStreamingSignature(List<ChatMessageVersion> versions) {
+    return Object.hashAll(
+      versions.map(
+        (version) => Object.hash(
+          version.id,
+          version.model,
+          version.content,
+          version.error?.content,
+          _dynamicMapListStreamingSignature(version.files),
+          _dynamicMapListStreamingSignature(version.output),
+          _dynamicMapListStreamingSignature(version.embeds),
+          _sourceStreamingSignature(version.sources),
+          _stringListStreamingSignature(version.followUps),
+          _codeExecutionStreamingSignature(version.codeExecutions),
+          _mapStreamingSignature(version.usage),
+        ),
+      ),
+    );
+  }
+
+  int _statusItemsStreamingSignature(List<ChatStatusItem> items) {
+    return Object.hashAll(
+      items.map(
+        (item) => Object.hash(
+          item.title,
+          item.link,
+          item.snippet,
+          _mapStreamingSignature(item.metadata),
+        ),
+      ),
+    );
+  }
+
+  int _executionFilesStreamingSignature(List<ChatExecutionFile> files) {
+    return Object.hashAll(
+      files.map(
+        (file) => Object.hash(
+          file.name,
+          file.url,
+          _mapStreamingSignature(file.metadata),
+        ),
+      ),
+    );
+  }
+
+  int _dynamicMapListStreamingSignature(List<Map<String, dynamic>>? values) {
+    if (values == null || values.isEmpty) {
+      return 0;
+    }
+    return Object.hash(
+      values.length,
+      Object.hashAll(values.map(_mapStreamingSignature)),
+    );
+  }
+
+  int _mapStreamingSignature(Map<String, dynamic>? value) {
+    if (value == null || value.isEmpty) {
+      return 0;
+    }
+    final entries = value.entries.toList(growable: false)
+      ..sort((left, right) => left.key.compareTo(right.key));
+    return Object.hashAll(
+      entries.map((entry) {
+        return Object.hash(
+          entry.key,
+          _dynamicValueStreamingSignature(entry.value),
+        );
+      }),
+    );
+  }
+
+  int _dynamicValueStreamingSignature(Object? value) {
+    if (value == null) {
+      return 0;
+    }
+    if (value is String || value is num || value is bool) {
+      return Object.hash(value.runtimeType, value);
+    }
+    if (value is DateTime) {
+      return Object.hash(DateTime, value.microsecondsSinceEpoch);
+    }
+    if (value is Map) {
+      final normalized = <String, dynamic>{
+        for (final entry in value.entries)
+          entry.key?.toString() ?? '': entry.value,
+      };
+      return _mapStreamingSignature(normalized);
+    }
+    if (value is Iterable) {
+      final entries = value.toList(growable: false);
+      return Object.hash(
+        entries.length,
+        Object.hashAll(entries.map(_dynamicValueStreamingSignature)),
+      );
+    }
+    return Object.hash(value.runtimeType, value.toString());
+  }
+
   void _adoptServerMessages(
     List<ChatMessage> serverMessages, {
     required String source,
@@ -290,7 +730,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
 
     final needsCleanup = _shouldCleanupStreamingFromServer(serverMessages);
 
-    _streamingBuffer = null;
+    _clearStreamingBuffer();
     _streamingSyncTimer?.cancel();
     _streamingSyncTimer = null;
     _streamingContentTimer?.cancel();
@@ -523,6 +963,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     _streamingContentTimer = null;
     _streamingContentFrameScheduled = false;
     _lastStreamingContentFlushAt = null;
+    _lastFlushedStreamingBufferVersion = -1;
     try {
       ref.read(streamingContentProvider.notifier).set(null);
     } on Object catch (_) {
@@ -645,6 +1086,16 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     _streamingProfileBytes = 0;
   }
 
+  void _markStreamingBufferChanged() {
+    _streamingBufferVersion += 1;
+  }
+
+  void _clearStreamingBuffer() {
+    _streamingBuffer = null;
+    _streamingBufferVersion = 0;
+    _lastFlushedStreamingBufferVersion = -1;
+  }
+
   void _cancelMessageStream({bool clearStreamingContent = true}) {
     final controller = _messageStream;
     _messageStream = null;
@@ -653,7 +1104,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
       unawaited(controller.cancel());
     }
     cancelSocketSubscriptions();
-    _streamingBuffer = null;
+    _clearStreamingBuffer();
     _streamingSyncTimer?.cancel();
     _streamingSyncTimer = null;
     _streamingContentTimer?.cancel();
@@ -757,7 +1208,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     _messageStream = null;
     _activeStreamingTransportMessageId = null;
     cancelSocketSubscriptions();
-    _streamingBuffer = null;
+    _clearStreamingBuffer();
     _streamingSyncTimer?.cancel();
     _streamingSyncTimer = null;
     _streamingContentTimer?.cancel();
@@ -858,6 +1309,8 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
             // Case 2: Find the local streaming message in server messages by ID
             // This handles cases where last messages differ
             if (localLast.role == 'assistant' && localLast.isStreaming) {
+              final comparisonSnapshot =
+                  _readStreamingMessageComparisonSnapshot(localLast.id);
               final serverVersion = serverMessages
                   .where((m) => m.id == localLast.id)
                   .firstOrNull;
@@ -875,7 +1328,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
                     'Server sync: adopting server state '
                     '(serverHasContent=$serverHasContent, '
                     'serverLen=${serverVersion.content.length}, '
-                    'localLen=${localLast.content.length})',
+                    'localLen=${comparisonSnapshot.comparisonContent.length})',
                     scope: 'chat/providers',
                   );
                   state = serverMessages;
@@ -952,6 +1405,16 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
   // Public wrapper to cancel the currently active stream (used by Stop)
   void cancelActiveMessageStream() {
     _cancelMessageStream();
+  }
+
+  /// Cancels the active stream after folding any buffered content into state.
+  ///
+  /// This is used by explicit stop flows where the user expects the partial
+  /// assistant response to remain visible after streaming ends.
+  void cancelActiveMessageStreamPreservingContent() {
+    _flushStreamingContentUpdate();
+    _syncStreamingBufferToState();
+    _cancelMessageStream(clearStreamingContent: false);
   }
 
   Future<void> _updateModelForConversation(Conversation conversation) async {
@@ -1077,7 +1540,13 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
 
     final lastMessage = state.last;
     if (lastMessage.role != 'assistant') return;
-    final updated = updater(lastMessage);
+    final bufferedLastMessage = _messageWithBufferedStreamingContent(
+      lastMessage,
+    );
+    final updated = updater(bufferedLastMessage);
+    if (identical(updated, lastMessage)) {
+      return;
+    }
     state = [...state.sublist(0, state.length - 1), updated];
     if (updated.isStreaming) {
       _syncStreamingProfileWithState();
@@ -1097,13 +1566,25 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     final index = state.indexWhere((m) => m.id == messageId);
     if (index == -1) return;
     final original = state[index];
-    final updated = updater(original);
+    final bufferedOriginal = _messageWithBufferedStreamingContent(original);
+    final updated = updater(bufferedOriginal);
     if (identical(updated, original)) {
       return;
     }
     final next = [...state];
     next[index] = updated;
     state = next;
+  }
+
+  Map<String, dynamic>? _metadataWithoutResponseDone(
+    Map<String, dynamic>? metadata,
+  ) {
+    if (metadata == null || metadata.isEmpty) {
+      return metadata;
+    }
+    final next = Map<String, dynamic>.from(metadata);
+    next.remove('responseDone');
+    return next.isEmpty ? null : next;
   }
 
   // Archive the last assistant message's current content as a previous version
@@ -1118,6 +1599,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     final updated = last.copyWith(
       // Start a fresh stream for the new generation
       isStreaming: true,
+      metadata: _metadataWithoutResponseDone(last.metadata),
       content: '',
       files: null,
       followUps: const [],
@@ -1142,6 +1624,9 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
       final history = [...current.statusHistory];
       if (history.isNotEmpty) {
         final last = history.last;
+        if (_statusUpdatesEquivalent(last, withTimestamp)) {
+          return current;
+        }
         final sameAction =
             last.action != null && last.action == withTimestamp.action;
         final sameDescription =
@@ -1160,8 +1645,26 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
 
   void setFollowUps(String messageId, List<String> followUps) {
     updateMessageById(messageId, (current) {
+      if (listEquals(current.followUps, followUps)) {
+        return current;
+      }
       return current.copyWith(followUps: List<String>.from(followUps));
     });
+  }
+
+  bool _statusUpdatesEquivalent(
+    ChatStatusUpdate previous,
+    ChatStatusUpdate next,
+  ) {
+    return previous.action == next.action &&
+        previous.description == next.description &&
+        previous.done == next.done &&
+        previous.hidden == next.hidden &&
+        previous.count == next.count &&
+        previous.query == next.query &&
+        listEquals(previous.queries, next.queries) &&
+        listEquals(previous.urls, next.urls) &&
+        listEquals(previous.items, next.items);
   }
 
   void upsertCodeExecution(String messageId, ChatCodeExecution execution) {
@@ -1198,6 +1701,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
 
   void appendToLastMessage(String content) {
     if (state.isEmpty) return;
+    if (content.isEmpty) return;
 
     final lastMessage = state.last;
     if (lastMessage.role != 'assistant') return;
@@ -1213,6 +1717,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     // Initialize buffer with existing content on first chunk
     _streamingBuffer ??= StringBuffer(lastMessage.content);
     _streamingBuffer!.write(content);
+    _markStreamingBufferChanged();
     _recordStreamingChunk(content);
 
     _scheduleStreamingContentUpdate();
@@ -1254,24 +1759,10 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
         !kIsWeb &&
         (defaultTargetPlatform == TargetPlatform.android ||
             defaultTargetPlatform == TargetPlatform.iOS);
-    if (length >= 16000) {
-      return isMobileTarget
-          ? const Duration(milliseconds: 220)
-          : const Duration(milliseconds: 180);
-    }
-    if (length >= 8000) {
-      return isMobileTarget
-          ? const Duration(milliseconds: 180)
-          : const Duration(milliseconds: 140);
-    }
-    if (length >= 4000) {
-      return isMobileTarget
-          ? const Duration(milliseconds: 140)
-          : const Duration(milliseconds: 110);
-    }
-    return isMobileTarget
-        ? const Duration(milliseconds: 100)
-        : const Duration(milliseconds: 80);
+    return _streamingContentUpdateIntervalForTarget(
+      length,
+      isMobileTarget: isMobileTarget,
+    );
   }
 
   void _scheduleStreamingContentFrame() {
@@ -1297,12 +1788,66 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     }
     final buffer = _streamingBuffer;
     if (buffer == null) return;
+    if (_streamingBufferVersion == _lastFlushedStreamingBufferVersion) {
+      return;
+    }
     final nextContent = buffer.toString();
     if (ref.read(streamingContentProvider) == nextContent) {
+      _lastFlushedStreamingBufferVersion = _streamingBufferVersion;
       return;
     }
     _lastStreamingContentFlushAt = DateTime.now();
+    _lastFlushedStreamingBufferVersion = _streamingBufferVersion;
     ref.read(streamingContentProvider.notifier).set(nextContent);
+  }
+
+  ChatMessage _messageWithBufferedStreamingContent(ChatMessage message) {
+    final buffer = _streamingBuffer;
+    if (buffer == null ||
+        state.isEmpty ||
+        message.role != 'assistant' ||
+        !message.isStreaming) {
+      return message;
+    }
+
+    final lastMessage = state.last;
+    if (lastMessage.id != message.id ||
+        lastMessage.role != 'assistant' ||
+        !lastMessage.isStreaming) {
+      return message;
+    }
+
+    final accumulated = buffer.toString();
+    if (accumulated == message.content) {
+      return message;
+    }
+
+    return message.copyWith(content: accumulated);
+  }
+
+  ({ChatMessage? message, String comparisonContent})
+  _readStreamingMessageComparisonSnapshot(String messageId) {
+    _streamingContentTimer?.cancel();
+    _streamingContentTimer = null;
+    _flushStreamingContentUpdate();
+    _syncStreamingBufferToState();
+
+    final refreshedMessage = state
+        .where((message) => message.id == messageId)
+        .firstOrNull;
+    if (refreshedMessage == null) {
+      return (message: null, comparisonContent: '');
+    }
+
+    var comparisonContent = refreshedMessage.content;
+    final visibleContent = ref.read(streamingContentProvider);
+    if (visibleContent != null &&
+        visibleContent.isNotEmpty &&
+        visibleContent.length >= comparisonContent.length) {
+      comparisonContent = visibleContent;
+    }
+
+    return (message: refreshedMessage, comparisonContent: comparisonContent);
   }
 
   /// Syncs the accumulated streaming buffer content into
@@ -1315,14 +1860,12 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     if (lastMessage.role != 'assistant' || !lastMessage.isStreaming) {
       return;
     }
+    final bufferedLastMessage = _messageWithBufferedStreamingContent(
+      lastMessage,
+    );
+    if (identical(bufferedLastMessage, lastMessage)) return;
 
-    final accumulated = _streamingBuffer!.toString();
-    if (accumulated == lastMessage.content) return;
-
-    state = [
-      ...state.sublist(0, state.length - 1),
-      lastMessage.copyWith(content: accumulated),
-    ];
+    state = [...state.sublist(0, state.length - 1), bufferedLastMessage];
     _syncStreamingProfileWithState();
   }
 
@@ -1348,7 +1891,11 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
     if (lastMessage.role != 'assistant' || !lastMessage.isStreaming) return;
 
     final sanitized = _stripStreamingPlaceholders(content);
+    if (_streamingBuffer?.toString() == sanitized) {
+      return;
+    }
     _streamingBuffer = StringBuffer(sanitized);
+    _markStreamingBufferChanged();
     _scheduleStreamingContentUpdate();
     _touchStreamingActivity();
     _syncStreamingProfileWithBufferedContent();
@@ -1370,7 +1917,11 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
       _touchStreamingActivity();
       return;
     }
+    if (_streamingBuffer?.toString() == sanitized) {
+      return;
+    }
     _streamingBuffer = StringBuffer(sanitized);
+    _markStreamingBufferChanged();
     _scheduleStreamingContentUpdate();
     _touchStreamingActivity();
     _syncStreamingProfileWithBufferedContent();
@@ -1448,14 +1999,15 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
   }
 
   void _completeStreamingMessage({required bool releaseTransport}) {
-    // Sync final buffer content to state before clearing
     _streamingContentTimer?.cancel();
     _streamingContentTimer = null;
     _flushStreamingContentUpdate();
-    _syncStreamingBufferToState();
-    _streamingBuffer = null;
     _streamingSyncTimer?.cancel();
     _streamingSyncTimer = null;
+    final bufferedLastMessage = state.isEmpty
+        ? null
+        : _messageWithBufferedStreamingContent(state.last);
+    _clearStreamingBuffer();
     _clearStreamingContent();
 
     if (state.isEmpty) {
@@ -1469,7 +2021,7 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
       return;
     }
 
-    final lastMessage = state.last;
+    final lastMessage = bufferedLastMessage ?? state.last;
     if (lastMessage.role != 'assistant' || !lastMessage.isStreaming) {
       _finishStreamingProfile(reason: 'not_streaming', message: lastMessage);
       if (releaseTransport) {
@@ -1507,6 +2059,16 @@ class ChatMessagesNotifier extends Notifier<List<ChatMessage>> {
   void finishStreaming() {
     _completeStreamingMessage(releaseTransport: true);
   }
+}
+
+bool _shouldIncludeConversationHistoryMessage(ChatMessage message) {
+  if (message.role.isEmpty || message.content.isEmpty) {
+    return false;
+  }
+  if (message.role != 'assistant') {
+    return true;
+  }
+  return assistantMessageResponseCompleted(message);
 }
 
 bool _isArchivedAssistantVariant(ChatMessage message) {
@@ -1579,10 +2141,14 @@ Future<String> _preseedAssistantAndPersist(
           last.id == assistantMessageId &&
           last.role == 'assistant' &&
           !last.isStreaming) {
-        (ref.read(chatMessagesProvider.notifier) as ChatMessagesNotifier)
-            .updateLastMessageWithFunction(
-              (ChatMessage m) => m.copyWith(isStreaming: true),
-            );
+        final notifier =
+            ref.read(chatMessagesProvider.notifier) as ChatMessagesNotifier;
+        notifier.updateLastMessageWithFunction(
+          (ChatMessage m) => m.copyWith(
+            isStreaming: true,
+            metadata: notifier._metadataWithoutResponseDone(m.metadata),
+          ),
+        );
       }
     } catch (_) {}
   }
@@ -1732,6 +2298,61 @@ Map<String, dynamic> _buildOpenWebUiPromptVariables({
     '{{CURRENT_TIMEZONE}}': now.timeZoneName,
     '{{USER_LANGUAGE}}': normalizedUserLanguage,
   };
+}
+
+Future<Map<String, dynamic>> _buildOpenWebUiPromptVariablesForRequest(
+  dynamic ref, {
+  required DateTime now,
+  required Map<String, dynamic>? userSettings,
+}) async {
+  String userName = 'User';
+  String userEmail = 'Unknown';
+  String userLanguage = 'en-US';
+  String? userLocation;
+
+  try {
+    final userData = ref.read(currentUserProvider);
+    if (userData is AsyncData) {
+      final user = userData.value;
+      if (user != null) {
+        userName = user.name?.trim().isNotEmpty == true
+            ? user.name!.trim()
+            : user.email;
+        userEmail = user.email;
+      }
+    }
+  } catch (_) {}
+
+  try {
+    final dynamic locale = ref.read(appLocaleProvider);
+    if (locale != null) {
+      userLanguage = locale.toLanguageTag()?.toString() ?? 'en-US';
+    }
+  } catch (_) {}
+
+  try {
+    final locationService = ref.read(locationServiceProvider);
+    final api = ref.read(apiServiceProvider);
+    userLocation = await locationService.resolveLocationForUserSettings(
+      userSettings,
+      api: api,
+    );
+  } catch (error, stackTrace) {
+    DebugLogger.error(
+      'Failed to resolve user location',
+      scope: 'chat/providers',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+
+  return _buildOpenWebUiPromptVariables(
+    now: now,
+    userName: userName,
+    userEmail: userEmail,
+    userLanguage: userLanguage,
+    userLocation: userLocation,
+  );
 }
 
 String? _resolveOpenWebUiParentIdForNewUserMessage(List<ChatMessage> messages) {
@@ -2575,7 +3196,7 @@ Future<void> regenerateMessage(
       if (_isArchivedAssistantVariant(msg)) {
         continue;
       }
-      if (msg.role.isNotEmpty && msg.content.isNotEmpty && !msg.isStreaming) {
+      if (_shouldIncludeConversationHistoryMessage(msg)) {
         final cleaned = ToolCallsParser.sanitizeForApi(msg.content);
 
         // Prefer provided attachments for the last user message; otherwise use message attachments
@@ -2676,9 +3297,12 @@ Future<void> regenerateMessage(
 
     final modelItem = _buildLocalModelItem(selectedModel);
 
-    // Socket is optional — only needed for taskSocket transport.
+    // Reconnect before choosing session_id so eligible sends stay on the
+    // task/socket transport instead of falling back to fragile HTTP streaming.
     final socketService = ref.read(socketServiceProvider);
-    final socketSessionId = _connectedSocketSessionId(socketService);
+    final socketSessionId = await _ensureConnectedSocketSessionId(
+      socketService,
+    );
 
     List<Map<String, dynamic>>? toolServers;
     try {
@@ -2734,48 +3358,10 @@ Future<void> regenerateMessage(
     Map<String, dynamic>? promptVars2;
     Map<String, dynamic>? parentMsgMap;
     try {
-      final now2 = DateTime.now();
-      String userName = 'User';
-      String userEmail = 'Unknown';
-      String userLanguage = 'en-US';
-      String? userLocation;
-
-      try {
-        final userData = ref.read(currentUserProvider);
-        if (userData is AsyncData) {
-          final user = userData.value;
-          if (user != null) {
-            userName = user.name?.trim().isNotEmpty == true
-                ? user.name!.trim()
-                : user.email;
-            userEmail = user.email;
-          }
-        }
-      } catch (_) {}
-
-      try {
-        final dynamic locale = ref.read(appLocaleProvider);
-        if (locale != null) {
-          userLanguage = locale.toLanguageTag()?.toString() ?? 'en-US';
-        }
-      } catch (_) {}
-
-      try {
-        final uiSettings = userSettingsData?['ui'];
-        if (uiSettings is Map) {
-          final rawLocation = uiSettings['userLocation'];
-          if (rawLocation is String && rawLocation.trim().isNotEmpty) {
-            userLocation = rawLocation.trim();
-          }
-        }
-      } catch (_) {}
-
-      promptVars2 = _buildOpenWebUiPromptVariables(
-        now: now2,
-        userName: userName,
-        userEmail: userEmail,
-        userLanguage: userLanguage,
-        userLocation: userLocation,
+      promptVars2 = await _buildOpenWebUiPromptVariablesForRequest(
+        ref,
+        now: DateTime.now(),
+        userSettings: userSettingsData,
       );
     } catch (_) {}
 
@@ -3220,9 +3806,9 @@ Future<void> _sendMessageInternal(
       <Map<String, dynamic>>[];
 
   for (final msg in messages) {
-    // Skip only empty assistant message placeholders that are currently streaming
-    // Include completed messages (both user and assistant) for conversation history
-    if (msg.role.isNotEmpty && msg.content.isNotEmpty && !msg.isStreaming) {
+    // Skip in-progress assistant placeholders, but include assistant replies
+    // that already settled their response content in the responseDone gap.
+    if (_shouldIncludeConversationHistoryMessage(msg)) {
       // Prepare cleaned text content (strip tool details etc.)
       final cleaned = ToolCallsParser.sanitizeForApi(msg.content);
 
@@ -3311,9 +3897,12 @@ Future<void> _sendMessageInternal(
   try {
     final modelItem = _buildLocalModelItem(selectedModel);
 
-    // Socket is optional — only needed for taskSocket transport.
+    // Reconnect before choosing session_id so eligible sends stay on the
+    // task/socket transport instead of falling back to fragile HTTP streaming.
     final socketService = ref.read(socketServiceProvider);
-    final socketSessionId = _connectedSocketSessionId(socketService);
+    final socketSessionId = await _ensureConnectedSocketSessionId(
+      socketService,
+    );
 
     List<Map<String, dynamic>>? toolServers;
     try {
@@ -3373,45 +3962,10 @@ Future<void> _sendMessageInternal(
     Map<String, dynamic>? promptVariables;
     Map<String, dynamic>? userMessageMap;
     try {
-      final now = DateTime.now();
-      String userName = 'User';
-      String userEmail = 'Unknown';
-      String userLanguage = 'en-US';
-      String? userLocation;
-      try {
-        final userData = ref.read(currentUserProvider);
-        if (userData is AsyncData) {
-          final user = userData.value;
-          if (user != null) {
-            userName = user.name?.trim().isNotEmpty == true
-                ? user.name!.trim()
-                : user.email;
-            userEmail = user.email;
-          }
-        }
-      } catch (_) {}
-      try {
-        final dynamic locale = ref.read(appLocaleProvider);
-        if (locale != null) {
-          userLanguage = locale.toLanguageTag()?.toString() ?? 'en-US';
-        }
-      } catch (_) {}
-      try {
-        final uiSettings = userSettingsData?['ui'];
-        if (uiSettings is Map) {
-          final rawLocation = uiSettings['userLocation'];
-          if (rawLocation is String && rawLocation.trim().isNotEmpty) {
-            userLocation = rawLocation.trim();
-          }
-        }
-      } catch (_) {}
-
-      promptVariables = _buildOpenWebUiPromptVariables(
-        now: now,
-        userName: userName,
-        userEmail: userEmail,
-        userLanguage: userLanguage,
-        userLocation: userLocation,
+      promptVariables = await _buildOpenWebUiPromptVariablesForRequest(
+        ref,
+        now: DateTime.now(),
+        userSettings: userSettingsData,
       );
     } catch (e) {
       DebugLogger.error(
@@ -3612,25 +4166,26 @@ Future<void> _saveConversationLocally(dynamic ref) async {
       updatedAt: DateTime.now(),
     );
 
-    // Store conversation locally using the storage service's actual methods
-    final conversationsJson = await storage.getString('conversations') ?? '[]';
-    final List<dynamic> conversations = jsonDecode(conversationsJson);
-
-    // Find and update or add the conversation
-    final existingIndex = conversations.indexWhere(
-      (c) => c['id'] == updatedConversation.id,
+    final conversations = await storage.getLocalConversations();
+    final updatedConversations = conversations.toList(growable: true);
+    final existingIndex = updatedConversations.indexWhere(
+      (conversation) => conversation.id == updatedConversation.id,
     );
     if (existingIndex >= 0) {
-      conversations[existingIndex] = updatedConversation.toJson();
+      updatedConversations[existingIndex] = updatedConversation;
     } else {
-      conversations.add(updatedConversation.toJson());
+      updatedConversations.add(updatedConversation);
     }
 
-    await storage.setString('conversations', jsonEncode(conversations));
+    await storage.saveLocalConversations(updatedConversations);
     ref.read(activeConversationProvider.notifier).set(updatedConversation);
     refreshConversationsCache(ref);
   } catch (e) {
-    // Handle local storage errors silently
+    DebugLogger.error(
+      'Failed to save conversation locally',
+      scope: 'chat/providers',
+      error: e,
+    );
   }
 }
 
@@ -3929,7 +4484,9 @@ final stopGenerationProvider = Provider<void Function()>((ref) {
         stopActiveTransport(messages.last, api);
 
         // Cancel local stream subscription to stop propagating further chunks
-        ref.read(chatMessagesProvider.notifier).cancelActiveMessageStream();
+        ref
+            .read(chatMessagesProvider.notifier)
+            .cancelActiveMessageStreamPreservingContent();
       }
     } catch (_) {}
 
@@ -3997,7 +4554,7 @@ Future<List<Map<String, dynamic>>> _resolveToolServers(
             fullUrl.toLowerCase().endsWith('.yml') ||
             ct.contains('yaml')) {
           final doc = yaml.loadYaml(resp.data);
-          openapi = json.decode(json.encode(doc)) as Map<String, dynamic>;
+          openapi = normalizeJsonLikeMap(doc);
         } else {
           final data = resp.data;
           if (data is Map<String, dynamic>) {

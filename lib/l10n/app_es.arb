@@ -169,6 +169,8 @@
   "chineseTraditional": "Chino (tradicional)",
   "korean": "한국어",
   "japanese": "日本語",
+  "czech": "Čeština",
+  "slovak": "Slovenčina",
   "deleteMessagesTitle": "Eliminar mensajes",
   "deleteMessagesMessage": "¿Eliminar {count} mensajes?",
   "@deleteMessagesMessage": {
@@ -332,6 +334,12 @@
   "sttServerUnavailableWarning": "Conéctate a un servidor con transcripción habilitada para usar esta opción.",
   "sttSilenceDuration": "Duración del silencio",
   "sttSilenceDurationDescription": "Tiempo de espera después del silencio antes de detener automáticamente la grabación",
+  "sttTranscriptionLanguage": "Idioma de transcripción",
+  "sttTranscriptionLanguageDescription": "Usa Auto para seguir el idioma de este dispositivo, o introduce un código como pl.",
+  "sttTranscriptionLanguageAuto": "Auto",
+  "sttTranscriptionLanguageCustom": "Código de idioma personalizado",
+  "sttTranscriptionLanguagePlaceholder": "Código ISO-639-1, p. ej. pl",
+  "sttTranscriptionLanguageInvalid": "Usa un código de idioma de dos letras como pl.",
   "ttsSettings": "Texto a voz",
   "ttsEngineDeviceDescription": "Mantiene la síntesis en este dispositivo. La reproducción de voz no funciona si el dispositivo no admite TTS.",
   "ttsEngineServerDescription": "Solicita siempre el audio a tu servidor OpenWebUI.",
@@ -1775,5 +1783,17 @@
   "failedToLoadTools": "No se pudieron cargar las herramientas",
   "@failedToLoadTools": {
     "description": "Error shown when the composer overflow menu cannot load tools."
-  }
+  },
+  "terminalExpandAction": "Pantalla completa",
+  "terminalReopenFullscreen": "Abierto en pantalla completa - toca para reabrir",
+  "terminalKeyTab": "Tab",
+  "terminalKeyUp": "Arriba",
+  "terminalKeyDown": "Abajo",
+  "terminalKeyCtrlC": "Ctrl-C",
+  "terminalCopyAction": "Copiar",
+  "terminalPasteAction": "Pegar",
+  "terminalNothingToCopy": "No hay selección para copiar",
+  "terminalCopied": "Copiado al portapapeles",
+  "terminalPasteWhileDisconnected": "Conéctate para pegar",
+  "terminalPortsToggle": "Puertos en escucha"
 }

@@ -5,8 +5,19 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/theme_extensions.dart';
+import '../utils/adaptive_glass.dart';
 import 'modal_safe_area.dart';
 import 'sheet_handle.dart';
+
+/// Default size fractions for [DraggableScrollableSheet] inside modal sheets.
+///
+/// [maxChildSize] stops below the top safe area so sheets do not sit under the
+/// status bar or dynamic island when fully expanded.
+abstract final class DraggableModalSheetSizes {
+  static const double initialChildSize = 0.6;
+  static const double minChildSize = 0.3;
+  static const double maxChildSize = 0.92;
+}
 
 /// Centralized helper for modal bottom sheets.
 ///
@@ -118,7 +129,7 @@ class SheetCloseButton extends StatelessWidget {
       color: iconColor,
     );
 
-    if (Platform.isIOS) {
+    if (conduitSupportsNativeGlass()) {
       final button = AdaptiveButton.child(
         onPressed: onPressed,
         enabled: onPressed != null,

@@ -10,6 +10,7 @@ import '../compiled_markdown_document.dart';
 import '../citation_badge.dart';
 import 'latex_preprocessor.dart';
 import 'markdown_style.dart';
+import 'pdf_inline_view.dart';
 
 /// Callback invoked when a user taps a markdown link.
 typedef LinkTapCallback = void Function(String url, String title);
@@ -33,6 +34,8 @@ class InlineRenderer {
     this.onLinkTap,
     this.sources,
     this.onSourceTap,
+    this.latexStartupFuture,
+    this.renderPdfPreviews = true,
   ]);
 
   /// The style configuration for rendering.
@@ -49,6 +52,12 @@ class InlineRenderer {
 
   /// Callback when a citation badge is tapped.
   final void Function(int sourceIndex)? onSourceTap;
+
+  /// Shared LaTeX startup future for the current visible document.
+  final Future<void>? latexStartupFuture;
+
+  /// Whether PDF links should hydrate preview cards instead of plain links.
+  final bool renderPdfPreviews;
 
   /// Gesture recognizers created during rendering.
   ///
@@ -137,6 +146,7 @@ class InlineRenderer {
             segment.content,
             textStyle: currentStyle,
             isBlock: segment.isBlock,
+            startupFuture: latexStartupFuture,
           ),
         ),
       );
@@ -177,6 +187,7 @@ class InlineRenderer {
               segment.tex,
               textStyle: currentStyle,
               isBlock: segment.isBlock,
+              startupFuture: latexStartupFuture,
             ),
           ),
         );
@@ -330,6 +341,16 @@ class InlineRenderer {
   ) {
     final href = element.attributes['href'] ?? '';
     final title = element.attributes['title'] ?? '';
+
+    if (renderPdfPreviews && PdfInlineView.isPdfLink(href)) {
+      return [
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: PdfInlineView(url: href, label: element.textContent),
+        ),
+      ];
+    }
+
     final linkStyle = currentStyle.copyWith(
       color: style.linkColor,
       decoration: TextDecoration.underline,

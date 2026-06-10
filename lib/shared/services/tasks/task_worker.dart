@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import '../../../core/models/file_info.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/services/attachment_upload_queue.dart';
+import '../../../core/services/share_staging_cleanup.dart';
 import '../../../core/services/worker_manager.dart';
 import '../../../core/utils/debug_logger.dart';
 import '../../../features/chat/providers/chat_providers.dart' as chat;
@@ -102,6 +103,15 @@ class TaskWorker {
   }
 
   Future<void> _performUploadMedia(UploadMediaTask task) async {
+    try {
+      await _performUploadMediaInner(task);
+    } catch (_) {
+      unawaited(deleteShareStagingFile(task.filePath));
+      rethrow;
+    }
+  }
+
+  Future<void> _performUploadMediaInner(UploadMediaTask task) async {
     final lowerName = task.fileName.toLowerCase();
     final bool isImage = allSupportedImageFormats.any(lowerName.endsWith);
 
@@ -109,12 +119,11 @@ class TaskWorker {
     // This mirrors OpenWebUI's approach: images are uploaded to /api/v1/files/
     // and the server resolves them when sending to LLM
     final uploader = AttachmentUploadQueue();
-    try {
-      final api = _ref.read(apiServiceProvider);
-      if (api != null) {
-        await uploader.initialize(onUpload: (p, n) => api.uploadFile(p, n));
-      }
-    } catch (_) {}
+    final api = _ref.read(apiServiceProvider);
+    if (api == null) {
+      throw Exception('API not available');
+    }
+    await uploader.initialize(onUpload: (p, n) => api.uploadFile(p, n));
 
     // For images: convert unsupported formats to JPEG for compatibility.
     String uploadPath = task.filePath;
@@ -210,8 +219,19 @@ class TaskWorker {
       } catch (_) {}
       switch (entry.status) {
         case QueuedAttachmentStatus.completed:
+          unawaited(deleteShareStagingFile(task.filePath));
+          sub.cancel();
+          // Clean up temp file from image conversion
+          if (tempFilePath != null) {
+            try {
+              File(tempFilePath).parent.deleteSync(recursive: true);
+            } catch (_) {}
+          }
+          completer.complete();
+          break;
         case QueuedAttachmentStatus.failed:
         case QueuedAttachmentStatus.cancelled:
+          unawaited(deleteShareStagingFile(task.filePath));
           sub.cancel();
           // Clean up temp file from image conversion
           if (tempFilePath != null) {
@@ -227,45 +247,7 @@ class TaskWorker {
     });
 
     unawaited(uploader.processQueue());
-    await completer.future.timeout(
-      const Duration(minutes: 2),
-      onTimeout: () {
-        try {
-          sub.cancel();
-        } catch (_) {}
-
-        // Clean up temp file on timeout
-        if (tempFilePath != null) {
-          try {
-            File(tempFilePath).parent.deleteSync(recursive: true);
-          } catch (_) {}
-        }
-
-        // Update state to failed on timeout
-        try {
-          final current = _ref.read(attachedFilesProvider);
-          final idx = current.indexWhere((f) => f.file.path == task.filePath);
-          if (idx != -1) {
-            final existing = current[idx];
-            final newState = FileUploadState(
-              file: File(task.filePath),
-              fileName: displayFileName,
-              fileSize: task.fileSize ?? existing.fileSize,
-              progress: 0.0,
-              status: FileUploadStatus.failed,
-              error: 'Upload timed out',
-              isImage: isImage,
-            );
-            _ref
-                .read(attachedFilesProvider.notifier)
-                .updateFileState(task.filePath, newState);
-          }
-        } catch (_) {}
-
-        DebugLogger.warning('UploadMediaTask timed out: ${task.fileName}');
-        return;
-      },
-    );
+    await completer.future;
   }
 
   /// Check if image should be converted to JPEG before upload.

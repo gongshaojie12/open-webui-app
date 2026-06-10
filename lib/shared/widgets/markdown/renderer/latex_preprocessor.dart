@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_tex/flutter_tex.dart';
 
+import '../../jovial_svg_image.dart';
 import 'latex_rendering_server.dart';
 
 /// Extracts LaTeX expressions before markdown parsing and
@@ -204,20 +205,27 @@ class LatexPreprocessor {
     String tex, {
     required TextStyle textStyle,
     required bool isBlock,
+    Future<void>? startupFuture,
   }) {
     final color = textStyle.color ?? Colors.black;
-    final fontSize = textStyle.fontSize ?? 14.0;
+    final baseFontSize = textStyle.fontSize ?? 14.0;
 
     Widget buildMath() {
       return Math2SVG(
         math: tex,
+        // `flutter_tex` caches rendered SVGs internally; keep alive helps
+        // preserve that state for still-mounted formulas in scrolling views.
+        wantKeepAlive: true,
         loadingWidgetBuilder: (_) => _buildLatexFallback(tex, textStyle),
         errorWidgetBuilder: (_, _) => _buildLatexFallback(tex, textStyle),
         formulaWidgetBuilder: (context, svg) {
-          final height = _svgExToPixels(svg, fontSize);
+          final scaledFontSize = MediaQuery.textScalerOf(
+            context,
+          ).scale(baseFontSize);
+          final height = _svgExToPixels(svg, scaledFontSize);
           return ColorFiltered(
             colorFilter: ColorFilter.mode(color, BlendMode.srcATop),
-            child: SvgPicture.string(svg, height: height),
+            child: JovialSvgImage.string(svg, height: height),
           );
         },
       );
@@ -226,7 +234,7 @@ class LatexPreprocessor {
     final math = LatexRenderingServer.isStarted
         ? buildMath()
         : FutureBuilder<void>(
-            future: LatexRenderingServer.ensureStarted(),
+            future: startupFuture ?? LatexRenderingServer.ensureStarted(),
             builder: (context, snapshot) {
               if (snapshot.connectionState != ConnectionState.done ||
                   snapshot.hasError) {

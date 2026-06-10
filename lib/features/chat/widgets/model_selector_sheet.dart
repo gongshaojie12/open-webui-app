@@ -4,12 +4,15 @@ import 'dart:io' show Platform;
 import 'package:conduit/l10n/app_localizations.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/models/model.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/utils/model_icon_utils.dart';
+import '../../../core/utils/model_sort_utils.dart';
 import '../../../shared/theme/theme_extensions.dart';
+import '../../../shared/utils/conversation_context_menu.dart';
 import '../../../shared/widgets/conduit_components.dart';
 import '../../../shared/widgets/modal_safe_area.dart';
 import '../../../shared/widgets/model_list_tile.dart';
@@ -20,15 +23,7 @@ class ModelSelectorSheet extends ConsumerStatefulWidget {
   /// The full list of models to choose from.
   final List<Model> models;
 
-  /// A [WidgetRef] used to read/watch providers outside the
-  /// widget's own [ConsumerState].
-  final WidgetRef ref;
-
-  const ModelSelectorSheet({
-    super.key,
-    required this.models,
-    required this.ref,
-  });
+  const ModelSelectorSheet({super.key, required this.models});
 
   @override
   ConsumerState<ModelSelectorSheet> createState() => ModelSelectorSheetState();
@@ -68,7 +63,10 @@ class ModelSelectorSheetState extends ConsumerState<ModelSelectorSheet> {
         list = list.where((model) {
           final name = model.name.toLowerCase();
           final id = model.id.toLowerCase();
-          return name.contains(normalized) || id.contains(normalized);
+          final tags = model.modelTags.map((tag) => tag.toLowerCase());
+          return name.contains(normalized) ||
+              id.contains(normalized) ||
+              tags.any((tag) => tag.contains(normalized));
         });
       }
 
@@ -78,10 +76,23 @@ class ModelSelectorSheetState extends ConsumerState<ModelSelectorSheet> {
     });
   }
 
+  Future<void> _togglePinnedModel(String modelId) {
+    return ref
+        .read(personalizationSettingsProvider.notifier)
+        .togglePinnedModel(modelId);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final selectedModelId = widget.ref.watch(selectedModelProvider)?.id;
-    final api = widget.ref.watch(apiServiceProvider);
+    final selectedModelId = ref.watch(selectedModelProvider)?.id;
+    final pinnedModelIds = ref.watch(effectivePinnedModelIdsProvider);
+    final canTogglePinnedModels = ref.watch(canTogglePinnedModelsProvider);
+    final displayedModels = sortModelsWithPinnedOrder(
+      _filteredModels,
+      pinnedModelIds,
+    );
+    final api = ref.watch(apiServiceProvider);
+    final l10n = AppLocalizations.of(context)!;
 
     return Stack(
       children: [
@@ -124,7 +135,7 @@ class ModelSelectorSheetState extends ConsumerState<ModelSelectorSheet> {
                           Positioned.fill(
                             child: Scrollbar(
                               controller: scrollController,
-                              child: _filteredModels.isEmpty
+                              child: displayedModels.isEmpty
                                   ? Center(
                                       child: Column(
                                         mainAxisAlignment:
@@ -155,37 +166,60 @@ class ModelSelectorSheetState extends ConsumerState<ModelSelectorSheet> {
                                   : ListView.builder(
                                       controller: scrollController,
                                       padding: const EdgeInsets.only(top: 72),
-                                      cacheExtent: 400,
-                                      prototypeItem: ModelListTile(
-                                        model: _filteredModels.first,
-                                        isSelected: false,
-                                        iconUrl: null,
-                                        onTap: () {},
-                                      ),
-                                      itemCount: _filteredModels.length,
+                                      scrollCacheExtent:
+                                          const ScrollCacheExtent.pixels(400),
+                                      itemCount: displayedModels.length,
                                       itemBuilder: (context, index) {
-                                        final model = _filteredModels[index];
+                                        final model = displayedModels[index];
                                         final isSelected =
                                             selectedModelId == model.id;
+                                        final isPinned = pinnedModelIds
+                                            .contains(model.id);
                                         final iconUrl =
                                             resolveModelIconUrlForModel(
                                               api,
                                               model,
                                             );
 
-                                        return ModelListTile(
-                                          model: model,
-                                          isSelected: isSelected,
-                                          iconUrl: iconUrl,
-                                          onTap: () {
-                                            widget.ref
-                                                .read(
-                                                  selectedModelProvider
-                                                      .notifier,
-                                                )
-                                                .set(model);
-                                            Navigator.pop(context);
-                                          },
+                                        return ConduitContextMenu(
+                                          actions: canTogglePinnedModels
+                                              ? [
+                                                  ConduitContextMenuAction(
+                                                    cupertinoIcon: isPinned
+                                                        ? CupertinoIcons
+                                                              .pin_slash
+                                                        : CupertinoIcons.pin,
+                                                    materialIcon: isPinned
+                                                        ? Icons
+                                                              .push_pin_outlined
+                                                        : Icons
+                                                              .push_pin_rounded,
+                                                    label: isPinned
+                                                        ? l10n.unpin
+                                                        : l10n.pin,
+                                                    onSelected: () async {
+                                                      await _togglePinnedModel(
+                                                        model.id,
+                                                      );
+                                                    },
+                                                  ),
+                                                ]
+                                              : const [],
+                                          child: ModelListTile(
+                                            model: model,
+                                            isSelected: isSelected,
+                                            isPinned: isPinned,
+                                            iconUrl: iconUrl,
+                                            onTap: () {
+                                              ref
+                                                  .read(
+                                                    selectedModelProvider
+                                                        .notifier,
+                                                  )
+                                                  .set(model);
+                                              Navigator.pop(context);
+                                            },
+                                          ),
                                         );
                                       },
                                     ),

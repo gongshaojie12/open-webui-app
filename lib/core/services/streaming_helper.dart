@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:adaptive_platform_ui/adaptive_platform_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/models/chat_message.dart';
@@ -26,27 +27,128 @@ import 'worker_manager.dart';
 // Keep local verbosity toggle for socket logs
 const bool kSocketVerboseLogging = false;
 
-// Pre-compiled regex patterns for image extraction (performance optimization)
-final _base64ImagePattern = RegExp(
-  r'data:image/[^;\s]+;base64,[A-Za-z0-9+/]+=*',
-);
-final _urlImagePattern = RegExp(
-  r'https?://[^\s<>\"]+\.(jpg|jpeg|png|gif|webp)',
-  caseSensitive: false,
-);
-final _jsonImagePattern = RegExp(
-  r'\{[^}]*"url"[^}]*:[^}]*"(data:image/[^"]+|https?://[^"]+\.(jpg|jpeg|png|gif|webp))"[^}]*\}',
-  caseSensitive: false,
-);
-final _jsonUrlExtractPattern = RegExp(r'"url"[^:]*:[^"]*"([^"]+)"');
-final _partialResultsPattern = RegExp(
-  r'(result|files)="([^"]*(?:data:image/[^"]*|https?://[^"]*\.(jpg|jpeg|png|gif|webp))[^"]*)"',
-  caseSensitive: false,
-);
-final _imageFilePattern = RegExp(
-  r'https?://[^\s]+\.(jpg|jpeg|png|gif|webp)$',
-  caseSensitive: false,
-);
+@visibleForTesting
+Duration debugTaskSocketTerminalRecoveryDelay = const Duration(seconds: 2);
+
+@visibleForTesting
+int debugTaskSocketStableNonTerminalRecoveryLimit = 3;
+
+@visibleForTesting
+List<Map<String, dynamic>> debugCollectImageReferencesFromContent(
+  String content,
+) => _collectImageReferencesWorker(content);
+
+const Set<String> _explicitImageFileTypes = {'image'};
+
+bool _statusUpdatesEquivalent(
+  ChatStatusUpdate previous,
+  ChatStatusUpdate next,
+) {
+  return previous.action == next.action &&
+      previous.description == next.description &&
+      previous.done == next.done &&
+      previous.hidden == next.hidden &&
+      previous.count == next.count &&
+      previous.query == next.query &&
+      listEquals(previous.queries, next.queries) &&
+      listEquals(previous.urls, next.urls) &&
+      listEquals(previous.items, next.items);
+}
+
+bool _statusHistoriesEquivalent(
+  List<ChatStatusUpdate> previous,
+  List<ChatStatusUpdate> next,
+) {
+  if (identical(previous, next)) {
+    return true;
+  }
+  if (previous.length != next.length) {
+    return false;
+  }
+  for (var index = 0; index < previous.length; index += 1) {
+    if (!_statusUpdatesEquivalent(previous[index], next[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _deepEquals(Object? previous, Object? next) {
+  if (identical(previous, next)) {
+    return true;
+  }
+  if (previous is Map && next is Map) {
+    if (previous.length != next.length) {
+      return false;
+    }
+    for (final entry in previous.entries) {
+      if (!next.containsKey(entry.key) ||
+          !_deepEquals(entry.value, next[entry.key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (previous is List && next is List) {
+    if (previous.length != next.length) {
+      return false;
+    }
+    for (var index = 0; index < previous.length; index += 1) {
+      if (!_deepEquals(previous[index], next[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return previous == next;
+}
+
+List<Map<String, dynamic>> _copyJsonMapList(List<Map<String, dynamic>> items) {
+  return List<Map<String, dynamic>>.unmodifiable(
+    items
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false),
+  );
+}
+
+List<Map<String, dynamic>> _normalizeJsonMapList(dynamic raw) {
+  if (raw is! List) {
+    return const <Map<String, dynamic>>[];
+  }
+  final normalized = <Map<String, dynamic>>[];
+  for (final item in raw) {
+    final map = _asStringMap(item);
+    if (map != null) {
+      normalized.add(map);
+    }
+  }
+  return List<Map<String, dynamic>>.unmodifiable(normalized);
+}
+
+List<ChatSourceReference> _mergeSourceReferences({
+  required List<ChatSourceReference> existing,
+  required Iterable<ChatSourceReference> incoming,
+}) {
+  final merged = [...existing];
+  for (final reference in incoming) {
+    final refId = reference.id?.trim();
+    final refUrl = reference.url?.trim();
+    final alreadyPresent = merged.any((source) {
+      if (refId != null && refId.isNotEmpty) {
+        return source.id == refId;
+      }
+      if (refUrl != null && refUrl.isNotEmpty) {
+        return source.url == refUrl;
+      }
+      return false;
+    });
+    if (!alreadyPresent) {
+      merged.add(reference);
+    }
+  }
+  return List<ChatSourceReference>.unmodifiable(merged);
+}
+
 const HtmlEscape _htmlContentEscape = HtmlEscape();
 
 String _buildStreamingReasoningDetails(
@@ -92,61 +194,92 @@ List<Map<String, dynamic>> _collectImageReferencesWorker(String content) {
     if (parsed != null) {
       for (final entry in parsed.toolCalls) {
         if (entry.files != null && entry.files!.isNotEmpty) {
-          collected.addAll(_extractFilesFromResult(entry.files));
+          collected.addAll(_extractExplicitImageFiles(entry.files));
         }
         if (entry.result != null) {
-          collected.addAll(_extractFilesFromResult(entry.result));
+          collected.addAll(_extractExplicitImageFiles(entry.result));
         }
-      }
-    }
-  }
-
-  if (collected.isNotEmpty) {
-    return collected;
-  }
-
-  final base64Matches = _base64ImagePattern.allMatches(content);
-  for (final match in base64Matches) {
-    final url = match.group(0);
-    if (url != null && url.isNotEmpty) {
-      collected.add({'type': 'image', 'url': url});
-    }
-  }
-
-  final urlMatches = _urlImagePattern.allMatches(content);
-  for (final match in urlMatches) {
-    final url = match.group(0);
-    if (url != null && url.isNotEmpty) {
-      collected.add({'type': 'image', 'url': url});
-    }
-  }
-
-  final jsonMatches = _jsonImagePattern.allMatches(content);
-  for (final match in jsonMatches) {
-    final url = _jsonUrlExtractPattern
-        .firstMatch(match.group(0) ?? '')
-        ?.group(1);
-    if (url != null && url.isNotEmpty) {
-      collected.add({'type': 'image', 'url': url});
-    }
-  }
-
-  final partialMatches = _partialResultsPattern.allMatches(content);
-  for (final match in partialMatches) {
-    final attrValue = match.group(2);
-    if (attrValue == null) continue;
-    try {
-      final decoded = json.decode(attrValue);
-      collected.addAll(_extractFilesFromResult(decoded));
-    } catch (_) {
-      if (attrValue.startsWith('data:image/') ||
-          _imageFilePattern.hasMatch(attrValue)) {
-        collected.add({'type': 'image', 'url': attrValue});
       }
     }
   }
 
   return collected;
+}
+
+List<Map<String, dynamic>> _extractExplicitImageFiles(dynamic raw) {
+  final results = <Map<String, dynamic>>[];
+  if (raw == null) {
+    return results;
+  }
+
+  dynamic value = raw;
+  if (value is String) {
+    try {
+      value = jsonDecode(value);
+    } catch (_) {
+      return results;
+    }
+  }
+
+  if (value is List) {
+    for (final item in value) {
+      results.addAll(_extractExplicitImageFiles(item));
+    }
+    return results;
+  }
+
+  if (value is! Map) {
+    return results;
+  }
+
+  final map = _asStringMap(value);
+  if (map == null) {
+    return results;
+  }
+
+  final nestedFiles = map['files'];
+  if (nestedFiles is List || nestedFiles is String) {
+    results.addAll(_extractExplicitImageFiles(nestedFiles));
+  }
+
+  final type = map['type']?.toString().toLowerCase().trim();
+  final contentType =
+      (map['content_type'] ??
+              map['contentType'] ??
+              map['mime_type'] ??
+              map['mimeType'])
+          ?.toString()
+          .toLowerCase()
+          .trim() ??
+      '';
+  final isImage =
+      (type != null && _explicitImageFileTypes.contains(type)) ||
+      contentType.startsWith('image/');
+  if (!isImage) {
+    return results;
+  }
+
+  final url = map['url']?.toString();
+  final content = map['content']?.toString();
+  final rawBase64 = (map['b64_json'] ?? map['b64'])?.toString();
+  final base64MimeType = contentType.startsWith('image/')
+      ? contentType
+      : 'image/png';
+  final imageUrl = url?.isNotEmpty == true
+      ? url
+      : content?.startsWith('data:image/') == true
+      ? content
+      : rawBase64?.isNotEmpty == true
+      ? rawBase64!.startsWith('data:image/')
+            ? rawBase64
+            : 'data:$base64MimeType;base64,$rawBase64'
+      : null;
+
+  if (imageUrl != null && imageUrl.isNotEmpty) {
+    results.add({'type': 'image', 'url': imageUrl});
+  }
+
+  return results;
 }
 
 class ActiveChatStream {
@@ -167,6 +300,36 @@ typedef _ServerMessageSnapshot = ({
   bool isDone,
   String? errorContent,
 });
+
+class _AssistantServerPatch {
+  const _AssistantServerPatch({
+    this.content,
+    this.followUps,
+    this.statusHistory,
+    this.sources,
+    this.usage,
+    this.output,
+    this.files,
+    this.embeds,
+    this.metadata,
+    this.mergeMetadata = false,
+    this.isStreaming,
+    this.error,
+  });
+
+  final String? content;
+  final List<String>? followUps;
+  final List<ChatStatusUpdate>? statusHistory;
+  final List<ChatSourceReference>? sources;
+  final Map<String, dynamic>? usage;
+  final List<Map<String, dynamic>>? output;
+  final List<Map<String, dynamic>>? files;
+  final List<Map<String, dynamic>>? embeds;
+  final Map<String, dynamic>? metadata;
+  final bool mergeMetadata;
+  final bool? isStreaming;
+  final ChatMessageError? error;
+}
 
 /// Helper to handle reconnect recovery asynchronously with proper error handling.
 /// Extracted to avoid async callback in Timer which silently drops the Future.
@@ -247,7 +410,6 @@ ActiveChatStream attachUnifiedChunkedStreaming({
   updateLastMessageWith,
   required void Function(String messageId, ChatStatusUpdate update)
   appendStatusUpdate,
-  required void Function(String messageId, List<String> followUps) setFollowUps,
   required void Function(String messageId, ChatCodeExecution execution)
   upsertCodeExecution,
   required void Function(String messageId, ChatSourceReference reference)
@@ -287,6 +449,9 @@ ActiveChatStream attachUnifiedChunkedStreaming({
   bool delayedDoneRecoveryScheduled = false;
   bool isObsoleteStream = false;
   bool backgroundExecutionStopped = false;
+  Timer? terminalCompletionRecoveryTimer;
+  int stableNonTerminalTerminalRecoveryCount = 0;
+  String? stableNonTerminalTerminalRecoverySignature;
   var currentStreamSessionId = sessionId;
   String? boundRemoteMessageId;
   StreamingResponseController? streamController;
@@ -593,12 +758,33 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     finalizeStreamingReasoning();
     hasFinished = true;
     hasCompletedStreamingUi = true;
+    terminalCompletionRecoveryTimer?.cancel();
+    terminalCompletionRecoveryTimer = null;
+    stableNonTerminalTerminalRecoveryCount = 0;
+    stableNonTerminalTerminalRecoverySignature = null;
     api.clearStreamCancelToken(assistantMessageId);
 
     // Stop background execution when streaming completes
     stopBackgroundExecution();
 
     finishStreaming();
+  }
+
+  // For taskSocket transport, we still need a StreamController so the
+  // StreamingResponseController can manage the stream lifecycle.
+  // For httpStream/jsonCompletion, these are unused.
+  StreamSubscription<dynamic>? httpSubscription;
+
+  // Socket subscriptions list - starts empty so non-socket flows can finish via onComplete.
+  // HTTP subscription is tracked separately and cleaned up in disposeSocketSubscriptions.
+  final socketSubscriptions = <VoidCallback>[];
+  final hasSocketSignals = socketService != null;
+  late final void Function({required String source})
+  scheduleTerminalCompletionRecovery;
+
+  void resetTerminalCompletionRecoveryStability() {
+    stableNonTerminalTerminalRecoveryCount = 0;
+    stableNonTerminalTerminalRecoverySignature = null;
   }
 
   void appendVisibleAssistantChunk(String chunk, {bool updateImages = true}) {
@@ -661,22 +847,140 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     appendVisibleAssistantChunk(status, updateImages: false);
   }
 
-  void completeVisibleStreaming() {
-    if (hasCompletedStreamingUi) return;
-    finalizeStreamingReasoning();
-    hasCompletedStreamingUi = true;
-    completeStreamingUi();
+  void handleStreamingToolCallStatuses(dynamic rawToolCalls) {
+    if (rawToolCalls is! List) {
+      return;
+    }
+
+    for (final call in rawToolCalls) {
+      if (call is! Map<String, dynamic>) {
+        continue;
+      }
+      final fn = call['function'];
+      final name = (fn is Map && fn['name'] is String)
+          ? fn['name'] as String
+          : null;
+      if (name is String && name.isNotEmpty) {
+        final exists = renderedStreamingContent.contains('name="$name"');
+        if (!exists) {
+          handleToolCallStatus(name);
+        }
+      }
+    }
   }
 
-  // For taskSocket transport, we still need a StreamController so the
-  // StreamingResponseController can manage the stream lifecycle.
-  // For httpStream/jsonCompletion, these are unused.
-  StreamSubscription<dynamic>? httpSubscription;
+  Map<dynamic, dynamic>? extractStreamingChoiceDelta(
+    Map<String, dynamic> payload,
+  ) {
+    final choices = payload['choices'];
+    if (choices is! List || choices.isEmpty) {
+      return null;
+    }
 
-  // Socket subscriptions list - starts empty so non-socket flows can finish via onComplete.
-  // HTTP subscription is tracked separately and cleaned up in disposeSocketSubscriptions.
-  final socketSubscriptions = <VoidCallback>[];
-  final hasSocketSignals = socketService != null;
+    final choice = choices.first;
+    final delta = choice is Map ? choice['delta'] : null;
+    return delta is Map ? delta : null;
+  }
+
+  late final bool Function({
+    required String targetId,
+    required _AssistantServerPatch Function(ChatMessage current) buildPatch,
+  })
+  applyAssistantServerPatch;
+
+  void applyParsedOpenWebUIUpdate(
+    OpenWebUIStreamUpdate update, {
+    required VoidCallback onDone,
+    VoidCallback? onStructuredDoneEvent,
+    bool Function(String type, Object? data)? handleEvent,
+  }) {
+    switch (update) {
+      case OpenWebUIContentDelta(:final content):
+        appendVisibleAssistantChunk(content);
+
+      case OpenWebUIReasoningDelta(:final content):
+        applyStreamingReasoningDelta(content);
+
+      case OpenWebUIOutputUpdate(:final output):
+        final normalizedOutput = _normalizeJsonMapList(output);
+        if (normalizedOutput.isNotEmpty) {
+          applyAssistantServerPatch(
+            targetId: assistantMessageId,
+            buildPatch: (_) => _AssistantServerPatch(output: normalizedOutput),
+          );
+        }
+
+      case OpenWebUIUsageUpdate(:final usage):
+        if (usage.isNotEmpty) {
+          applyAssistantServerPatch(
+            targetId: assistantMessageId,
+            buildPatch: (_) => _AssistantServerPatch(usage: usage),
+          );
+        }
+
+      case OpenWebUISourcesUpdate(:final sources):
+        final parsed = parseOpenWebUISourceList(sources);
+        if (parsed.isNotEmpty) {
+          applyAssistantServerPatch(
+            targetId: assistantMessageId,
+            buildPatch: (current) => _AssistantServerPatch(
+              sources: _mergeSourceReferences(
+                existing: current.sources,
+                incoming: parsed,
+              ),
+            ),
+          );
+        }
+
+      case OpenWebUIEventUpdate(:final type, :final data):
+        final eventPayload = _asStringMap(data);
+        if (type == 'chat:completion' && eventPayload?['done'] == true) {
+          onStructuredDoneEvent?.call();
+        }
+        handleEvent?.call(type, data);
+
+      case OpenWebUISelectedModelUpdate(:final selectedModelId):
+        applyAssistantServerPatch(
+          targetId: assistantMessageId,
+          buildPatch: (_) => _AssistantServerPatch(
+            metadata: {'selectedModelId': selectedModelId, 'arena': true},
+            mergeMetadata: true,
+          ),
+        );
+
+      case OpenWebUIErrorUpdate(:final error):
+        applyAssistantServerPatch(
+          targetId: assistantMessageId,
+          buildPatch: (_) => _AssistantServerPatch(
+            error: ChatMessageError(content: error['message']?.toString()),
+          ),
+        );
+
+      case OpenWebUIStreamDone():
+        onDone();
+    }
+  }
+
+  void settleVisibleStreamingContent() {
+    if (hasCompletedStreamingUi) return;
+    finalizeStreamingReasoning();
+    flushStreamingBuffer();
+    applyAssistantServerPatch(
+      targetId: assistantMessageId,
+      buildPatch: (_) => const _AssistantServerPatch(
+        metadata: {'responseDone': true},
+        mergeMetadata: true,
+      ),
+    );
+    hasCompletedStreamingUi = true;
+    resetTerminalCompletionRecoveryStability();
+    if (session.transport == ChatCompletionTransport.taskSocket &&
+        (hasSocketSignals || socketSubscriptions.isNotEmpty)) {
+      scheduleTerminalCompletionRecovery(
+        source: 'taskSocket terminal finish_reason recovery',
+      );
+    }
+  }
 
   // Shared helper to poll server for message content with exponential backoff.
   // Used by watchdog timeout and reconnection handler to recover from missed events.
@@ -742,6 +1046,31 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     return error != null && error.isNotEmpty;
   }
 
+  ({ChatMessage message, String comparisonContent})
+  readLocalMessageComparisonSnapshot(ChatMessage localMessage) {
+    if (localMessage.role != 'assistant' ||
+        localMessage.id != assistantMessageId) {
+      return (message: localMessage, comparisonContent: localMessage.content);
+    }
+
+    flushStreamingBuffer();
+
+    final refreshedMessage =
+        getMessages()
+            .where((message) => message.id == localMessage.id)
+            .firstOrNull ??
+        localMessage;
+    var comparisonContent = refreshedMessage.content;
+    final visibleContent = getVisibleStreamingContent();
+    if (visibleContent != null &&
+        visibleContent.isNotEmpty &&
+        visibleContent.length >= comparisonContent.length) {
+      comparisonContent = visibleContent;
+    }
+
+    return (message: refreshedMessage, comparisonContent: comparisonContent);
+  }
+
   bool serverMessageMatchesLocalContext(
     Map<String, dynamic>? serverMessage,
     ChatMessage localMessage,
@@ -758,7 +1087,8 @@ ActiveChatStream attachUnifiedChunkedStreaming({
       return true;
     }
 
-    final localContent = localMessage.content.trim();
+    final localComparison = readLocalMessageComparisonSnapshot(localMessage);
+    final localContent = localComparison.comparisonContent.trim();
     final serverContent = extractServerMessageContent(
       serverMessage['content'],
     ).trim();
@@ -766,7 +1096,7 @@ ActiveChatStream attachUnifiedChunkedStreaming({
       return localContent == serverContent;
     }
 
-    final localError = localMessage.error?.content?.trim();
+    final localError = localComparison.message.error?.content?.trim();
     final serverError = extractServerErrorContent(
       serverMessage['error'],
     )?.trim();
@@ -789,13 +1119,14 @@ ActiveChatStream attachUnifiedChunkedStreaming({
       return true;
     }
 
-    final localContent = localMessage.content.trim();
+    final localComparison = readLocalMessageComparisonSnapshot(localMessage);
+    final localContent = localComparison.comparisonContent.trim();
     final serverContent = serverMessage.content.trim();
     if (localContent.isNotEmpty && serverContent.isNotEmpty) {
       return localContent == serverContent;
     }
 
-    final localError = localMessage.error?.content?.trim();
+    final localError = localComparison.message.error?.content?.trim();
     final serverError = serverMessage.error?.content?.trim();
     return localError != null &&
         localError.isNotEmpty &&
@@ -998,6 +1329,77 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     }
   }
 
+  applyAssistantServerPatch =
+      ({
+        required String targetId,
+        required _AssistantServerPatch Function(ChatMessage current) buildPatch,
+      }) {
+        var applied = false;
+        updateMessageById(targetId, (current) {
+          final patch = buildPatch(current);
+          final nextContent = patch.content ?? current.content;
+          final nextFollowUps = patch.followUps == null
+              ? current.followUps
+              : List<String>.from(patch.followUps!);
+          final nextStatusHistory = patch.statusHistory == null
+              ? current.statusHistory
+              : List<ChatStatusUpdate>.from(patch.statusHistory!);
+          final nextSources = patch.sources == null
+              ? current.sources
+              : List<ChatSourceReference>.from(patch.sources!);
+          final nextUsage = patch.usage == null
+              ? current.usage
+              : Map<String, dynamic>.from(patch.usage!);
+          final nextOutput = patch.output == null
+              ? current.output
+              : _copyJsonMapList(patch.output!);
+          final nextFiles = patch.files == null
+              ? current.files
+              : _copyJsonMapList(patch.files!);
+          final nextEmbeds = patch.embeds == null
+              ? current.embeds
+              : _copyJsonMapList(patch.embeds!);
+          final nextMetadata = patch.metadata == null
+              ? current.metadata
+              : patch.mergeMetadata
+              ? <String, dynamic>{...?current.metadata, ...patch.metadata!}
+              : Map<String, dynamic>.from(patch.metadata!);
+          final nextIsStreaming = patch.isStreaming ?? current.isStreaming;
+          final nextError = patch.error ?? current.error;
+          if (current.content == nextContent &&
+              listEquals(current.followUps, nextFollowUps) &&
+              _statusHistoriesEquivalent(
+                current.statusHistory,
+                nextStatusHistory,
+              ) &&
+              listEquals(current.sources, nextSources) &&
+              _deepEquals(current.usage, nextUsage) &&
+              _deepEquals(current.output, nextOutput) &&
+              _deepEquals(current.files, nextFiles) &&
+              _deepEquals(current.embeds, nextEmbeds) &&
+              _deepEquals(current.metadata, nextMetadata) &&
+              current.isStreaming == nextIsStreaming &&
+              current.error == nextError) {
+            return current;
+          }
+          applied = true;
+          return current.copyWith(
+            content: nextContent,
+            followUps: nextFollowUps,
+            statusHistory: nextStatusHistory,
+            sources: nextSources,
+            usage: nextUsage,
+            output: nextOutput,
+            files: nextFiles,
+            embeds: nextEmbeds,
+            metadata: nextMetadata,
+            isStreaming: nextIsStreaming,
+            error: nextError,
+          );
+        });
+        return applied;
+      };
+
   // Helper to apply server content if it's better than local.
   // Returns true if content was applied, so caller can trigger image sync.
   bool applyServerContent(
@@ -1020,25 +1422,9 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     final target = msgs[targetIndex];
     final isVisibleTarget =
         targetIndex == msgs.length - 1 && msgs.last.role == 'assistant';
-    var comparisonLength = target.content.length;
-    var visibleTargetIsStreaming = target.isStreaming;
-    if (isVisibleTarget) {
-      flushStreamingBuffer();
-      final refreshedMessages = getMessages();
-      final refreshedTargetIndex = refreshedMessages.indexWhere(
-        (message) =>
-            message.id == assistantMessageId && message.role == 'assistant',
-      );
-      if (refreshedTargetIndex != -1) {
-        final refreshedTarget = refreshedMessages[refreshedTargetIndex];
-        comparisonLength = refreshedTarget.content.length;
-        visibleTargetIsStreaming = refreshedTarget.isStreaming;
-      }
-      final visibleContent = getVisibleStreamingContent();
-      if (visibleContent != null && visibleContent.length > comparisonLength) {
-        comparisonLength = visibleContent.length;
-      }
-    }
+    final comparisonSnapshot = readLocalMessageComparisonSnapshot(target);
+    final comparisonLength = comparisonSnapshot.comparisonContent.length;
+    final visibleTargetIsStreaming = comparisonSnapshot.message.isStreaming;
 
     var applied = false;
 
@@ -1047,43 +1433,19 @@ ActiveChatStream attachUnifiedChunkedStreaming({
         '$source: adopting server error',
         scope: 'streaming/helper',
       );
-      updateMessageById(
-        assistantMessageId,
-        (m) => m.copyWith(
-          error: errorContent.isNotEmpty
-              ? ChatMessageError(content: errorContent)
-              : const ChatMessageError(content: null),
-        ),
-      );
-      applied = true;
     }
 
-    if (content.isNotEmpty && content.length >= comparisonLength) {
+    final shouldAdoptContent =
+        content.isNotEmpty && content.length >= comparisonLength;
+    if (shouldAdoptContent) {
       DebugLogger.log(
         '$source: adopting server content (${content.length} chars)',
         scope: 'streaming/helper',
       );
       if (isVisibleTarget) {
         replaceVisibleAssistantContent(content);
-      } else {
-        updateMessageById(
-          assistantMessageId,
-          (m) => m.copyWith(content: content),
-        );
+        applied = true;
       }
-      applied = true;
-
-      if (followUps.isNotEmpty) {
-        setFollowUps(assistantMessageId, followUps);
-      }
-
-      if (finishIfDone &&
-          isDone &&
-          isVisibleTarget &&
-          visibleTargetIsStreaming) {
-        wrappedFinishStreaming();
-      }
-      return true;
     }
 
     if (content.isNotEmpty &&
@@ -1091,14 +1453,31 @@ ActiveChatStream attachUnifiedChunkedStreaming({
         content.length < comparisonLength) {
       DebugLogger.log(
         '$source: keeping fresher visible content '
-        '(${comparisonLength} > ${content.length})',
+        '($comparisonLength > ${content.length})',
         scope: 'streaming/helper',
       );
     }
 
-    if (followUps.isNotEmpty) {
-      setFollowUps(assistantMessageId, followUps);
-      applied = true;
+    applied =
+        applyAssistantServerPatch(
+          targetId: assistantMessageId,
+          buildPatch: (_) => _AssistantServerPatch(
+            content: shouldAdoptContent && !isVisibleTarget ? content : null,
+            followUps: followUps.isNotEmpty ? followUps : null,
+            error: errorContent == null
+                ? null
+                : errorContent.isNotEmpty
+                ? ChatMessageError(content: errorContent)
+                : const ChatMessageError(content: null),
+          ),
+        ) ||
+        applied;
+
+    if (shouldAdoptContent && isVisibleTarget) {
+      if (finishIfDone && isDone && visibleTargetIsStreaming) {
+        wrappedFinishStreaming();
+      }
+      return true;
     }
 
     if (finishIfDone && isDone && isVisibleTarget) {
@@ -1165,27 +1544,34 @@ ActiveChatStream attachUnifiedChunkedStreaming({
         return;
       }
 
-      setFollowUps(assistantMessageId, assistant.followUps);
-      updateMessageById(assistantMessageId, (current) {
-        // Preserve existing usage if server doesn't have it yet (issue #274)
-        // Usage is captured from streaming but may not be persisted on server
-        final effectiveUsage = assistant.usage ?? current.usage;
-        return current.copyWith(
-          followUps: List<String>.from(assistant.followUps),
-          statusHistory: assistant.statusHistory.isNotEmpty
+      applyAssistantServerPatch(
+        targetId: assistantMessageId,
+        buildPatch: (current) {
+          // Preserve existing usage if server doesn't have it yet (issue #274)
+          // Usage is captured from streaming but may not be persisted on server
+          final effectiveUsage = assistant.usage ?? current.usage;
+          final nextFollowUps = List<String>.from(assistant.followUps);
+          final nextStatusHistory = assistant.statusHistory.isNotEmpty
               ? assistant.statusHistory
               : current.isStreaming
               ? current.statusHistory
               : current.statusHistory
                     .where((status) => status.done != false)
-                    .toList(growable: false),
-          sources: assistant.sources.isNotEmpty || !current.isStreaming
+                    .toList(growable: false);
+          final nextSources =
+              assistant.sources.isNotEmpty || !current.isStreaming
               ? assistant.sources
-              : current.sources,
-          metadata: {...?current.metadata, ...?assistant.metadata},
-          usage: effectiveUsage,
-        );
-      });
+              : current.sources;
+          return _AssistantServerPatch(
+            followUps: nextFollowUps,
+            statusHistory: nextStatusHistory,
+            sources: nextSources,
+            metadata: assistant.metadata,
+            mergeMetadata: true,
+            usage: effectiveUsage,
+          );
+        },
+      );
     } catch (_) {
       // Best-effort refresh; ignore failures.
     } finally {
@@ -1201,21 +1587,28 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     if (isObsoleteStream) {
       return false;
     }
-    flushStreamingBuffer();
-
     final msgs = getMessages();
     if (msgs.isEmpty || msgs.last.role != 'assistant') {
       return false;
     }
 
-    final last = msgs.last;
+    final comparisonSnapshot = readLocalMessageComparisonSnapshot(msgs.last);
+    final last = comparisonSnapshot.message;
     if (!last.isStreaming) {
       return true;
     }
 
+    final hasNonTextTerminalArtifacts =
+        (last.files?.isNotEmpty ?? false) ||
+        (last.output?.isNotEmpty ?? false) ||
+        (last.embeds?.isNotEmpty ?? false) ||
+        last.codeExecutions.isNotEmpty ||
+        last.sources.isNotEmpty;
     final hasTerminalState =
         last.error != null ||
-        (allowContentOnlyTerminal && last.content.trim().isNotEmpty);
+        (allowContentOnlyTerminal &&
+            (comparisonSnapshot.comparisonContent.trim().isNotEmpty ||
+                hasNonTextTerminalArtifacts));
     if (!hasTerminalState) {
       return false;
     }
@@ -1227,10 +1620,16 @@ ActiveChatStream attachUnifiedChunkedStreaming({
   Future<void> recoverTaskSocketTerminalState({
     required String source,
     bool allowContentOnlyTerminal = false,
+    bool allowLocalContentFallbackAfterPollFailedOrMissing = false,
+    bool allowLocalContentFallbackAfterNonTerminalSnapshot = false,
+    bool retryWhenSnapshotStillStreaming = false,
   }) async {
     if (isObsoleteStream) {
       return;
     }
+    bool pollFailedOrMissing = true;
+    bool snapshotIndicatedDone = false;
+    bool allowStableNonTerminalLocalFallback = false;
     try {
       final result = await pollServerForMessage();
       if (hasFinished || isObsoleteStream) {
@@ -1238,6 +1637,8 @@ ActiveChatStream attachUnifiedChunkedStreaming({
       }
 
       if (result != null) {
+        pollFailedOrMissing = false;
+        snapshotIndicatedDone = result.isDone;
         final applied = applyServerContent(
           result.content,
           result.followUps,
@@ -1252,17 +1653,141 @@ ActiveChatStream attachUnifiedChunkedStreaming({
         if (hasFinished || isObsoleteStream) {
           return;
         }
+        if (!result.isDone && retryWhenSnapshotStillStreaming) {
+          final messages = getMessages();
+          final stabilitySignature =
+              messages.isEmpty || messages.last.role != 'assistant'
+              ? [
+                  result.content,
+                  result.followUps.join('\u001f'),
+                  result.errorContent ?? '',
+                ].join('\u0001')
+              : () {
+                  final comparisonSnapshot = readLocalMessageComparisonSnapshot(
+                    messages.last,
+                  );
+                  final last = comparisonSnapshot.message;
+                  return [
+                    result.content,
+                    result.followUps.join('\u001f'),
+                    result.errorContent ?? '',
+                    comparisonSnapshot.comparisonContent.trim(),
+                    last.error?.content?.trim() ?? '',
+                    last.followUps.join('\u001f'),
+                    '${last.files?.length ?? 0}/${last.output?.length ?? 0}/'
+                        '${last.embeds?.length ?? 0}/${last.codeExecutions.length}/'
+                        '${last.sources.length}',
+                    last.usage?.toString() ?? '',
+                  ].join('\u0001');
+                }();
+          if (stabilitySignature ==
+              stableNonTerminalTerminalRecoverySignature) {
+            stableNonTerminalTerminalRecoveryCount += 1;
+          } else {
+            stableNonTerminalTerminalRecoverySignature = stabilitySignature;
+            stableNonTerminalTerminalRecoveryCount = 1;
+          }
+          allowStableNonTerminalLocalFallback =
+              stableNonTerminalTerminalRecoveryCount >=
+              debugTaskSocketStableNonTerminalRecoveryLimit;
+        } else {
+          resetTerminalCompletionRecoveryStability();
+        }
+      } else {
+        resetTerminalCompletionRecoveryStability();
       }
     } catch (e) {
       DebugLogger.log('$source failed: $e', scope: 'streaming/helper');
     }
 
+    if (pollFailedOrMissing && retryWhenSnapshotStillStreaming) {
+      final messages = getMessages();
+      final stabilitySignature =
+          messages.isEmpty || messages.last.role != 'assistant'
+          ? 'poll-missing'
+          : () {
+              final comparisonSnapshot = readLocalMessageComparisonSnapshot(
+                messages.last,
+              );
+              final last = comparisonSnapshot.message;
+              return [
+                'poll-missing',
+                comparisonSnapshot.comparisonContent.trim(),
+                last.error?.content?.trim() ?? '',
+                last.followUps.join('\u001f'),
+                '${last.files?.length ?? 0}/${last.output?.length ?? 0}/'
+                    '${last.embeds?.length ?? 0}/${last.codeExecutions.length}/'
+                    '${last.sources.length}',
+                last.usage?.toString() ?? '',
+              ].join('\u0001');
+            }();
+      if (stabilitySignature == stableNonTerminalTerminalRecoverySignature) {
+        stableNonTerminalTerminalRecoveryCount += 1;
+      } else {
+        stableNonTerminalTerminalRecoverySignature = stabilitySignature;
+        stableNonTerminalTerminalRecoveryCount = 1;
+      }
+      allowStableNonTerminalLocalFallback =
+          stableNonTerminalTerminalRecoveryCount >=
+          debugTaskSocketStableNonTerminalRecoveryLimit;
+    } else if (pollFailedOrMissing) {
+      resetTerminalCompletionRecoveryStability();
+    }
+
+    final shouldAllowLocalContentFallback =
+        allowContentOnlyTerminal &&
+        (allowLocalContentFallbackAfterPollFailedOrMissing ||
+            snapshotIndicatedDone ||
+            allowLocalContentFallbackAfterNonTerminalSnapshot ||
+            allowStableNonTerminalLocalFallback);
     if (finishFromLocalState(
-      allowContentOnlyTerminal: allowContentOnlyTerminal,
+      allowContentOnlyTerminal: shouldAllowLocalContentFallback,
     )) {
       Future.microtask(refreshConversationSnapshot);
+      return;
+    }
+
+    if (!hasFinished &&
+        !isObsoleteStream &&
+        retryWhenSnapshotStillStreaming &&
+        !snapshotIndicatedDone &&
+        !shouldAllowLocalContentFallback) {
+      scheduleTerminalCompletionRecovery(source: source);
     }
   }
+
+  scheduleTerminalCompletionRecovery = ({required String source}) {
+    if (hasFinished || isObsoleteStream) {
+      return;
+    }
+    if (terminalCompletionRecoveryTimer != null) {
+      return;
+    }
+
+    terminalCompletionRecoveryTimer = Timer(
+      debugTaskSocketTerminalRecoveryDelay,
+      () {
+        terminalCompletionRecoveryTimer = null;
+        if (hasFinished || isObsoleteStream) {
+          return;
+        }
+        if (currentAssistantTargetId() != assistantMessageId) {
+          return;
+        }
+        DebugLogger.log(
+          '$source: recovering after missed done/inactive',
+          scope: 'streaming/helper',
+        );
+        unawaited(
+          recoverTaskSocketTerminalState(
+            source: source,
+            allowContentOnlyTerminal: true,
+            retryWhenSnapshotStillStreaming: true,
+          ),
+        );
+      },
+    );
+  };
 
   if (hasSocketSignals) {
     // Handle socket reconnection - update session IDs and check for missed events
@@ -1313,6 +1838,10 @@ ActiveChatStream attachUnifiedChunkedStreaming({
   int imageCollectionRequestId = 0;
 
   void disposeSocketSubscriptions() {
+    terminalCompletionRecoveryTimer?.cancel();
+    terminalCompletionRecoveryTimer = null;
+    resetTerminalCompletionRecoveryStability();
+
     // Cancel HTTP subscription (if any — only taskSocket path creates one)
     try {
       httpSubscription?.cancel();
@@ -1572,21 +2101,23 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     final withTimestamp = update.occurredAt == null
         ? update.copyWith(occurredAt: DateTime.now())
         : update;
-    final history = [...existing];
-    if (history.isNotEmpty) {
-      final last = history.last;
+    if (existing.isNotEmpty) {
+      final last = existing.last;
+      if (_statusUpdatesEquivalent(last, withTimestamp)) {
+        return existing;
+      }
       final sameAction =
           last.action != null && last.action == withTimestamp.action;
       final sameDescription =
           (withTimestamp.description?.isNotEmpty ?? false) &&
           withTimestamp.description == last.description;
       if (sameAction && sameDescription) {
+        final history = [...existing];
         history[history.length - 1] = withTimestamp;
         return history;
       }
     }
-    history.add(withTimestamp);
-    return history;
+    return [...existing, withTimestamp];
   }
 
   void applyMergedStatusUpdate({
@@ -1595,15 +2126,73 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     dynamic metadataStatus,
     bool storeMetadataStatus = false,
   }) {
-    updateMessageById(targetId, (current) {
-      final metadata = storeMetadataStatus
-          ? <String, dynamic>{...?current.metadata, 'status': metadataStatus}
-          : current.metadata;
-      return current.copyWith(
-        statusHistory: mergeStatusHistory(current.statusHistory, statusUpdate),
-        metadata: metadata,
-      );
-    });
+    applyAssistantServerPatch(
+      targetId: targetId,
+      buildPatch: (current) {
+        final mergedStatusHistory = mergeStatusHistory(
+          current.statusHistory,
+          statusUpdate,
+        );
+        return _AssistantServerPatch(
+          statusHistory: mergedStatusHistory,
+          metadata: storeMetadataStatus ? {'status': metadataStatus} : null,
+          mergeMetadata: storeMetadataStatus,
+        );
+      },
+    );
+  }
+
+  bool handleHttpStreamEventFastPath({
+    required String type,
+    required Object? data,
+  }) {
+    final payload = _asStringMap(data);
+    switch (type) {
+      case 'chat:message:delta':
+      case 'message':
+      case 'event:message:delta':
+        final content = payload?['content']?.toString() ?? '';
+        if (content.isNotEmpty) {
+          appendVisibleAssistantChunk(content);
+        }
+        return true;
+
+      case 'chat:message':
+      case 'replace':
+        final content = payload?['content']?.toString() ?? '';
+        if (content.isNotEmpty) {
+          replaceVisibleAssistantContent(content);
+        }
+        return true;
+
+      case 'status':
+        if (payload == null) {
+          return false;
+        }
+        final statusUpdate = ChatStatusUpdate.fromJson(payload);
+        applyMergedStatusUpdate(
+          targetId: assistantMessageId,
+          statusUpdate: statusUpdate,
+          metadataStatus: statusUpdate.toJson(),
+          storeMetadataStatus: true,
+        );
+        return true;
+
+      case 'event:status':
+        if (payload == null) {
+          return false;
+        }
+        final statusText = payload['status']?.toString() ?? '';
+        final statusUpdate = ChatStatusUpdate.fromJson(payload);
+        applyMergedStatusUpdate(
+          targetId: assistantMessageId,
+          statusUpdate: statusUpdate,
+          metadataStatus: statusText,
+          storeMetadataStatus: statusText.isNotEmpty,
+        );
+        return true;
+    }
+    return false;
   }
 
   bool scheduleDelayedDoneRecovery({required bool finishAfterRecovery}) {
@@ -1683,8 +2272,9 @@ ActiveChatStream attachUnifiedChunkedStreaming({
 
     final msgs = getMessages();
     if (msgs.isNotEmpty && msgs.last.role == 'assistant') {
-      final last = msgs.last;
-      final lastContent = last.content.trim();
+      final comparisonSnapshot = readLocalMessageComparisonSnapshot(msgs.last);
+      final last = comparisonSnapshot.message;
+      final lastContent = comparisonSnapshot.comparisonContent.trim();
       final hasNonTextArtifacts =
           (last.files?.isNotEmpty ?? false) ||
           (last.output?.isNotEmpty ?? false) ||
@@ -1714,59 +2304,6 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     }
 
     wrappedFinishStreaming();
-  }
-
-  bool handleHttpStreamEventFastPath({
-    required String type,
-    required Object? data,
-  }) {
-    final payload = _asStringMap(data);
-    switch (type) {
-      case 'chat:message:delta':
-      case 'message':
-      case 'event:message:delta':
-        final content = payload?['content']?.toString() ?? '';
-        if (content.isNotEmpty) {
-          appendVisibleAssistantChunk(content);
-        }
-        return true;
-
-      case 'chat:message':
-      case 'replace':
-        final content = payload?['content']?.toString() ?? '';
-        if (content.isNotEmpty) {
-          replaceVisibleAssistantContent(content);
-        }
-        return true;
-
-      case 'status':
-        if (payload == null) {
-          return false;
-        }
-        final statusUpdate = ChatStatusUpdate.fromJson(payload);
-        applyMergedStatusUpdate(
-          targetId: assistantMessageId,
-          statusUpdate: statusUpdate,
-          metadataStatus: statusUpdate.toJson(),
-          storeMetadataStatus: true,
-        );
-        return true;
-
-      case 'event:status':
-        if (payload == null) {
-          return false;
-        }
-        final statusText = payload['status']?.toString() ?? '';
-        final statusUpdate = ChatStatusUpdate.fromJson(payload);
-        applyMergedStatusUpdate(
-          targetId: assistantMessageId,
-          statusUpdate: statusUpdate,
-          metadataStatus: statusText,
-          storeMetadataStatus: statusText.isNotEmpty,
-        );
-        return true;
-    }
-    return false;
   }
 
   void channelLineHandlerFactory(String channel) {
@@ -1807,43 +2344,19 @@ ActiveChatStream attachUnifiedChunkedStreaming({
               return;
             }
             try {
-              final Map<String, dynamic> j = jsonDecode(dataStr);
-
-              // Capture usage statistics from OpenAI-style streaming (issue #274)
-              // Usage is sent in the final chunk with stream_options.include_usage
-              final usageData = j['usage'];
-              if (usageData is Map<String, dynamic> && usageData.isNotEmpty) {
-                updateLastMessageWith((m) => m.copyWith(usage: usageData));
+              final parsed = decodeOpenWebUIDataPayload(dataStr);
+              final delta = extractStreamingChoiceDelta(parsed);
+              if (delta != null) {
+                handleStreamingToolCallStatuses(delta['tool_calls']);
               }
 
-              final choices = j['choices'];
-              if (choices is List && choices.isNotEmpty) {
-                final choice = choices.first;
-                final delta = choice is Map ? choice['delta'] : null;
-                if (delta is Map) {
-                  if (delta.containsKey('tool_calls')) {
-                    final tc = delta['tool_calls'];
-                    if (tc is List) {
-                      for (final call in tc) {
-                        if (call is Map<String, dynamic>) {
-                          final fn = call['function'];
-                          final name = (fn is Map && fn['name'] is String)
-                              ? fn['name'] as String
-                              : null;
-                          if (name is String && name.isNotEmpty) {
-                            final exists = renderedStreamingContent.contains(
-                              'name="$name"',
-                            );
-                            if (!exists) {
-                              handleToolCallStatus(name);
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                  handleStreamingChoiceDelta(delta);
-                }
+              for (final update in parseOpenWebUIParsedPayload(parsed)) {
+                applyParsedOpenWebUIUpdate(
+                  update,
+                  onDone: onChannelDone,
+                  handleEvent: (type, data) =>
+                      handleHttpStreamEventFastPath(type: type, data: data),
+                );
               }
             } catch (_) {
               if (s.isNotEmpty) {
@@ -1925,61 +2438,49 @@ ActiveChatStream attachUnifiedChunkedStreaming({
             allowBindingForeignMessage: true,
           );
           String? terminalFinishReason;
-
-          // Store the structured output[] array from the backend middleware.
-          // This contains OR-aligned items (message, reasoning,
-          // code_interpreter, function_call, function_call_output).
-          final outputItems = payload['output'];
-          if (completionTargetId != null &&
-              outputItems is List &&
-              outputItems.isNotEmpty) {
-            updateMessageById(completionTargetId, (current) {
-              return current.copyWith(
-                output: outputItems.whereType<Map<String, dynamic>>().toList(
-                  growable: false,
-                ),
-              );
-            });
-          }
-
-          // Capture the selected_model_id for arena/routing flows.
           final selectedModelId = payload['selected_model_id']?.toString();
-          if (completionTargetId != null &&
-              selectedModelId != null &&
-              selectedModelId.isNotEmpty) {
-            updateMessageById(completionTargetId, (current) {
-              return current.copyWith(
-                metadata: {
-                  ...?current.metadata,
-                  'selectedModelId': selectedModelId,
-                  'arena': true,
-                },
-              );
-            });
-          }
-
-          // Capture usage statistics whenever they appear (issue #274)
-          // Usage may come in a separate payload before the done:true payload
           final usageData = payload['usage'];
-          if (completionTargetId != null &&
-              usageData is Map<String, dynamic> &&
-              usageData.isNotEmpty) {
-            updateMessageById(completionTargetId, (current) {
-              return current.copyWith(usage: usageData);
-            });
-          }
-
+          final usagePatch = usageData is Map && usageData.isNotEmpty
+              ? Map<String, dynamic>.from(usageData)
+              : null;
+          final normalizedOutputItems = _normalizeJsonMapList(
+            payload['output'],
+          );
           final rawSources = payload['sources'] ?? payload['citations'];
           final normalizedSources = _normalizeSourcesPayload(rawSources);
+          final parsedSources =
+              normalizedSources == null || normalizedSources.isEmpty
+              ? const <ChatSourceReference>[]
+              : parseOpenWebUISourceList(normalizedSources);
+          final metadataPatch =
+              selectedModelId != null && selectedModelId.isNotEmpty
+              ? <String, dynamic>{
+                  'selectedModelId': selectedModelId,
+                  'arena': true,
+                }
+              : null;
           if (completionTargetId != null &&
-              normalizedSources != null &&
-              normalizedSources.isNotEmpty) {
-            final parsedSources = parseOpenWebUISourceList(normalizedSources);
-            if (parsedSources.isNotEmpty) {
-              for (final source in parsedSources) {
-                appendSourceReference(completionTargetId, source);
-              }
-            }
+              (normalizedOutputItems.isNotEmpty ||
+                  metadataPatch != null ||
+                  usagePatch != null ||
+                  parsedSources.isNotEmpty)) {
+            applyAssistantServerPatch(
+              targetId: completionTargetId,
+              buildPatch: (current) => _AssistantServerPatch(
+                output: normalizedOutputItems.isNotEmpty
+                    ? normalizedOutputItems
+                    : null,
+                metadata: metadataPatch,
+                mergeMetadata: metadataPatch != null,
+                usage: usagePatch,
+                sources: parsedSources.isEmpty
+                    ? null
+                    : _mergeSourceReferences(
+                        existing: current.sources,
+                        incoming: parsedSources,
+                      ),
+              ),
+            );
           }
           if (payload.containsKey('tool_calls')) {
             if (completionTargetId != null) {
@@ -2061,10 +2562,10 @@ ActiveChatStream attachUnifiedChunkedStreaming({
               if (hasTerminalContent) {
                 DebugLogger.log(
                   'Terminal finish_reason=$terminalFinishReason '
-                  '- closing visible streaming state',
+                  '- settling visible content until done',
                   scope: 'streaming/helper',
                 );
-                completeVisibleStreaming();
+                settleVisibleStreamingContent();
               }
             }
           }
@@ -2109,10 +2610,14 @@ ActiveChatStream attachUnifiedChunkedStreaming({
         if (targetId == null) {
           return;
         }
-        updateMessageById(targetId, (current) {
-          final metadata = {...?current.metadata, 'tasksCancelled': true};
-          return current.copyWith(metadata: metadata, isStreaming: false);
-        });
+        applyAssistantServerPatch(
+          targetId: targetId,
+          buildPatch: (_) => _AssistantServerPatch(
+            metadata: {'tasksCancelled': true},
+            mergeMetadata: true,
+            isStreaming: false,
+          ),
+        );
         disposeSocketSubscriptions();
         wrappedFinishStreaming();
       } else if (type == 'chat:message:follow_ups' && payload != null) {
@@ -2133,11 +2638,16 @@ ActiveChatStream attachUnifiedChunkedStreaming({
             scope: 'streaming/helper',
           );
           if (targetId != null) {
-            setFollowUps(targetId, suggestions);
-            updateMessageById(targetId, (current) {
-              final metadata = {...?current.metadata, 'followUps': suggestions};
-              return current.copyWith(metadata: metadata);
-            });
+            applyAssistantServerPatch(
+              targetId: targetId,
+              buildPatch: (_) {
+                return _AssistantServerPatch(
+                  followUps: suggestions,
+                  metadata: {'followUps': suggestions},
+                  mergeMetadata: true,
+                );
+              },
+            );
             DebugLogger.log(
               'Follow-ups set successfully',
               scope: 'streaming/helper',
@@ -2208,9 +2718,15 @@ ActiveChatStream attachUnifiedChunkedStreaming({
                   allowBindingForeignMessage: true,
                 );
                 if (targetId != null) {
-                  for (final source in sources) {
-                    appendSourceReference(targetId, source);
-                  }
+                  applyAssistantServerPatch(
+                    targetId: targetId,
+                    buildPatch: (current) => _AssistantServerPatch(
+                      sources: _mergeSourceReferences(
+                        existing: current.sources,
+                        incoming: sources,
+                      ),
+                    ),
+                  );
                 }
               }
             } catch (_) {}
@@ -2371,7 +2887,10 @@ ActiveChatStream attachUnifiedChunkedStreaming({
               existing: target.files ?? <Map<String, dynamic>>[],
             );
             if (merged != null) {
-              updateMessageById(targetId, (m) => m.copyWith(files: merged));
+              applyAssistantServerPatch(
+                targetId: targetId,
+                buildPatch: (_) => _AssistantServerPatch(files: merged),
+              );
             }
           }
         } catch (_) {}
@@ -2391,9 +2910,10 @@ ActiveChatStream attachUnifiedChunkedStreaming({
               allowBindingForeignMessage: true,
             );
             if (targetId != null) {
-              updateMessageById(targetId, (current) {
-                return current.copyWith(embeds: embeds);
-              });
+              applyAssistantServerPatch(
+                targetId: targetId,
+                buildPatch: (_) => _AssistantServerPatch(embeds: embeds),
+              );
             }
           }
         } catch (_) {}
@@ -2434,6 +2954,8 @@ ActiveChatStream attachUnifiedChunkedStreaming({
                 recoverTaskSocketTerminalState(
                   source: 'taskSocket inactive recovery',
                   allowContentOnlyTerminal: true,
+                  allowLocalContentFallbackAfterPollFailedOrMissing: true,
+                  allowLocalContentFallbackAfterNonTerminalSnapshot: true,
                 ),
               );
             }
@@ -2659,69 +3181,26 @@ ActiveChatStream attachUnifiedChunkedStreaming({
       final sub = parseOpenWebUIStream(session.byteStream!).listen(
         (update) {
           try {
-            switch (update) {
-              case OpenWebUIContentDelta(:final content):
-                appendVisibleAssistantChunk(content);
-
-              case OpenWebUIReasoningDelta(:final content):
-                applyStreamingReasoningDelta(content);
-
-              case OpenWebUIOutputUpdate(:final output):
-                // Store structured output items from backend middleware.
-                updateLastMessageWith(
-                  (m) => m.copyWith(
-                    output: output.whereType<Map<String, dynamic>>().toList(
-                      growable: false,
-                    ),
-                  ),
-                );
-
-              case OpenWebUIUsageUpdate(:final usage):
-                updateLastMessageWith((m) => m.copyWith(usage: usage));
-
-              case OpenWebUISourcesUpdate(:final sources):
-                final parsed = parseOpenWebUISourceList(sources);
-                for (final source in parsed) {
-                  appendSourceReference(assistantMessageId, source);
-                }
-
-              case OpenWebUIEventUpdate(:final type, :final data):
-                final eventPayload = _asStringMap(data);
-                if (type == 'chat:completion' &&
-                    eventPayload?['done'] == true) {
-                  receivedDone = true;
-                }
-                if (!handleHttpStreamEventFastPath(type: type, data: data)) {
-                  chatHandler({
-                    'message_id': assistantMessageId,
-                    'data': {'type': type, 'data': data},
-                  }, null);
-                }
-
-              case OpenWebUISelectedModelUpdate(:final selectedModelId):
-                updateLastMessageWith(
-                  (m) => m.copyWith(
-                    metadata: {
-                      ...?m.metadata,
-                      'selectedModelId': selectedModelId,
-                      'arena': true,
-                    },
-                  ),
-                );
-
-              case OpenWebUIErrorUpdate(:final error):
-                updateLastMessageWith(
-                  (m) => m.copyWith(
-                    error: ChatMessageError(
-                      content: error['message']?.toString(),
-                    ),
-                  ),
-                );
-
-              case OpenWebUIStreamDone():
+            applyParsedOpenWebUIUpdate(
+              update,
+              onDone: () {
                 receivedDone = true;
                 handleCompletionDone(allowEmptyContentRecovery: true);
-            }
+              },
+              onStructuredDoneEvent: () {
+                receivedDone = true;
+              },
+              handleEvent: (type, data) {
+                if (handleHttpStreamEventFastPath(type: type, data: data)) {
+                  return true;
+                }
+                chatHandler({
+                  'message_id': assistantMessageId,
+                  'data': {'type': type, 'data': data},
+                }, null);
+                return true;
+              },
+            );
           } catch (e) {
             DebugLogger.error(
               'httpStream update handler error',
@@ -2875,6 +3354,11 @@ ActiveChatStream attachUnifiedChunkedStreaming({
               '- waiting for socket done signal',
               scope: 'streaming/helper',
             );
+            if (hasCompletedStreamingUi) {
+              scheduleTerminalCompletionRecovery(
+                source: 'taskSocket HTTP completion recovery',
+              );
+            }
           }
         },
         onError: (error, stackTrace) async {
@@ -2934,8 +3418,9 @@ ActiveChatStream attachUnifiedChunkedStreaming({
             final errorMap = error is Map<String, dynamic>
                 ? error
                 : <String, dynamic>{'message': error.toString()};
-            updateLastMessageWith(
-              (m) => m.copyWith(
+            applyAssistantServerPatch(
+              targetId: assistantMessageId,
+              buildPatch: (_) => _AssistantServerPatch(
                 error: ChatMessageError(
                   content: errorMap['message']?.toString(),
                 ),
@@ -2960,22 +3445,48 @@ ActiveChatStream attachUnifiedChunkedStreaming({
             }
           }
 
-          // Apply usage
           final usage = payload['usage'];
-          if (usage is Map<String, dynamic> && usage.isNotEmpty) {
-            updateLastMessageWith((m) => m.copyWith(usage: usage));
-          }
-
-          // Apply sources
-          final rawSources = payload['sources'];
-          if (rawSources != null) {
-            final normalizedSources = _normalizeSourcesPayload(rawSources);
-            if (normalizedSources != null && normalizedSources.isNotEmpty) {
-              final parsedSources = parseOpenWebUISourceList(normalizedSources);
-              for (final source in parsedSources) {
-                appendSourceReference(assistantMessageId, source);
-              }
-            }
+          final usagePatch = usage is Map && usage.isNotEmpty
+              ? Map<String, dynamic>.from(usage)
+              : null;
+          final normalizedOutputItems = _normalizeJsonMapList(
+            payload['output'],
+          );
+          final selectedModelId = payload['selected_model_id']?.toString();
+          final metadataPatch =
+              selectedModelId != null && selectedModelId.isNotEmpty
+              ? <String, dynamic>{
+                  'selectedModelId': selectedModelId,
+                  'arena': true,
+                }
+              : null;
+          final rawSources = payload['sources'] ?? payload['citations'];
+          final normalizedSources = _normalizeSourcesPayload(rawSources);
+          final parsedSources =
+              normalizedSources == null || normalizedSources.isEmpty
+              ? const <ChatSourceReference>[]
+              : parseOpenWebUISourceList(normalizedSources);
+          if (usagePatch != null ||
+              normalizedOutputItems.isNotEmpty ||
+              metadataPatch != null ||
+              parsedSources.isNotEmpty) {
+            applyAssistantServerPatch(
+              targetId: assistantMessageId,
+              buildPatch: (current) => _AssistantServerPatch(
+                usage: usagePatch,
+                output: normalizedOutputItems.isNotEmpty
+                    ? normalizedOutputItems
+                    : null,
+                metadata: metadataPatch,
+                mergeMetadata: metadataPatch != null,
+                sources: parsedSources.isEmpty
+                    ? null
+                    : _mergeSourceReferences(
+                        existing: current.sources,
+                        incoming: parsedSources,
+                      ),
+              ),
+            );
           }
 
           wrappedFinishStreaming();

@@ -169,6 +169,8 @@
   "chineseTraditional": "Chinois (traditionnel)",
   "korean": "Coréen",
   "japanese": "日本語",
+  "czech": "Čeština",
+  "slovak": "Slovenčina",
   "deleteMessagesTitle": "Supprimer les messages",
   "deleteMessagesMessage": "Supprimer {count} messages ?",
   "@deleteMessagesMessage": {
@@ -332,6 +334,12 @@
   "sttServerUnavailableWarning": "Connectez-vous à un serveur avec la transcription activée pour utiliser cette option.",
   "sttSilenceDuration": "Durée du silence",
   "sttSilenceDurationDescription": "Temps d'attente après le silence avant d'arrêter automatiquement l'enregistrement",
+  "sttTranscriptionLanguage": "Langue de transcription",
+  "sttTranscriptionLanguageDescription": "Utilisez Auto pour suivre la langue de cet appareil, ou saisissez un code comme pl.",
+  "sttTranscriptionLanguageAuto": "Auto",
+  "sttTranscriptionLanguageCustom": "Code de langue personnalisé",
+  "sttTranscriptionLanguagePlaceholder": "Code ISO-639-1, p. ex. pl",
+  "sttTranscriptionLanguageInvalid": "Utilisez un code de langue à deux lettres comme pl.",
   "ttsSettings": "Synthèse vocale",
   "ttsEngineDeviceDescription": "Garde la synthèse sur cet appareil. La lecture vocale ne fonctionne plus si l’appareil n’offre pas la synthèse vocale.",
   "ttsEngineServerDescription": "Demande toujours l'audio à votre serveur OpenWebUI.",
@@ -1775,5 +1783,17 @@
   "failedToLoadTools": "Impossible de charger les outils",
   "@failedToLoadTools": {
     "description": "Error shown when the composer overflow menu cannot load tools."
-  }
+  },
+  "terminalExpandAction": "Plein écran",
+  "terminalReopenFullscreen": "Ouvert en plein écran - touchez pour rouvrir",
+  "terminalKeyTab": "Tab",
+  "terminalKeyUp": "Haut",
+  "terminalKeyDown": "Bas",
+  "terminalKeyCtrlC": "Ctrl-C",
+  "terminalCopyAction": "Copier",
+  "terminalPasteAction": "Coller",
+  "terminalNothingToCopy": "Aucune sélection à copier",
+  "terminalCopied": "Copié dans le presse-papiers",
+  "terminalPasteWhileDisconnected": "Connectez-vous pour coller",
+  "terminalPortsToggle": "Ports à l’écoute"
 }

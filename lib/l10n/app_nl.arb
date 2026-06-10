@@ -169,6 +169,8 @@
   "chineseTraditional": "Chinees (traditioneel)",
   "korean": "한국어",
   "japanese": "日本語",
+  "czech": "Čeština",
+  "slovak": "Slovenčina",
   "deleteMessagesTitle": "Berichten verwijderen",
   "deleteMessagesMessage": "{count} berichten verwijderen?",
   "@deleteMessagesMessage": {
@@ -332,6 +334,12 @@
   "sttServerUnavailableWarning": "Verbind met een server met transcriptie ingeschakeld om deze optie te gebruiken.",
   "sttSilenceDuration": "Stilteduur",
   "sttSilenceDurationDescription": "Tijd om te wachten na stilte voordat de opname automatisch stopt",
+  "sttTranscriptionLanguage": "Transcriptietaal",
+  "sttTranscriptionLanguageDescription": "Gebruik Auto om de taal van dit apparaat te volgen, of voer een code zoals pl in.",
+  "sttTranscriptionLanguageAuto": "Auto",
+  "sttTranscriptionLanguageCustom": "Aangepaste taalcode",
+  "sttTranscriptionLanguagePlaceholder": "ISO-639-1-code, bijv. pl",
+  "sttTranscriptionLanguageInvalid": "Gebruik een tweeletterige taalcode zoals pl.",
   "ttsSettings": "Tekst naar spraak",
   "ttsEngineDeviceDescription": "Houdt de synthese op dit apparaat. Spraakweergave werkt niet als het apparaat geen TTS ondersteunt.",
   "ttsEngineServerDescription": "Vraagt altijd audio op bij je OpenWebUI-server.",
@@ -1775,5 +1783,17 @@
   "failedToLoadTools": "Kan tools niet laden",
   "@failedToLoadTools": {
     "description": "Error shown when the composer overflow menu cannot load tools."
-  }
+  },
+  "terminalExpandAction": "Volledig scherm",
+  "terminalReopenFullscreen": "Geopend op volledig scherm - tik om opnieuw te openen",
+  "terminalKeyTab": "Tab",
+  "terminalKeyUp": "Omhoog",
+  "terminalKeyDown": "Omlaag",
+  "terminalKeyCtrlC": "Ctrl-C",
+  "terminalCopyAction": "Kopiëren",
+  "terminalPasteAction": "Plakken",
+  "terminalNothingToCopy": "Niets geselecteerd om te kopiëren",
+  "terminalCopied": "Gekopieerd naar klembord",
+  "terminalPasteWhileDisconnected": "Maak verbinding om te plakken",
+  "terminalPortsToggle": "Luisterende poorten"
 }

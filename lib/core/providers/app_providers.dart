@@ -2860,15 +2860,18 @@ final rawUserSettingsProvider = FutureProvider<Map<String, dynamic>>((
 
 @Riverpod(keepAlive: true)
 class PersonalizationSettings extends _$PersonalizationSettings {
+  int _pinnedModelsWriteGeneration = 0;
+  String? _settingsServerId;
+  ServerUserSettings? _settingsSnapshot;
+
   @override
   Future<ServerUserSettings> build() async {
     ref.watch(activeServerProvider.select((s) => s.asData?.value?.id));
     final apiAlive = ref.watch(apiServiceProvider.select((a) => a != null));
-    final api = ref.read(apiServiceProvider);
-    if (!apiAlive || api == null) {
-      return const ServerUserSettings();
+    if (!apiAlive) {
+      return _localPinnedModelSettings();
     }
-    return api.getServerUserSettingsModel();
+    return _loadSettings();
   }
 
   Future<void> refresh() async {
@@ -2882,11 +2885,17 @@ class PersonalizationSettings extends _$PersonalizationSettings {
       throw StateError('No API service available');
     }
 
+    final serverId = api.serverConfig.id;
     final updated = await api.updateUserSystemPrompt(systemPrompt);
     if (!ref.mounted) {
       return updated;
     }
+    if (!_isCurrentServer(serverId)) {
+      return _currentSettingsForActiveServerOrDefault();
+    }
 
+    _settingsServerId = serverId;
+    _settingsSnapshot = updated;
     state = AsyncData(updated);
     ref.invalidate(rawUserSettingsProvider);
     ref.invalidate(userSettingsProvider);
@@ -2899,25 +2908,218 @@ class PersonalizationSettings extends _$PersonalizationSettings {
       throw StateError('No API service available');
     }
 
+    final serverId = api.serverConfig.id;
     final updated = await api.updateUserMemoryEnabled(enabled);
     if (!ref.mounted) {
       return updated;
     }
+    if (!_isCurrentServer(serverId)) {
+      return _currentSettingsForActiveServerOrDefault();
+    }
 
+    _settingsServerId = serverId;
+    _settingsSnapshot = updated;
     state = AsyncData(updated);
     ref.invalidate(rawUserSettingsProvider);
     ref.invalidate(userSettingsProvider);
     return updated;
   }
 
+  Future<ServerUserSettings> setPinnedModels(List<String> modelIds) async {
+    final sanitized = SettingsService.sanitizePinnedModels(modelIds);
+    final api = ref.read(apiServiceProvider);
+    final serverId = api?.serverConfig.id;
+    final current =
+        _currentSettingsForServer(serverId) ?? const ServerUserSettings();
+    final optimistic = current.copyWith(pinnedModelIds: sanitized);
+    final writeGeneration = ++_pinnedModelsWriteGeneration;
+
+    _settingsServerId = serverId;
+    _settingsSnapshot = optimistic;
+    state = AsyncData(optimistic);
+    await ref.read(appSettingsProvider.notifier).setPinnedModels(sanitized);
+
+    if (api == null) {
+      return optimistic;
+    }
+
+    try {
+      final updated = await api.updateUserPinnedModels(sanitized);
+      if (!ref.mounted) {
+        return updated;
+      }
+      if (!_isCurrentServer(serverId)) {
+        return _currentSettingsForActiveServerOrDefault();
+      }
+      if (writeGeneration != _pinnedModelsWriteGeneration) {
+        return state.asData?.value ?? updated;
+      }
+
+      _settingsServerId = serverId;
+      _settingsSnapshot = updated;
+      state = AsyncData(updated);
+      _cachePinnedModelsLocally(updated.pinnedModelIds);
+      ref.invalidate(rawUserSettingsProvider);
+      ref.invalidate(userSettingsProvider);
+      return updated;
+    } catch (error, stackTrace) {
+      if (!_isCurrentServer(serverId)) {
+        return _currentSettingsForActiveServerOrDefault();
+      }
+      if (writeGeneration != _pinnedModelsWriteGeneration) {
+        return state.asData?.value ?? optimistic;
+      }
+      DebugLogger.error(
+        'server-pinned-models-update-failed',
+        scope: 'settings',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return optimistic;
+    }
+  }
+
+  Future<ServerUserSettings> togglePinnedModel(String modelId) {
+    final trimmed = modelId.trim();
+    if (trimmed.isEmpty) {
+      return Future.value(state.asData?.value ?? const ServerUserSettings());
+    }
+
+    final api = ref.read(apiServiceProvider);
+    final currentSettings = _currentSettingsForServer(api?.serverConfig.id);
+    if (api != null && currentSettings == null) {
+      return Future.value(_currentSettingsForActiveServerOrDefault());
+    }
+
+    final currentPinned = currentSettings?.pinnedModelIds;
+    final existing = api == null
+        ? currentPinned ?? ref.read(appSettingsProvider).pinnedModels
+        : currentPinned ?? const <String>[];
+    final updated = existing.contains(trimmed)
+        ? existing.where((id) => id != trimmed).toList(growable: false)
+        : SettingsService.sanitizePinnedModels([...existing, trimmed]);
+    return setPinnedModels(updated);
+  }
+
   Future<ServerUserSettings> _loadSettings() async {
     final api = ref.read(apiServiceProvider);
     if (api == null) {
-      return const ServerUserSettings();
+      _settingsServerId = null;
+      final localSettings = _localPinnedModelSettings();
+      _settingsSnapshot = localSettings;
+      return localSettings;
     }
-    return api.getServerUserSettingsModel();
+    final serverId = api.serverConfig.id;
+    final readGeneration = _pinnedModelsWriteGeneration;
+    final settings = await api.getServerUserSettingsModel();
+    if (!ref.mounted) {
+      return settings;
+    }
+    if (!_isCurrentServer(serverId)) {
+      return _currentSettingsForActiveServerOrDefault();
+    }
+    if (readGeneration != _pinnedModelsWriteGeneration) {
+      final merged = _settingsWithCurrentPinnedModels(settings, serverId);
+      _settingsServerId = serverId;
+      _settingsSnapshot = merged;
+      return merged;
+    }
+
+    _settingsServerId = serverId;
+    _settingsSnapshot = settings;
+    _cachePinnedModelsLocally(settings.pinnedModelIds);
+    return settings;
+  }
+
+  ServerUserSettings _settingsWithCurrentPinnedModels(
+    ServerUserSettings settings,
+    String? serverId,
+  ) {
+    final currentPinned = _currentSettingsForServer(serverId)?.pinnedModelIds;
+    return settings.copyWith(
+      pinnedModelIds: SettingsService.sanitizePinnedModels(
+        currentPinned ?? const <String>[],
+      ),
+    );
+  }
+
+  ServerUserSettings? _currentSettingsForServer(String? serverId) {
+    if (serverId != _settingsServerId) {
+      return null;
+    }
+    final current = state.asData?.value;
+    return current ?? _settingsSnapshot;
+  }
+
+  bool _isCurrentServer(String? serverId) {
+    return serverId == _currentApiServerId();
+  }
+
+  String? _currentApiServerId() {
+    return ref.read(apiServiceProvider)?.serverConfig.id;
+  }
+
+  ServerUserSettings _currentSettingsForActiveServerOrDefault() {
+    return _currentSettingsForServer(_currentApiServerId()) ??
+        const ServerUserSettings();
+  }
+
+  bool get canTogglePinnedModels {
+    final api = ref.read(apiServiceProvider);
+    return api == null ||
+        _currentSettingsForServer(api.serverConfig.id) != null;
+  }
+
+  ServerUserSettings _localPinnedModelSettings() {
+    return ServerUserSettings(
+      pinnedModelIds: ref.read(appSettingsProvider).pinnedModels,
+    );
+  }
+
+  void _cachePinnedModelsLocally(List<String> modelIds) {
+    final local = ref.read(appSettingsProvider).pinnedModels;
+    if (listEquals(local, modelIds)) {
+      return;
+    }
+
+    unawaited(
+      Future<void>.microtask(() async {
+        if (!ref.mounted) {
+          return;
+        }
+        await ref.read(appSettingsProvider.notifier).setPinnedModels(modelIds);
+      }),
+    );
   }
 }
+
+final effectivePinnedModelIdsProvider = Provider<List<String>>((ref) {
+  final localPinnedModelIds = ref.watch(
+    appSettingsProvider.select((settings) => settings.pinnedModels),
+  );
+  final apiAlive = ref.watch(apiServiceProvider.select((api) => api != null));
+  if (!apiAlive) {
+    return localPinnedModelIds;
+  }
+
+  final serverSettings = ref.watch(personalizationSettingsProvider);
+  return serverSettings.maybeWhen(
+    data: (settings) => settings.pinnedModelIds,
+    orElse: () => localPinnedModelIds,
+  );
+});
+
+final canTogglePinnedModelsProvider = Provider<bool>((ref) {
+  final api = ref.watch(apiServiceProvider);
+  if (api == null) {
+    return true;
+  }
+
+  ref.watch(personalizationSettingsProvider);
+  return ref
+      .read(personalizationSettingsProvider.notifier)
+      .canTogglePinnedModels;
+});
 
 @Riverpod(keepAlive: true)
 class UserMemories extends _$UserMemories {
@@ -3149,6 +3351,60 @@ Future<Map<String, dynamic>> userPermissions(Ref ref) async {
   }
 }
 
+bool _coerceFeatureFlag(dynamic value, {required bool fallback}) {
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  if (value is String) {
+    switch (value.trim().toLowerCase()) {
+      case 'true':
+      case '1':
+      case 'yes':
+        return true;
+      case 'false':
+      case '0':
+      case 'no':
+        return false;
+    }
+  }
+  return fallback;
+}
+
+bool _userCanUseFeature({
+  required User? user,
+  required Map<String, dynamic> permissions,
+  required String featureKey,
+}) {
+  if (user?.role == 'admin') {
+    return true;
+  }
+
+  final features = permissions['features'];
+  if (features is Map) {
+    return _coerceFeatureFlag(features[featureKey], fallback: true);
+  }
+
+  return true;
+}
+
+bool _modelSupportsFeature(Model? model, String featureKey) {
+  final metadata = model?.metadata;
+  final info = metadata?['info'];
+  final infoMeta = info is Map ? info['meta'] : null;
+  final rootMeta = metadata?['meta'];
+
+  for (final capabilities in <dynamic>[
+    if (infoMeta is Map) infoMeta['capabilities'],
+    if (rootMeta is Map) rootMeta['capabilities'],
+    model?.capabilities,
+  ]) {
+    if (capabilities is Map && capabilities.containsKey(featureKey)) {
+      return _coerceFeatureFlag(capabilities[featureKey], fallback: true);
+    }
+  }
+
+  return true;
+}
+
 final imageGenerationAvailableProvider = Provider<bool>((ref) {
   final perms = ref.watch(userPermissionsProvider);
   return perms.maybeWhen(
@@ -3170,20 +3426,28 @@ final imageGenerationAvailableProvider = Provider<bool>((ref) {
 });
 
 final webSearchAvailableProvider = Provider<bool>((ref) {
+  final backendConfig = ref
+      .watch(backendConfigProvider)
+      .maybeWhen(data: (config) => config, orElse: () => null);
+  if (backendConfig?.enableWebSearch == false) {
+    return false;
+  }
+
+  final selectedModel = ref.watch(selectedModelProvider);
+  if (!_modelSupportsFeature(selectedModel, 'web_search')) {
+    return false;
+  }
+
+  final user = ref
+      .watch(currentUserProvider)
+      .maybeWhen(data: (value) => value, orElse: () => null);
   final perms = ref.watch(userPermissionsProvider);
   return perms.maybeWhen(
-    data: (data) {
-      final features = data['features'];
-      if (features is Map<String, dynamic>) {
-        final value = features['web_search'];
-        if (value is bool) return value;
-        if (value is String) return value.toLowerCase() != 'false';
-      }
-      // No explicit permission — default to available. Open WebUI defaults
-      // web_search to true and the server will ignore the flag if the feature
-      // is not configured.
-      return true;
-    },
+    data: (data) => _userCanUseFeature(
+      user: user,
+      permissions: data,
+      featureKey: 'web_search',
+    ),
     // Permissions unavailable (loading, error, older server) — assume available.
     orElse: () => true,
   );

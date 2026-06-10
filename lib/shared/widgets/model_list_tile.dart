@@ -58,6 +58,39 @@ class ModelCapabilityChip extends StatelessWidget {
   }
 }
 
+/// Small text label for OpenWebUI model tags.
+class ModelTagChip extends StatelessWidget {
+  final String label;
+
+  const ModelTagChip({super.key, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.conduitTheme;
+    return Container(
+      margin: const EdgeInsets.only(right: Spacing.xs),
+      padding: const EdgeInsets.symmetric(horizontal: Spacing.xs, vertical: 2),
+      decoration: BoxDecoration(
+        color: theme.surfaceContainerHighest.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(AppBorderRadius.chip),
+        border: Border.all(
+          color: theme.dividerColor.withValues(alpha: 0.7),
+          width: BorderWidth.thin,
+        ),
+      ),
+      child: Text(
+        label.toUpperCase(),
+        style: AppTypography.labelSmallStyle.copyWith(
+          color: theme.textSecondary,
+          fontWeight: FontWeight.w600,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+}
+
 /// Compact list tile for model selection, styled like the sidebar
 /// conversation tiles — no card borders, rounded active highlight.
 class ModelListTile extends StatelessWidget {
@@ -71,6 +104,9 @@ class ModelListTile extends StatelessWidget {
   /// Whether this tile represents the "auto-select" option.
   final bool isAutoSelect;
 
+  /// Whether this model is pinned in model selectors.
+  final bool isPinned;
+
   const ModelListTile({
     super.key,
     required this.model,
@@ -78,6 +114,7 @@ class ModelListTile extends StatelessWidget {
     required this.onTap,
     this.iconUrl,
     this.isAutoSelect = false,
+    this.isPinned = false,
   });
 
   @override
@@ -115,6 +152,10 @@ class ModelListTile extends StatelessWidget {
 
     final hasCapabilities =
         !isAutoSelect && (model.isMultimodal || modelSupportsReasoning(model));
+    final modelTags = <String>[if (!isAutoSelect) ...model.modelTags]
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final hasTags = modelTags.isNotEmpty;
+    final hasMetadataRow = hasCapabilities || hasTags;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: Spacing.xxs),
@@ -165,30 +206,49 @@ class ModelListTile extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                    ] else if (hasCapabilities) ...[
+                    ] else if (hasMetadataRow) ...[
                       const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          if (model.isMultimodal)
-                            ModelCapabilityChip(
-                              icon: Platform.isIOS
-                                  ? CupertinoIcons.photo
-                                  : Icons.image,
-                              label: l10n.modelCapabilityMultimodal,
-                            ),
-                          if (modelSupportsReasoning(model))
-                            ModelCapabilityChip(
-                              icon: Platform.isIOS
-                                  ? CupertinoIcons.lightbulb
-                                  : Icons.psychology_alt,
-                              label: l10n.modelCapabilityReasoning,
-                            ),
-                        ],
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 22),
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          physics: const ClampingScrollPhysics(),
+                          child: Row(
+                            children: [
+                              for (final tag in modelTags)
+                                ModelTagChip(label: tag),
+                              if (model.isMultimodal)
+                                ModelCapabilityChip(
+                                  icon: Platform.isIOS
+                                      ? CupertinoIcons.photo
+                                      : Icons.image,
+                                  label: l10n.modelCapabilityMultimodal,
+                                ),
+                              if (modelSupportsReasoning(model))
+                                ModelCapabilityChip(
+                                  icon: Platform.isIOS
+                                      ? CupertinoIcons.lightbulb
+                                      : Icons.psychology_alt,
+                                  label: l10n.modelCapabilityReasoning,
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
                     ],
                   ],
                 ),
               ),
+              if (isPinned && !isAutoSelect) ...[
+                const SizedBox(width: Spacing.xs),
+                Icon(
+                  Platform.isIOS
+                      ? CupertinoIcons.pin_fill
+                      : Icons.push_pin_rounded,
+                  color: theme.textSecondary,
+                  size: IconSize.small,
+                ),
+              ],
               if (isSelected) ...[
                 const SizedBox(width: Spacing.xs),
                 Icon(

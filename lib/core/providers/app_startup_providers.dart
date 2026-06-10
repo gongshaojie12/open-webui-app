@@ -10,6 +10,7 @@ import '../providers/app_providers.dart';
 import '../../features/auth/providers/unified_auth_providers.dart';
 import '../services/navigation_service.dart';
 import '../services/app_intents_service.dart';
+import '../services/carplay_service.dart';
 import '../services/home_widget_service.dart';
 import '../services/api_service.dart';
 import '../models/conversation.dart';
@@ -18,9 +19,10 @@ import '../services/socket_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/share_receiver_service.dart';
 import '../utils/debug_logger.dart';
+import '../utils/system_ui_style.dart';
 import '../models/server_config.dart';
-import '../../shared/widgets/markdown/renderer/latex_rendering_server.dart';
 import '../../features/tools/providers/tools_providers.dart';
+import '../../features/chat/providers/chat_providers.dart';
 
 part 'app_startup_providers.g.dart';
 
@@ -756,16 +758,14 @@ class AppStartupFlow extends _$AppStartupFlow {
         final platformBrightness =
             view?.platformDispatcher.platformBrightness ??
             dispatcher.platformBrightness;
-        final isDark = platformBrightness == Brightness.dark;
+        final themeMode = ref.read(appThemeModeProvider);
+        final brightness = switch (themeMode) {
+          ThemeMode.light => Brightness.light,
+          ThemeMode.dark => Brightness.dark,
+          ThemeMode.system => platformBrightness,
+        };
         SystemChrome.setSystemUIOverlayStyle(
-          SystemUiOverlayStyle(
-            statusBarIconBrightness: isDark
-                ? Brightness.light
-                : Brightness.dark,
-            systemNavigationBarIconBrightness: isDark
-                ? Brightness.light
-                : Brightness.dark,
-          ),
+          systemUiOverlayStyleForBrightness(brightness),
         );
       } catch (_) {}
     }, label: 'system-ui-polish');
@@ -793,6 +793,11 @@ class AppStartupFlow extends _$AppStartupFlow {
       label: 'app-intents',
     );
     _scheduleDeferredKeepAlive(
+      const Duration(milliseconds: 56),
+      carPlayCoordinatorProvider,
+      label: 'carplay',
+    );
+    _scheduleDeferredKeepAlive(
       const Duration(milliseconds: 64),
       homeWidgetCoordinatorProvider,
       label: 'home-widget',
@@ -801,11 +806,6 @@ class AppStartupFlow extends _$AppStartupFlow {
       const Duration(milliseconds: 80),
       () => ref.read(shareReceiverInitializerProvider),
       label: 'share-receiver',
-    );
-    _scheduleAfterDelay(
-      const Duration(milliseconds: 180),
-      LatexRenderingServer.prewarm,
-      label: 'latex-prewarm',
     );
   }
 
@@ -1125,12 +1125,63 @@ class _ForegroundRefreshObserver extends WidgetsBindingObserver {
         try {
           refreshConversationsCache(_ref);
           _resetConversationWarmup(_ref);
+          unawaited(_refreshActiveConversationOnResume(_ref));
         } catch (_) {}
         // Resume already kicked off a forced conversations refresh above; only
         // finish the warmup work that should run alongside it.
         _scheduleForcedConversationWarmup(_ref, refreshConversations: false);
       });
     }
+  }
+}
+
+Future<void> _refreshActiveConversationOnResume(Ref ref) async {
+  String? conversationId;
+  try {
+    if (!ref.mounted) {
+      return;
+    }
+
+    final api = ref.read(apiServiceProvider);
+    final active = ref.read(activeConversationProvider);
+    if (api == null ||
+        active == null ||
+        isTemporaryChat(active.id) ||
+        ref.read(shouldProtectLocalStreamingStateProvider)) {
+      return;
+    }
+
+    conversationId = active.id;
+    final refreshed = await api.getConversation(conversationId);
+    if (!ref.mounted) {
+      return;
+    }
+
+    final currentActive = ref.read(activeConversationProvider);
+    if (currentActive == null ||
+        currentActive.id != conversationId ||
+        ref.read(shouldProtectLocalStreamingStateProvider)) {
+      return;
+    }
+
+    ref.read(activeConversationProvider.notifier).set(refreshed);
+    try {
+      ref
+          .read(conversationsProvider.notifier)
+          .upsertConversation(
+            refreshed.copyWith(messages: const []),
+            trustFolderConversation:
+                refreshed.folderId != null && refreshed.folderId!.isNotEmpty,
+          );
+    } catch (_) {}
+  } catch (error, stackTrace) {
+    DebugLogger.error(
+      'resume-active-conversation-refresh-failed',
+      scope: 'startup',
+      error: error,
+      stackTrace: stackTrace,
+      data: {'conversationId': conversationId ?? '<unknown>'},
+    );
   }
 }
 

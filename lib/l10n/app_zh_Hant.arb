@@ -169,6 +169,8 @@
   "chineseTraditional": "繁體中文",
   "korean": "한국어",
   "japanese": "日本語",
+  "czech": "Čeština",
+  "slovak": "Slovenčina",
   "deleteMessagesTitle": "刪除消息",
   "deleteMessagesMessage": "刪除 {count} 條消息？",
   "@deleteMessagesMessage": {
@@ -332,6 +334,12 @@
   "sttServerUnavailableWarning": "連接到啓用轉寫功能的服務器後才能使用此選項。",
   "sttSilenceDuration": "靜音持續時間",
   "sttSilenceDurationDescription": "檢測到靜音後等待多久自動停止錄音",
+  "sttTranscriptionLanguage": "轉寫語言",
+  "sttTranscriptionLanguageDescription": "使用「自動」跟隨此裝置的語言，或輸入 pl 等代碼。",
+  "sttTranscriptionLanguageAuto": "自動",
+  "sttTranscriptionLanguageCustom": "自訂語言代碼",
+  "sttTranscriptionLanguagePlaceholder": "ISO-639-1 代碼，例如 pl",
+  "sttTranscriptionLanguageInvalid": "請使用 pl 這樣的雙字母語言代碼。",
   "ttsSettings": "文本轉語音",
   "ttsEngineDeviceDescription": "在此設備上完成合成。如果設備不支持文本轉語音，語音播放將不可用。",
   "ttsEngineServerDescription": "始終向你的 OpenWebUI 服務器請求音頻。",
@@ -1775,5 +1783,17 @@
   "failedToLoadTools": "無法載入工具",
   "@failedToLoadTools": {
     "description": "Error shown when the composer overflow menu cannot load tools."
-  }
+  },
+  "terminalExpandAction": "全螢幕",
+  "terminalReopenFullscreen": "已在全螢幕開啟 - 點一下以重新開啟",
+  "terminalKeyTab": "Tab",
+  "terminalKeyUp": "上",
+  "terminalKeyDown": "下",
+  "terminalKeyCtrlC": "Ctrl-C",
+  "terminalCopyAction": "複製",
+  "terminalPasteAction": "貼上",
+  "terminalNothingToCopy": "沒有選取可複製的內容",
+  "terminalCopied": "已複製到剪貼簿",
+  "terminalPasteWhileDisconnected": "連線後貼上",
+  "terminalPortsToggle": "監聽連接埠"
 }
