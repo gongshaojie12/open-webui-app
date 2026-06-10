@@ -23,7 +23,8 @@
 11. [国际化文本改动](#11-国际化文本改动)
 12. [新增文件清单](#12-新增文件清单)
 13. [删除文件清单](#13-删除文件清单)
-14. [升级操作检查清单](#14-升级操作检查清单)
+14. [移除个人赞助入口（Profile 页面）](#14-移除个人赞助入口profile-页面)
+15. [升级操作检查清单](#15-升级操作检查清单)
 
 ---
 
@@ -591,7 +592,34 @@ org.gradle.jvmargs=-Xmx2G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m
 
 ---
 
-## 14. 升级操作检查清单
+## 14. 移除个人赞助入口（Profile 页面）
+
+### 背景
+
+设置（Profile / You）页面底部存在「支持 众小智 AI」赞助区块，包含 **Buy Me a Coffee** 和 **GitHub 赞助** 两个外链入口（指向上游作者 `cogwheel0` 的个人收款页面）。本次改动将该区块整体移除。
+
+### 改动文件
+
+| 文件路径 | 说明 |
+|---------|------|
+| `lib/features/profile/views/profile_page.dart` | 移除赞助区块及相关代码 |
+
+### 具体改动
+
+- 页面 body 中移除 `_buildSupportSection(context)` 调用及其上方的间距 `SizedBox`。
+- 删除已不再使用的私有方法：`_buildSupportSection`、`_buildSupportOption`、`_openExternalLink`。
+- 删除已不再使用的常量：`_githubSponsorsUrl`、`_buyMeACoffeeUrl`。
+- 删除已不再使用的 `package:url_launcher/url_launcher_string.dart` 导入。
+
+> 说明：`_buildIconBadge` 仍被其他区块使用，保留未动。相关本地化字符串（`supportConduit`、`buyMeACoffeeTitle`、`githubSponsorsTitle` 等）保留在各 `lib/l10n/app_*.arb` 中，未删除（无害，最小化改动）。
+
+### 验证
+
+- `flutter analyze lib/features/profile/views/profile_page.dart` → **No issues found**。
+
+---
+
+## 15. 升级操作检查清单
 
 从上游合并新版本后，按以下清单逐项检查：
 
