@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 54;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -112,10 +112,10 @@
 		D2A0B2212F5E4D6C7B8A9012 /* CarPlay.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CarPlay.framework; path = System/Library/Frameworks/CarPlay.framework; sourceTree = SDKROOT; };
 		D2A0B2222F5E4D6C7B8A9012 /* ConduitCarPlayBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConduitCarPlayBridge.swift; sourceTree = "<group>"; };
 		D2A0B2232F5E4D6C7B8A9012 /* ConduitCarPlaySceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConduitCarPlaySceneDelegate.swift; sourceTree = "<group>"; };
-		D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ConduitWidget/ConduitWidget.xcconfig; sourceTree = "<group>"; };
-		D2A0B3022F5E4D6C7B8A9012 /* ShareExtension.debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ShareExtension/ShareExtension.debug.xcconfig; sourceTree = "<group>"; };
-		D2A0B3032F5E4D6C7B8A9012 /* ShareExtension.release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ShareExtension/ShareExtension.release.xcconfig; sourceTree = "<group>"; };
-		D2A0B3042F5E4D6C7B8A9012 /* ShareExtension.profile.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ShareExtension/ShareExtension.profile.xcconfig; sourceTree = "<group>"; };
+		D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget/ConduitWidget.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ConduitWidget/ConduitWidget.xcconfig; sourceTree = "<group>"; };
+		D2A0B3022F5E4D6C7B8A9012 /* ShareExtension/ShareExtension.debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ShareExtension/ShareExtension.debug.xcconfig; sourceTree = "<group>"; };
+		D2A0B3032F5E4D6C7B8A9012 /* ShareExtension/ShareExtension.release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ShareExtension/ShareExtension.release.xcconfig; sourceTree = "<group>"; };
+		D2A0B3042F5E4D6C7B8A9012 /* ShareExtension/ShareExtension.profile.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ShareExtension/ShareExtension.profile.xcconfig; sourceTree = "<group>"; };
 		E590F0BC5DD9A3EFB1FDDDBF /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
 		E952EFF81F1FEABA348FE2CC /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		F15AFEC22EE5499D00A1FABB /* ConduitWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ConduitWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -149,7 +149,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		F15AFED52EE5499E00A1FABB /* Exceptions for "ConduitWidget" folder in "ConduitWidgetExtension" target */ = {
+		F15AFED52EE5499E00A1FABB /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				ConduitWidget.xcconfig,
@@ -157,7 +157,7 @@
 			);
 			target = F15AFEC12EE5499D00A1FABB /* ConduitWidgetExtension */;
 		};
-		F1DBCF222E601A39004C2540 /* Exceptions for "ShareExtension" folder in "ShareExtension" target */ = {
+		F1DBCF222E601A39004C2540 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -170,30 +170,8 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		F15AFEC72EE5499D00A1FABB /* ConduitWidget */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				F15AFED52EE5499E00A1FABB /* Exceptions for "ConduitWidget" folder in "ConduitWidgetExtension" target */,
-			);
-			explicitFileTypes = {
-			};
-			explicitFolders = (
-			);
-			path = ConduitWidget;
-			sourceTree = "<group>";
-		};
-		F1DBCF142E601A39004C2540 /* ShareExtension */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				F1DBCF222E601A39004C2540 /* Exceptions for "ShareExtension" folder in "ShareExtension" target */,
-			);
-			explicitFileTypes = {
-			};
-			explicitFolders = (
-			);
-			path = ShareExtension;
-			sourceTree = "<group>";
-		};
+		F15AFEC72EE5499D00A1FABB /* ConduitWidget */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (F15AFED52EE5499E00A1FABB /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = ConduitWidget; sourceTree = "<group>"; };
+		F1DBCF142E601A39004C2540 /* ShareExtension */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (F1DBCF222E601A39004C2540 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = ShareExtension; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -285,10 +263,10 @@
 				97C146F01CF9000F007C117D /* Runner */,
 				F1DBCF142E601A39004C2540 /* ShareExtension */,
 				F15AFEC72EE5499D00A1FABB /* ConduitWidget */,
-				D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget.xcconfig */,
-				D2A0B3022F5E4D6C7B8A9012 /* ShareExtension.debug.xcconfig */,
-				D2A0B3032F5E4D6C7B8A9012 /* ShareExtension.release.xcconfig */,
-				D2A0B3042F5E4D6C7B8A9012 /* ShareExtension.profile.xcconfig */,
+				D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget/ConduitWidget.xcconfig */,
+				D2A0B3022F5E4D6C7B8A9012 /* ShareExtension/ShareExtension.debug.xcconfig */,
+				D2A0B3032F5E4D6C7B8A9012 /* ShareExtension/ShareExtension.release.xcconfig */,
+				D2A0B3042F5E4D6C7B8A9012 /* ShareExtension/ShareExtension.profile.xcconfig */,
 				97C146EF1CF9000F007C117D /* Products */,
 				331C8082294A63A400263BE5 /* RunnerTests */,
 				8C43905FA2E52A883F49D605 /* Pods */,
@@ -523,8 +501,12 @@
 			);
 			inputFileListPaths = (
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -591,8 +573,12 @@
 			);
 			inputFileListPaths = (
 			);
+			inputPaths = (
+			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -1045,7 +1031,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
-				DEVELOPMENT_TEAM = 3Q3DYV42U3;
+				DEVELOPMENT_TEAM = 7B3F4A4B28;
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				INFOPLIST_FILE = Runner/Info.plist;
@@ -1074,7 +1060,7 @@
 		};
 		F15AFED22EE5499E00A1FABB /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget.xcconfig */;
+			baseConfigurationReference = D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget/ConduitWidget.xcconfig */;
 			buildSettings = {
 				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI.x2662v5dt2.debug;
 				APP_URL_SCHEME = "conduit-debug";
@@ -1123,7 +1109,7 @@
 		};
 		F15AFED32EE5499E00A1FABB /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget.xcconfig */;
+			baseConfigurationReference = D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget/ConduitWidget.xcconfig */;
 			buildSettings = {
 				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI;
 				APP_URL_SCHEME = conduit;
@@ -1169,7 +1155,7 @@
 		};
 		F15AFED42EE5499E00A1FABB /* Profile */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget.xcconfig */;
+			baseConfigurationReference = D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget/ConduitWidget.xcconfig */;
 			buildSettings = {
 				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI.x2662v5dt2.debug;
 				APP_URL_SCHEME = "conduit-debug";
@@ -1215,7 +1201,7 @@
 		};
 		F1DBCF1F2E601A39004C2540 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = D2A0B3022F5E4D6C7B8A9012 /* ShareExtension.debug.xcconfig */;
+			baseConfigurationReference = D2A0B3022F5E4D6C7B8A9012 /* ShareExtension/ShareExtension.debug.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = NO;
 				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI.x2662v5dt2.debug;
@@ -1261,7 +1247,7 @@
 		};
 		F1DBCF202E601A39004C2540 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = D2A0B3032F5E4D6C7B8A9012 /* ShareExtension.release.xcconfig */;
+			baseConfigurationReference = D2A0B3032F5E4D6C7B8A9012 /* ShareExtension/ShareExtension.release.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = NO;
 				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI;
@@ -1304,7 +1290,7 @@
 		};
 		F1DBCF212E601A39004C2540 /* Profile */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = D2A0B3042F5E4D6C7B8A9012 /* ShareExtension.profile.xcconfig */;
+			baseConfigurationReference = D2A0B3042F5E4D6C7B8A9012 /* ShareExtension/ShareExtension.profile.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = NO;
 				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI.x2662v5dt2.debug;
