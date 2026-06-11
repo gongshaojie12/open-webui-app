@@ -14,7 +14,9 @@ import 'webview_content_height.dart';
 const _embedDefaultHeight = 360.0;
 const _embedFallbackHeight = 160.0;
 const _embedMinHeight = 220.0;
-const _embedMaxHeight = 900.0;
+// 提高上限：PPT 查看器（缩略图侧栏 + 大图）和进度条提示可能超过 900px，
+// 旧值会把内容裁短导致下方留白/无法完整显示。
+const _embedMaxHeight = 2000.0;
 
 class WebContentEmbed extends StatefulWidget {
   const WebContentEmbed({
@@ -301,6 +303,62 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
     } catch (_) {}
   }
 
+  /// 注入高度上报脚本：
+  /// 1. 拦截 embed 内 `parent.postMessage({type:"iframe:height",height})`，
+  ///    转交给 Flutter 的 `conduitEmbedHeight` handler（与 Web 端机制一致）。
+  /// 2. 监听所有 `<img>` 的 load 事件与 window.resize / DOM 变化，图片异步
+  ///    加载完成后重新测高并上报——解决 PPT 查看器首帧图片未加载导致的留白
+  ///    （即“点下载返回后才显示”的本质：图片加载完成后重新布局）。
+  Future<void> _injectHeightReporter(InAppWebViewController controller) async {
+    const script = r'''
+(function(){
+  function report(){
+    try{
+      var h=Math.max(
+        document.documentElement.scrollHeight||0,
+        document.body?document.body.scrollHeight:0,
+        document.documentElement.offsetHeight||0
+      );
+      if(h>0 && window.flutter_inappwebview){
+        window.flutter_inappwebview.callHandler('conduitEmbedHeight', h);
+      }
+    }catch(e){}
+  }
+  // 拦截 embed 通过 parent.postMessage 上报的高度（pipe 进度条/查看器）
+  try{
+    window.addEventListener('message', function(ev){
+      var d=ev&&ev.data;
+      if(d&&d.type==='iframe:height'&&d.height>0&&window.flutter_inappwebview){
+        window.flutter_inappwebview.callHandler('conduitEmbedHeight', d.height);
+      }
+    });
+  }catch(e){}
+  // 图片异步加载完成后重新测高
+  try{
+    var imgs=document.getElementsByTagName('img');
+    for(var i=0;i<imgs.length;i++){
+      if(!imgs[i].complete){
+        imgs[i].addEventListener('load', report);
+        imgs[i].addEventListener('error', report);
+      }
+    }
+  }catch(e){}
+  // DOM 变化（查看器切页换图）后重新测高
+  try{
+    new MutationObserver(report).observe(document.body,{childList:true,subtree:true,attributes:true});
+  }catch(e){}
+  window.addEventListener('resize', report);
+  report();
+  setTimeout(report,300);
+  setTimeout(report,1000);
+  setTimeout(report,2500);
+})();
+''';
+    try {
+      await controller.evaluateJavascript(source: script);
+    } catch (_) {}
+  }
+
   void _scheduleHeightUpdates(InAppWebViewController controller, int requestId) {
     _updateHeight(controller, requestId);
     for (final delay in <int>[60, 250, 600]) {
@@ -395,22 +453,65 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
               javaScriptEnabled: true,
               transparentBackground: true,
               // 允许 embed 内 JS 通过 window.open 打开链接（如 PPT 查看器的
-              // 下载 PDF/PPTX 按钮），由 onCreateWindow 拦截后转交系统浏览器。
+              // 下载 PDF/PPTX 按钮），由 shouldOverrideUrlLoading 拦截后转交
+              // 系统浏览器。useShouldOverrideUrlLoading 必须开启拦截才生效。
               supportMultipleWindows: true,
               javaScriptCanOpenWindowsAutomatically: true,
+              useShouldOverrideUrlLoading: true,
             ),
+            shouldOverrideUrlLoading: (controller, navigationAction) async {
+              final uri = navigationAction.request.url;
+              if (uri == null) {
+                return NavigationActionPolicy.ALLOW;
+              }
+              // 首次加载（loadData/loadUrl 自身）放行；仅拦截用户点击产生的
+              // 外部跳转（下载 PDF/PPTX 等），交给系统浏览器，避免 embed
+              // WebView 被销毁变白。
+              final isUserGesture = navigationAction.hasGesture ?? false;
+              final scheme = uri.scheme.toLowerCase();
+              final isExternal = scheme == 'http' || scheme == 'https';
+              if (isUserGesture && isExternal) {
+                try {
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                } catch (_) {}
+                return NavigationActionPolicy.CANCEL;
+              }
+              return NavigationActionPolicy.ALLOW;
+            },
             onCreateWindow: (controller, createWindowAction) async {
-              // WebUri 继承自 Uri，可直接交给 url_launcher。
+              // 兜底：某些 window.open 仍走 onCreateWindow（target=_blank）。
+              // 同样交给系统浏览器，并返回 false 不在 WebView 内开新窗口。
               final url = createWindowAction.request.url;
               if (url != null) {
                 try {
                   await launchUrl(url, mode: LaunchMode.externalApplication);
                 } catch (_) {}
               }
-              // 返回 false：不在 WebView 内新开窗口，已交给系统浏览器处理。
               return false;
             },
             onWebViewCreated: (controller) {
+              // 监听 embed 内部主动上报的高度（pipe 的 PPT 进度条/查看器通过
+              // postMessage({type:"iframe:height",height}) 持续上报）。
+              controller.addJavaScriptHandler(
+                handlerName: 'conduitEmbedHeight',
+                callback: (args) {
+                  if (!mounted || requestId != _loadRequestId) {
+                    return;
+                  }
+                  final raw = args.isNotEmpty ? args.first : null;
+                  final h = raw is num ? raw.toDouble() : null;
+                  if (h == null || h <= 0) {
+                    return;
+                  }
+                  final clamped = widget.fillAvailableHeight
+                      ? _height
+                      : h.clamp(_embedMinHeight, _embedMaxHeight).toDouble();
+                  setState(() {
+                    _height = clamped;
+                    _isLoading = false;
+                  });
+                },
+              );
               unawaited(_handleWebViewCreated(controller, requestId));
             },
             onLoadStop: (controller, _) async {
@@ -418,6 +519,7 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
                 return;
               }
               await _injectArguments(controller);
+              await _injectHeightReporter(controller);
               _scheduleHeightUpdates(controller, requestId);
             },
             onReceivedError: (controller, request, error) {

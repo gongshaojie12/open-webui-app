@@ -25,7 +25,7 @@
 13. [删除文件清单](#13-删除文件清单)
 14. [移除个人赞助入口（Profile 页面）](#14-移除个人赞助入口profile-页面)
 15. [合并上游 + 移除 CarPlay 语音 entitlement](#15-合并上游--移除-carplay-语音-entitlement)
-16. [PPT embed 在 iOS 上的进度条、滑动与下载修复](#16-ppt-embed-在-ios-上的进度条滑动与下载修复)
+16. [PPT embed 在 iOS 上的进度条、滑动、下载、留白与顺序修复](#16-ppt-embed-在-ios-上的进度条滑动下载留白与顺序修复)
 17. [升级操作检查清单](#17-升级操作检查清单)
 
 ---
@@ -677,7 +677,7 @@ org.gradle.jvmargs=-Xmx2G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m
 
 ---
 
-## 16. PPT embed 在 iOS 上的进度条、滑动与下载修复
+## 16. PPT embed 在 iOS 上的进度条、滑动、下载、留白与顺序修复
 
 ### 背景
 
@@ -733,44 +733,67 @@ final Set<Factory<OneSequenceGestureRecognizer>> _gestureRecognizers =
     };
 ```
 
-**3. `lib/shared/widgets/web_content_embed.dart`** — 支持 embed 内下载（window.open → 系统浏览器）
+**3. `lib/shared/widgets/web_content_embed.dart`** — 支持 embed 内下载（改用 shouldOverrideUrlLoading）
 
-新增 `import 'package:url_launcher/url_launcher.dart';`，在 `InAppWebViewSettings` 开启多窗口，并加 `onCreateWindow` 把 `window.open` 的链接交给系统浏览器：
+新增 `import 'package:url_launcher/url_launcher.dart';`。**最初用 `onCreateWindow` 拦截 `window.open` 并 `return false`，但会导致下载跳转返回 App 后 embed WebView 被销毁变白**（见下方“二次修复”）。最终方案改用 `shouldOverrideUrlLoading` 拦截**用户手势触发的**外部 http/https 跳转，交给系统浏览器，`onCreateWindow` 仅作兜底：
 
 ```dart
 initialSettings: InAppWebViewSettings(
   javaScriptEnabled: true,
   transparentBackground: true,
-  // 允许 embed 内 JS 通过 window.open 打开链接（如下载按钮）
   supportMultipleWindows: true,
   javaScriptCanOpenWindowsAutomatically: true,
+  useShouldOverrideUrlLoading: true,
 ),
-onCreateWindow: (controller, createWindowAction) async {
-  final url = createWindowAction.request.url; // WebUri 继承自 Uri
-  if (url != null) {
-    try {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
-    } catch (_) {}
+shouldOverrideUrlLoading: (controller, navigationAction) async {
+  final uri = navigationAction.request.url;
+  if (uri == null) return NavigationActionPolicy.ALLOW;
+  final isUserGesture = navigationAction.hasGesture ?? false;
+  final scheme = uri.scheme.toLowerCase();
+  final isExternal = scheme == 'http' || scheme == 'https';
+  if (isUserGesture && isExternal) {
+    try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {}
+    return NavigationActionPolicy.CANCEL; // 不在 embed 内导航，WebView 不被销毁
   }
-  return false; // 不在 WebView 内开新窗口，已交给系统浏览器
+  return NavigationActionPolicy.ALLOW; // 首次 loadData/loadUrl 放行
 },
 ```
 
+> 关键：用 `hasGesture` 区分“首次加载自身”与“用户点击下载”——只拦后者，避免误杀 embed 自身加载。
+
+### 二次修复（针对 docs 6/7/8/9 反馈的问题）
+
+实测发现以下问题，根因与修复如下：
+
+| 现象 | 根因 | 修复 |
+|------|------|------|
+| 进度条/查看器下方一大片**空白** | App 只在加载后 60/250/600ms 主动测高一次，且**不监听** pipe 主动发的 `iframe:height` postMessage；进度条 `visibility:hidden`、查看器图片异步加载，测高时机不对 → 高度算错。`_embedMaxHeight=900` 也偏小。 | `web_content_embed.dart`：① 新增 `_injectHeightReporter` 注入 JS，拦截 `iframe:height` postMessage + 监听 `<img>` load / MutationObserver / resize，实时回调 `conduitEmbedHeight` handler 动态调高（与 Web 端机制一致）；② `_embedMaxHeight` 900 → 2000。 |
+| 生成完成后**图片不显示**（裂图） | 查看器预览图用 open-webui 文件接口 `/api/v1/files/{id}/content`（**需登录态**），embed WebView 无登录 cookie。但图片首帧未加载完也会留白——“点下载返回后图片就显示了”正是因为回前台后 WebView 重绘 + 图片已加载完。 | 同上 `_injectHeightReporter`：监听图片 load 事件，加载完成后重新测高/触发重排，复现“返回后显示”的效果，无需改 pipe。 |
+| 下载跳转**返回 App 后白屏**（docs/8 之前的 onCreateWindow 方案） | `onCreateWindow` + `return false` 会中断/销毁当前 embed WebView。 | 改用 `shouldOverrideUrlLoading`（见改动 3），CANCEL 导航但不销毁 WebView。 |
+| 进度条位置：iOS 在**顶部**、大纲在下；Web 是大纲在上、进度条在**底部** | `assistant_message_widget.dart` 中 embed 渲染在正文 `_buildMessageContent()` **之前**。 | 调整渲染顺序：正文（大纲）在上，embed（进度条/查看器）移到正文**之后**，与 Web 一致。 |
+
 ### 效果与权衡
 
-- ✅ PPT 进度条 / 查看器在 iOS 自动显示进度条。
-- ✅ embed 区域上下滑 → 外层聊天页正常滚动；左右滑 → PPT 查看器切页正常；点击缩略图 / 下载按钮 / 上一页下一页（tap）不受影响。
-- ✅ 点击「下载 PDF/PPTX」→ Safari 打开 OBS 直链下载，可保存到 iOS「文件」App。
+- ✅ PPT 进度条 / 查看器在 iOS 自动显示，高度随内容/图片加载动态准确，无大片空白。
+- ✅ 查看器图片正常显示（图片加载完成后自动重排上报高度）。
+- ✅ 进度条/查看器位于大纲正文**下方**，与 Web 端一致。
+- ✅ embed 区域上下滑 → 外层聊天页滚动；左右滑 → 查看器切页；点击缩略图/下载/翻页正常。
+- ✅ 点击「下载 PDF/PPTX」→ Safari 打开 OBS 直链下载（可保存到「文件」App），返回 App 不白屏。
 - ✅ 远程网页 embed 仍保留「打开预览」省流量。
-- ⚠️ 权衡：若将来某 embed 内部有需要**垂直滚动**的长内容，其内部垂直滚动会失效（交给外层列表）。对固定高度、左右切页为主的 PPT 查看器无影响。
+- ⚠️ 权衡：embed 内部需垂直滚动的长内容，其内部垂直滚动会失效（交给外层）。对 PPT 查看器无影响。
 
 ### ⚠️ 升级注意
 
-合并上游时，以下三处为本项目定制，**容易被上游覆盖回默认值，需检查**：
+合并上游时，以下均为本项目定制，**容易被上游覆盖回默认值，需检查**：
 
-- `assistant_message_widget.dart` 中 `WebContentEmbed(... initiallyExpanded: !_isRemoteEmbedSource(source))` —— 上游默认为 `WebContentEmbed(source: source)`，会退回「打开预览」。
-- `web_content_embed.dart` 中 `_gestureRecognizers` —— 上游默认为 `EagerGestureRecognizer()`，会再次吞掉页面滑动。
-- `web_content_embed.dart` 中 `InAppWebViewSettings` 的 `supportMultipleWindows`/`javaScriptCanOpenWindowsAutomatically` 与 `onCreateWindow` 回调 —— 上游默认无，会导致 embed 内下载按钮再次失效。
+- `assistant_message_widget.dart`：
+  - `WebContentEmbed(... initiallyExpanded: !_isRemoteEmbedSource(source))` —— 上游默认 `WebContentEmbed(source: source)`，会退回「打开预览」。
+  - embed 渲染顺序在正文**之后** —— 上游默认在正文之前，会让进度条回到顶部。
+- `web_content_embed.dart`：
+  - `_gestureRecognizers` 用 `HorizontalDragGestureRecognizer` —— 上游默认 `EagerGestureRecognizer()`，会再次吞掉页面滑动。
+  - `_embedMaxHeight = 2000` —— 上游默认 900，会导致内容裁短留白。
+  - `_injectHeightReporter` + `onWebViewCreated` 里的 `conduitEmbedHeight` handler —— 上游无，缺失会导致 embed 高度不准、图片留白。
+  - `shouldOverrideUrlLoading` 下载拦截 + `useShouldOverrideUrlLoading: true` —— 上游无，缺失会导致下载按钮失效或返回白屏。
 
 ---
 

@@ -966,11 +966,6 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
                   const SizedBox(height: Spacing.md),
                 ],
 
-                if (activeEmbeds != null && activeEmbeds.isNotEmpty) ...[
-                  _buildEmbedsFromArray(activeEmbeds),
-                  const SizedBox(height: Spacing.md),
-                ],
-
                 if (hasStatusTimeline) ...[
                   StreamingStatusWidget(
                     updates: displayStatusHistory,
@@ -1004,6 +999,13 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
                           child: _buildMessageContent(),
                         ),
                 ),
+
+                // Embeds（PPT 进度条 / 查看器）渲染在正文之后，与 Web 端一致：
+                // 大纲在上、进度条/查看器在下。
+                if (activeEmbeds != null && activeEmbeds.isNotEmpty) ...[
+                  const SizedBox(height: Spacing.md),
+                  _buildEmbedsFromArray(activeEmbeds),
+                ],
 
                 // Display error banner if message or active version has an error
                 if (_getActiveError() != null) ...[
