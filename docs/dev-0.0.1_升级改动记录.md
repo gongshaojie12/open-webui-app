@@ -761,39 +761,51 @@ shouldOverrideUrlLoading: (controller, navigationAction) async {
 
 > 关键：用 `hasGesture` 区分“首次加载自身”与“用户点击下载”——只拦后者，避免误杀 embed 自身加载。
 
-### 二次修复（针对 docs 6/7/8/9 反馈的问题）
+### 二次修复（动态测高方案，已被三次修复替代）
 
-实测发现以下问题，根因与修复如下：
+> ⚠️ 此方案实测**适得其反**：监听图片 load + MutationObserver 测 `scrollHeight`
+> 把外层越撑越高（"空白高度还变大了"），图片仍不显示。已被下方"三次修复"取代。
+> 保留此段仅作演进记录。
+
+二次修复曾尝试：`_injectHeightReporter` 监听 `iframe:height` postMessage + `<img>`
+load 动态调高、`_embedMaxHeight` 900→2000、`onCreateWindow` 改 `shouldOverrideUrlLoading`、
+调整 embed 渲染顺序到正文之后。其中**渲染顺序**与**下载拦截方向**保留，**动态测高被废弃**。
+
+### 三次修复（最终方案：固定视口 + 内部滚动 + 重写 window.open）
+
+针对 docs 10/11/8 仍存在的"空白更大、图片不显示、下载返回白屏"，改用固定高度方案：
 
 | 现象 | 根因 | 修复 |
 |------|------|------|
-| 进度条/查看器下方一大片**空白** | App 只在加载后 60/250/600ms 主动测高一次，且**不监听** pipe 主动发的 `iframe:height` postMessage；进度条 `visibility:hidden`、查看器图片异步加载，测高时机不对 → 高度算错。`_embedMaxHeight=900` 也偏小。 | `web_content_embed.dart`：① 新增 `_injectHeightReporter` 注入 JS，拦截 `iframe:height` postMessage + 监听 `<img>` load / MutationObserver / resize，实时回调 `conduitEmbedHeight` handler 动态调高（与 Web 端机制一致）；② `_embedMaxHeight` 900 → 2000。 |
-| 生成完成后**图片不显示**（裂图） | 查看器预览图用 open-webui 文件接口 `/api/v1/files/{id}/content`（**需登录态**），embed WebView 无登录 cookie。但图片首帧未加载完也会留白——“点下载返回后图片就显示了”正是因为回前台后 WebView 重绘 + 图片已加载完。 | 同上 `_injectHeightReporter`：监听图片 load 事件，加载完成后重新测高/触发重排，复现“返回后显示”的效果，无需改 pipe。 |
-| 下载跳转**返回 App 后白屏**（docs/8 之前的 onCreateWindow 方案） | `onCreateWindow` + `return false` 会中断/销毁当前 embed WebView。 | 改用 `shouldOverrideUrlLoading`（见改动 3），CANCEL 导航但不销毁 WebView。 |
-| 进度条位置：iOS 在**顶部**、大纲在下；Web 是大纲在上、进度条在**底部** | `assistant_message_widget.dart` 中 embed 渲染在正文 `_buildMessageContent()` **之前**。 | 调整渲染顺序：正文（大纲）在上，embed（进度条/查看器）移到正文**之后**，与 Web 一致。 |
+| 进度条/查看器**大片空白且越来越大** | PPT 的 embed HTML 是**整页文档**（flex + `min-height` 满屏布局）。动态测 `scrollHeight` 会随图片加载、flex 累加被撑到很大 → 外层 SizedBox 越撑越高。 | `web_content_embed.dart` 新增 `useFixedViewport` 参数：固定视口模式高度 = 屏高 60%（夹在 320~640px），**不再测高**（跳过测高脚本/handler/定时测高），内容在 WebView 内部滚动。 |
+| 生成完成后**图片不显示**（裂图） | 同上：高度被 Flutter 写死时 flex 容器塌缩，`.viewer img{max-height:100%}` 算不出有效高度。 | 固定视口给了确定高度，flex 布局正常 → 图片按 `object-fit:contain` 显示。`_injectFixedViewportScroll` 注入 CSS 让文档可垂直滚动（PPT 多页内部上下滑）。 |
+| 下载跳转**返回 App 白屏** | 下载按钮走 `window.open`/`window.parent.open`（新窗口机制）；`supportMultipleWindows: true` + `onCreateWindow` 返回 false 在 iOS 会让当前 WebView 变白。 | 关闭多窗口（`supportMultipleWindows: false`）、移除 `onCreateWindow`；新增 `_injectExternalOpenBridge` 注入 JS 把 `window.open`/`window.parent.open` 重写为调用 Flutter `conduitOpenExternal` handler，由系统浏览器打开，**完全不触发 WebView 新窗口/导航**。`shouldOverrideUrlLoading` 仅兜底拦 `<a>` 直链。 |
+| 进度条位置：iOS 在顶部、Web 在底部 | embed 渲染在正文之前。 | （二次修复保留）调整渲染顺序：正文(大纲)在上、embed 移到正文之后。 |
+
+**手势**：固定视口模式用 `EagerGestureRecognizer`（垂直手势给 WebView 做内部滚动）；
+普通模式仍用 `HorizontalDragGestureRecognizer`。
 
 ### 效果与权衡
 
-- ✅ PPT 进度条 / 查看器在 iOS 自动显示，高度随内容/图片加载动态准确，无大片空白。
-- ✅ 查看器图片正常显示（图片加载完成后自动重排上报高度）。
+- ✅ PPT 进度条/查看器固定高度（屏高 60%），无大片空白，空白不再变大。
+- ✅ 查看器图片正常显示（固定高度让 flex 布局生效）。
+- ✅ PPT 多页时在**组件内部上下滚动**查看；整体高度可控。
 - ✅ 进度条/查看器位于大纲正文**下方**，与 Web 端一致。
-- ✅ embed 区域上下滑 → 外层聊天页滚动；左右滑 → 查看器切页；点击缩略图/下载/翻页正常。
-- ✅ 点击「下载 PDF/PPTX」→ Safari 打开 OBS 直链下载（可保存到「文件」App），返回 App 不白屏。
-- ✅ 远程网页 embed 仍保留「打开预览」省流量。
-- ⚠️ 权衡：embed 内部需垂直滚动的长内容，其内部垂直滚动会失效（交给外层）。对 PPT 查看器无影响。
+- ✅ 点击「下载 PDF/PPTX」→ 系统浏览器打开 OBS 直链下载，返回 App **不白屏**。
+- ✅ 远程网页 embed 不受影响（仍走普通模式 + 「打开预览」省流量）。
+- ⚠️ 固定视口模式下，在 embed 区域上下滑 = 滚动 PPT 内部；要滚动外层聊天列表需在 embed **外**的区域滑动。
 
 ### ⚠️ 升级注意
 
 合并上游时，以下均为本项目定制，**容易被上游覆盖回默认值，需检查**：
 
 - `assistant_message_widget.dart`：
-  - `WebContentEmbed(... initiallyExpanded: !_isRemoteEmbedSource(source))` —— 上游默认 `WebContentEmbed(source: source)`，会退回「打开预览」。
+  - `WebContentEmbed(... initiallyExpanded: !isRemote, useFixedViewport: !isRemote)` —— 上游默认 `WebContentEmbed(source: source)`，会退回「打开预览」+ 动态测高留白。
   - embed 渲染顺序在正文**之后** —— 上游默认在正文之前，会让进度条回到顶部。
 - `web_content_embed.dart`：
-  - `_gestureRecognizers` 用 `HorizontalDragGestureRecognizer` —— 上游默认 `EagerGestureRecognizer()`，会再次吞掉页面滑动。
-  - `_embedMaxHeight = 2000` —— 上游默认 900，会导致内容裁短留白。
-  - `_injectHeightReporter` + `onWebViewCreated` 里的 `conduitEmbedHeight` handler —— 上游无，缺失会导致 embed 高度不准、图片留白。
-  - `shouldOverrideUrlLoading` 下载拦截 + `useShouldOverrideUrlLoading: true` —— 上游无，缺失会导致下载按钮失效或返回白屏。
+  - `useFixedViewport` 参数及其全部分支（固定高度、`_injectFixedViewportScroll`、跳过测高、`EagerGestureRecognizer`）—— 上游无，缺失会回到"动态测高撑出大片空白"。
+  - `supportMultipleWindows: false` + `_injectExternalOpenBridge`（重写 window.open）—— 上游默认开多窗口 + `onCreateWindow`，会导致下载返回白屏。
+  - 普通模式 `_gestureRecognizers` 用 `HorizontalDragGestureRecognizer` —— 上游默认 `EagerGestureRecognizer()`。
 
 ---
 

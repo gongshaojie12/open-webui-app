@@ -1371,6 +1371,7 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
           if (source == null || source.isEmpty) {
             return null;
           }
+          final isRemote = _isRemoteEmbedSource(source);
           return KeyedSubtree(
             key: ValueKey('message-embed-$index-$source'),
             child: RepaintBoundary(
@@ -1378,7 +1379,10 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
                 source: source,
                 // 本地 HTML embed（如 PPT 进度条/查看器）自动展开，
                 // 远程 URL 仍保留“打开预览”手动加载以节省流量。
-                initiallyExpanded: !_isRemoteEmbedSource(source),
+                initiallyExpanded: !isRemote,
+                // 本地 HTML embed（PPT 进度条/查看器）用固定视口高度 + 内部滚动，
+                // 避免动态测高把外层撑出大片空白；多页 PPT 在组件内部上下滚动。
+                useFixedViewport: !isRemote,
               ),
             ),
           );

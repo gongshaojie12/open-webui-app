@@ -27,6 +27,7 @@ class WebContentEmbed extends StatefulWidget {
     this.initiallyExpanded = false,
     this.showChrome = true,
     this.fillAvailableHeight = false,
+    this.useFixedViewport = false,
     this.previewTitle,
     this.previewDescription,
     @visibleForTesting this.debugTreatAsSupported,
@@ -40,6 +41,12 @@ class WebContentEmbed extends StatefulWidget {
   final bool initiallyExpanded;
   final bool showChrome;
   final bool fillAvailableHeight;
+
+  /// 固定视口模式：embed 用一个基于屏幕高度的固定高度（约 60% 屏高），内容
+  /// 在 WebView 内部垂直滚动，**不再**测量内容高度去撑外层。用于 PPT 进度条/
+  /// 查看器这类“整页文档”型 embed——它们带 flex/min-height 满屏布局，动态测高
+  /// 会把外层越撑越高、出现大片空白。开启后内部允许垂直滚动（手势交给 WebView）。
+  final bool useFixedViewport;
   final String? previewTitle;
   final String? previewDescription;
   @visibleForTesting
@@ -54,15 +61,23 @@ class WebContentEmbed extends StatefulWidget {
 }
 
 class _WebContentEmbedState extends State<WebContentEmbed> {
-  // 只把水平方向拖动交给 WebView（PPT 查看器左右切页），垂直手势留给外层
-  // 聊天列表滚动，避免 embed 吞掉整页上下滑动。点击（缩略图/按钮）属 tap，
-  // 不受拖动识别器影响，仍正常工作。
-  final Set<Factory<OneSequenceGestureRecognizer>> _gestureRecognizers =
-      <Factory<OneSequenceGestureRecognizer>>{
-        Factory<OneSequenceGestureRecognizer>(
-          () => HorizontalDragGestureRecognizer(),
-        ),
+  // 手势识别器：
+  // - 固定视口模式（PPT 进度条/查看器）：把所有手势交给 WebView，让内容在
+  //   组件内部上下滚动（PPT 多页时）。要滚动外层聊天列表，在 embed 外的区域滑动。
+  // - 普通模式：只把水平拖动交给 WebView，垂直手势留给外层聊天列表，避免吞掉
+  //   整页上下滑动。
+  Set<Factory<OneSequenceGestureRecognizer>> get _gestureRecognizers {
+    if (widget.useFixedViewport) {
+      return <Factory<OneSequenceGestureRecognizer>>{
+        Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
       };
+    }
+    return <Factory<OneSequenceGestureRecognizer>>{
+      Factory<OneSequenceGestureRecognizer>(
+        () => HorizontalDragGestureRecognizer(),
+      ),
+    };
+  }
 
   InAppWebViewController? _controller;
   double _height = _embedDefaultHeight;
@@ -359,6 +374,52 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
     } catch (_) {}
   }
 
+  /// 重写 `window.open`（及 `window.parent.open`）：拦截下载/外链点击，转交
+  /// Flutter 的 `conduitOpenExternal` handler 用系统浏览器打开。
+  /// 解决：embed 下载按钮原走 WebView 新窗口机制，在 iOS 上跳转返回后白屏。
+  Future<void> _injectExternalOpenBridge(
+    InAppWebViewController controller,
+  ) async {
+    const script = r'''
+(function(){
+  function openExternal(u){
+    try{
+      if(u && window.flutter_inappwebview){
+        window.flutter_inappwebview.callHandler('conduitOpenExternal', String(u));
+      }
+    }catch(e){}
+    return null; // 阻止默认新窗口行为
+  }
+  try{ window.open = openExternal; }catch(e){}
+  try{ if(window.parent && window.parent!==window){ window.parent.open = openExternal; } }catch(e){}
+})();
+''';
+    try {
+      await controller.evaluateJavascript(source: script);
+    } catch (_) {}
+  }
+
+  /// 固定视口模式：让 embed 文档在固定高度的 WebView 内可垂直滚动。
+  /// 部分 embed（如 PPT 进度条）body 设了 `overflow:hidden`，这里覆盖为可滚动，
+  /// 并开启 iOS 动量滚动。
+  Future<void> _injectFixedViewportScroll(
+    InAppWebViewController controller,
+  ) async {
+    const script = r'''
+(function(){
+  try{
+    var s=document.createElement('style');
+    s.textContent='html,body{height:auto !important;min-height:100% !important;'
+      +'overflow-y:auto !important;-webkit-overflow-scrolling:touch !important;}';
+    document.head.appendChild(s);
+  }catch(e){}
+})();
+''';
+    try {
+      await controller.evaluateJavascript(source: script);
+    } catch (_) {}
+  }
+
   void _scheduleHeightUpdates(InAppWebViewController controller, int requestId) {
     _updateHeight(controller, requestId);
     for (final delay in <int>[60, 250, 600]) {
@@ -452,11 +513,12 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
             initialSettings: InAppWebViewSettings(
               javaScriptEnabled: true,
               transparentBackground: true,
-              // 允许 embed 内 JS 通过 window.open 打开链接（如 PPT 查看器的
-              // 下载 PDF/PPTX 按钮），由 shouldOverrideUrlLoading 拦截后转交
-              // 系统浏览器。useShouldOverrideUrlLoading 必须开启拦截才生效。
-              supportMultipleWindows: true,
-              javaScriptCanOpenWindowsAutomatically: true,
+              // 关闭多窗口：embed 内的“下载”按钮用 window.open 打开链接，
+              // 多窗口 + onCreateThis 在 iOS 上会让当前 WebView 变白（下载跳转
+              // 返回后白屏）。改为注入脚本把 window.open 重写为调用 Flutter
+              // handler（见 _injectExternalOpenBridge），由系统浏览器打开，
+              // 完全不触发 WebView 新窗口/导航。
+              supportMultipleWindows: false,
               useShouldOverrideUrlLoading: true,
             ),
             shouldOverrideUrlLoading: (controller, navigationAction) async {
@@ -464,9 +526,8 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
               if (uri == null) {
                 return NavigationActionPolicy.ALLOW;
               }
-              // 首次加载（loadData/loadUrl 自身）放行；仅拦截用户点击产生的
-              // 外部跳转（下载 PDF/PPTX 等），交给系统浏览器，避免 embed
-              // WebView 被销毁变白。
+              // 兜底：拦截用户手势触发的外部 http/https 顶层跳转（如 <a> 直链），
+              // 交给系统浏览器，CANCEL 导航以免 embed WebView 被替换。
               final isUserGesture = navigationAction.hasGesture ?? false;
               final scheme = uri.scheme.toLowerCase();
               final isExternal = scheme == 'http' || scheme == 'https';
@@ -478,40 +539,50 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
               }
               return NavigationActionPolicy.ALLOW;
             },
-            onCreateWindow: (controller, createWindowAction) async {
-              // 兜底：某些 window.open 仍走 onCreateWindow（target=_blank）。
-              // 同样交给系统浏览器，并返回 false 不在 WebView 内开新窗口。
-              final url = createWindowAction.request.url;
-              if (url != null) {
-                try {
-                  await launchUrl(url, mode: LaunchMode.externalApplication);
-                } catch (_) {}
-              }
-              return false;
-            },
             onWebViewCreated: (controller) {
-              // 监听 embed 内部主动上报的高度（pipe 的 PPT 进度条/查看器通过
-              // postMessage({type:"iframe:height",height}) 持续上报）。
+              // 注册外链打开 handler（所有模式都需要：PPT 查看器下载按钮）。
               controller.addJavaScriptHandler(
-                handlerName: 'conduitEmbedHeight',
-                callback: (args) {
-                  if (!mounted || requestId != _loadRequestId) {
-                    return;
-                  }
+                handlerName: 'conduitOpenExternal',
+                callback: (args) async {
                   final raw = args.isNotEmpty ? args.first : null;
-                  final h = raw is num ? raw.toDouble() : null;
-                  if (h == null || h <= 0) {
+                  final urlStr = raw?.toString();
+                  if (urlStr == null || urlStr.isEmpty) {
                     return;
                   }
-                  final clamped = widget.fillAvailableHeight
-                      ? _height
-                      : h.clamp(_embedMinHeight, _embedMaxHeight).toDouble();
-                  setState(() {
-                    _height = clamped;
-                    _isLoading = false;
-                  });
+                  final uri = Uri.tryParse(urlStr);
+                  if (uri == null) {
+                    return;
+                  }
+                  try {
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                  } catch (_) {}
                 },
               );
+              // 固定视口模式不测高（高度恒定，内容内部滚动），跳过 handler。
+              if (!widget.useFixedViewport) {
+                // 监听 embed 内部主动上报的高度（pipe 的进度条/查看器通过
+                // postMessage({type:"iframe:height",height}) 持续上报）。
+                controller.addJavaScriptHandler(
+                  handlerName: 'conduitEmbedHeight',
+                  callback: (args) {
+                    if (!mounted || requestId != _loadRequestId) {
+                      return;
+                    }
+                    final raw = args.isNotEmpty ? args.first : null;
+                    final h = raw is num ? raw.toDouble() : null;
+                    if (h == null || h <= 0) {
+                      return;
+                    }
+                    final clamped = widget.fillAvailableHeight
+                        ? _height
+                        : h.clamp(_embedMinHeight, _embedMaxHeight).toDouble();
+                    setState(() {
+                      _height = clamped;
+                      _isLoading = false;
+                    });
+                  },
+                );
+              }
               unawaited(_handleWebViewCreated(controller, requestId));
             },
             onLoadStop: (controller, _) async {
@@ -519,8 +590,20 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
                 return;
               }
               await _injectArguments(controller);
-              await _injectHeightReporter(controller);
-              _scheduleHeightUpdates(controller, requestId);
+              // 重写 window.open → Flutter handler（系统浏览器打开），避免
+              // 下载按钮触发 WebView 新窗口导致返回后白屏。所有模式都注入。
+              await _injectExternalOpenBridge(controller);
+              if (widget.useFixedViewport) {
+                // 固定视口：高度恒定、内容内部滚动，不测高。注入 CSS 让文档在
+                // WebView 视口内可垂直滚动（部分 embed body 设了 overflow:hidden）。
+                await _injectFixedViewportScroll(controller);
+                if (mounted && _isLoading) {
+                  setState(() => _isLoading = false);
+                }
+              } else {
+                await _injectHeightReporter(controller);
+                _scheduleHeightUpdates(controller, requestId);
+              }
             },
             onReceivedError: (controller, request, error) {
               if (requestId != _loadRequestId ||
@@ -547,16 +630,26 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
       ],
     );
 
+    final double effectiveHeight;
+    if (widget.useFixedViewport) {
+      // 固定视口：约 60% 屏高，并限制在 [320, 640] 区间，内容在 WebView 内部
+      // 上下滚动，避免外层被撑出大片空白。
+      final screenHeight = MediaQuery.of(context).size.height;
+      effectiveHeight = (screenHeight * 0.6).clamp(320.0, 640.0);
+    } else {
+      effectiveHeight = _height;
+    }
+
     final sizedWebView = widget.fillAvailableHeight
         ? LayoutBuilder(
             builder: (context, constraints) {
               if (constraints.hasBoundedHeight) {
                 return SizedBox.expand(child: webView);
               }
-              return SizedBox(height: _height, child: webView);
+              return SizedBox(height: effectiveHeight, child: webView);
             },
           )
-        : SizedBox(height: _height, child: webView);
+        : SizedBox(height: effectiveHeight, child: webView);
 
     if (!widget.showChrome) {
       return sizedWebView;
