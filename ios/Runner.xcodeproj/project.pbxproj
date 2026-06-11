@@ -796,7 +796,7 @@
 			baseConfigurationReference = 7AFA3C8E1D35360C0083082E /* Release.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = NO;
-				APP_GROUP_ID = group.com.gongshaojie.zhongxiaozhiAI.x2662v5dt2.debug;
+				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI.x2662v5dt2.debug;
 				APP_URL_SCHEME = "conduit-debug";
 				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Debug";
 				CLANG_ENABLE_MODULES = YES;
@@ -820,7 +820,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.gongshaojie.zhongxiaozhiAI.debug;
+				PRODUCT_BUNDLE_IDENTIFIER = com.focusmedia.zhongxiaozhiAI.debug;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRIP_INSTALLED_PRODUCT = NO;
@@ -840,7 +840,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gongshaojie.zhongxiaozhiAI.RunnerTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.focusmedia.zhongxiaozhiAI.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -858,7 +858,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gongshaojie.zhongxiaozhiAI.RunnerTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.focusmedia.zhongxiaozhiAI.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Runner.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Runner";
@@ -874,7 +874,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gongshaojie.zhongxiaozhiAI.RunnerTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.focusmedia.zhongxiaozhiAI.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Runner.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Runner";
@@ -997,7 +997,7 @@
 			baseConfigurationReference = 9740EEB21CF90195004384FC /* Debug.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = NO;
-				APP_GROUP_ID = group.com.gongshaojie.zhongxiaozhiAI.x2662v5dt2.debug;
+				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI.x2662v5dt2.debug;
 				APP_URL_SCHEME = "conduit-debug";
 				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Debug";
 				CLANG_ENABLE_MODULES = YES;
@@ -1021,7 +1021,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.gongshaojie.zhongxiaozhiAI.debug;
+				PRODUCT_BUNDLE_IDENTIFIER = com.focusmedia.zhongxiaozhiAI.debug;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRIP_STYLE = "non-global";
@@ -1037,7 +1037,7 @@
 			baseConfigurationReference = 7AFA3C8E1D35360C0083082E /* Release.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = NO;
-				APP_GROUP_ID = group.com.gongshaojie.zhongxiaozhiAI;
+				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI;
 				APP_URL_SCHEME = conduit;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
@@ -1061,7 +1061,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.gongshaojie.zhongxiaozhiAI;
+				PRODUCT_BUNDLE_IDENTIFIER = com.focusmedia.zhongxiaozhiAI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRIP_INSTALLED_PRODUCT = NO;
@@ -1076,7 +1076,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget.xcconfig */;
 			buildSettings = {
-				APP_GROUP_ID = group.com.gongshaojie.zhongxiaozhiAI.x2662v5dt2.debug;
+				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI.x2662v5dt2.debug;
 				APP_URL_SCHEME = "conduit-debug";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
@@ -1107,7 +1107,7 @@
 				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gongshaojie.zhongxiaozhiAI.debug.ConduitWidget;
+				PRODUCT_BUNDLE_IDENTIFIER = com.focusmedia.zhongxiaozhiAI.debug.ConduitWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -1125,7 +1125,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget.xcconfig */;
 			buildSettings = {
-				APP_GROUP_ID = group.com.gongshaojie.zhongxiaozhiAI;
+				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI;
 				APP_URL_SCHEME = conduit;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
@@ -1155,7 +1155,7 @@
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				MTL_FAST_MATH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gongshaojie.zhongxiaozhiAI.ConduitWidget;
+				PRODUCT_BUNDLE_IDENTIFIER = com.focusmedia.zhongxiaozhiAI.ConduitWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -1171,7 +1171,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = D2A0B3012F5E4D6C7B8A9012 /* ConduitWidget.xcconfig */;
 			buildSettings = {
-				APP_GROUP_ID = group.com.gongshaojie.zhongxiaozhiAI.x2662v5dt2.debug;
+				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI.x2662v5dt2.debug;
 				APP_URL_SCHEME = "conduit-debug";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
@@ -1201,7 +1201,7 @@
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				MTL_FAST_MATH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gongshaojie.zhongxiaozhiAI.debug.ConduitWidget;
+				PRODUCT_BUNDLE_IDENTIFIER = com.focusmedia.zhongxiaozhiAI.debug.ConduitWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -1218,7 +1218,7 @@
 			baseConfigurationReference = D2A0B3022F5E4D6C7B8A9012 /* ShareExtension.debug.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = NO;
-				APP_GROUP_ID = group.com.gongshaojie.zhongxiaozhiAI.x2662v5dt2.debug;
+				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI.x2662v5dt2.debug;
 				APP_URL_SCHEME = "conduit-debug";
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1248,7 +1248,7 @@
 				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gongshaojie.zhongxiaozhiAI.debug.ShareExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = com.focusmedia.zhongxiaozhiAI.debug.ShareExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
@@ -1264,7 +1264,7 @@
 			baseConfigurationReference = D2A0B3032F5E4D6C7B8A9012 /* ShareExtension.release.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = NO;
-				APP_GROUP_ID = group.com.gongshaojie.zhongxiaozhiAI;
+				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI;
 				APP_URL_SCHEME = conduit;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1293,7 +1293,7 @@
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				MTL_FAST_MATH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gongshaojie.zhongxiaozhiAI.ShareExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = com.focusmedia.zhongxiaozhiAI.ShareExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1307,7 +1307,7 @@
 			baseConfigurationReference = D2A0B3042F5E4D6C7B8A9012 /* ShareExtension.profile.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = NO;
-				APP_GROUP_ID = group.com.gongshaojie.zhongxiaozhiAI.x2662v5dt2.debug;
+				APP_GROUP_ID = group.com.focusmedia.zhongxiaozhiAI.x2662v5dt2.debug;
 				APP_URL_SCHEME = "conduit-debug";
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1336,7 +1336,7 @@
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				MTL_FAST_MATH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gongshaojie.zhongxiaozhiAI.debug.ShareExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = com.focusmedia.zhongxiaozhiAI.debug.ShareExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
