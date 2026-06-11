@@ -1371,7 +1371,14 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
           }
           return KeyedSubtree(
             key: ValueKey('message-embed-$index-$source'),
-            child: RepaintBoundary(child: WebContentEmbed(source: source)),
+            child: RepaintBoundary(
+              child: WebContentEmbed(
+                source: source,
+                // 本地 HTML embed（如 PPT 进度条/查看器）自动展开，
+                // 远程 URL 仍保留“打开预览”手动加载以节省流量。
+                initiallyExpanded: !_isRemoteEmbedSource(source),
+              ),
+            ),
           );
         })
         .whereType<Widget>()
@@ -1390,6 +1397,15 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
         ],
       ],
     );
+  }
+
+  /// 判断 embed source 是否为远程 URL（与 [WebContentEmbed] 内部逻辑一致）。
+  /// 远程 URL 保留“打开预览”手动加载；本地 HTML 自动展开。
+  bool _isRemoteEmbedSource(String source) {
+    final s = source.trimLeft();
+    return s.startsWith('http://') ||
+        s.startsWith('https://') ||
+        s.startsWith('//');
   }
 
   Widget _buildFilesFromArray() {

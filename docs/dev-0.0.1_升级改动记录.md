@@ -25,7 +25,8 @@
 13. [删除文件清单](#13-删除文件清单)
 14. [移除个人赞助入口（Profile 页面）](#14-移除个人赞助入口profile-页面)
 15. [合并上游 + 移除 CarPlay 语音 entitlement](#15-合并上游--移除-carplay-语音-entitlement)
-16. [升级操作检查清单](#16-升级操作检查清单)
+16. [PPT embed 在 iOS 上的进度条与滑动修复](#16-ppt-embed-在-ios-上的进度条与滑动修复)
+17. [升级操作检查清单](#17-升级操作检查清单)
 
 ---
 
@@ -665,7 +666,77 @@ org.gradle.jvmargs=-Xmx2G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m
 
 ---
 
-## 16. 升级操作检查清单
+## 16. PPT embed 在 iOS 上的进度条与滑动修复
+
+### 背景
+
+open-webui 的 PPT 生成 pipe（`ppt_pipe.py`）通过 `event_emitter` 的 `embeds` 事件向客户端推送一段**自更新的 HTML**（进度条 / 最终的 PPT 查看器），iframe 内部用 JS 计时刷新进度、用 `postMessage({type:"iframe:height"})` 上报高度。Web 端正常显示进度条；但 iOS App 端出现两个问题：
+
+1. **没有进度条**：消息里只显示「Embedded Preview / 打开预览」卡片，不自动渲染进度条。
+2. **点「打开预览」后整页无法上下滑动**：手指在 embed 区域滑动时被 WebView 吃掉。
+
+> 注意：pipe 对 Web 和 iOS 推送的是**同一套 embed**，问题完全在 App 端，与 `ppt_pipe.py` 无关。
+
+### 根因
+
+| 问题 | 根因 |
+|------|------|
+| 无进度条 | `WebContentEmbed` 默认 `deferUntilExpanded = true` / `initiallyExpanded = false`（省流量策略），App 在 `assistant_message_widget.dart` 创建 embed 时未覆盖，导致本地 HTML embed 也被折叠成「打开预览」卡片。Web 原版会直接渲染 iframe，所以有进度条。 |
+| 无法滑动 | `web_content_embed.dart` 给内嵌 `InAppWebView` 用了 `EagerGestureRecognizer`，贪婪抢占**所有**触摸手势（含垂直滑动），外层聊天列表无法滚动。 |
+
+### 改动（仅 App 端，未改 open-webui）
+
+**1. `lib/features/chat/widgets/assistant_message_widget.dart`** — 本地 HTML embed 自动展开
+
+`_buildEmbedsFromArray` 中创建 `WebContentEmbed` 时传 `initiallyExpanded`，并新增辅助方法 `_isRemoteEmbedSource`：
+
+```dart
+child: WebContentEmbed(
+  source: source,
+  // 本地 HTML embed（如 PPT 进度条/查看器）自动展开，
+  // 远程 URL 仍保留“打开预览”手动加载以节省流量。
+  initiallyExpanded: !_isRemoteEmbedSource(source),
+),
+```
+
+```dart
+bool _isRemoteEmbedSource(String source) {
+  final s = source.trimLeft();
+  return s.startsWith('http://') ||
+      s.startsWith('https://') ||
+      s.startsWith('//');
+}
+```
+
+**2. `lib/shared/widgets/web_content_embed.dart`** — 手势识别器只抢水平方向
+
+```dart
+// EagerGestureRecognizer → HorizontalDragGestureRecognizer
+final Set<Factory<OneSequenceGestureRecognizer>> _gestureRecognizers =
+    <Factory<OneSequenceGestureRecognizer>>{
+      Factory<OneSequenceGestureRecognizer>(
+        () => HorizontalDragGestureRecognizer(),
+      ),
+    };
+```
+
+### 效果与权衡
+
+- ✅ PPT 进度条 / 查看器在 iOS 自动显示进度条。
+- ✅ embed 区域上下滑 → 外层聊天页正常滚动；左右滑 → PPT 查看器切页正常；点击缩略图 / 下载按钮 / 上一页下一页（tap）不受影响。
+- ✅ 远程网页 embed 仍保留「打开预览」省流量。
+- ⚠️ 权衡：若将来某 embed 内部有需要**垂直滚动**的长内容，其内部垂直滚动会失效（交给外层列表）。对固定高度、左右切页为主的 PPT 查看器无影响。
+
+### ⚠️ 升级注意
+
+合并上游时，以下两处为本项目定制，**容易被上游覆盖回默认值，需检查**：
+
+- `assistant_message_widget.dart` 中 `WebContentEmbed(... initiallyExpanded: !_isRemoteEmbedSource(source))` —— 上游默认为 `WebContentEmbed(source: source)`，会退回「打开预览」。
+- `web_content_embed.dart` 中 `_gestureRecognizers` —— 上游默认为 `EagerGestureRecognizer()`，会再次吞掉页面滑动。
+
+---
+
+## 17. 升级操作检查清单
 
 从上游合并新版本后，按以下清单逐项检查：
 

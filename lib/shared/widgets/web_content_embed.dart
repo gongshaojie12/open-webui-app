@@ -51,9 +51,14 @@ class WebContentEmbed extends StatefulWidget {
 }
 
 class _WebContentEmbedState extends State<WebContentEmbed> {
+  // 只把水平方向拖动交给 WebView（PPT 查看器左右切页），垂直手势留给外层
+  // 聊天列表滚动，避免 embed 吞掉整页上下滑动。点击（缩略图/按钮）属 tap，
+  // 不受拖动识别器影响，仍正常工作。
   final Set<Factory<OneSequenceGestureRecognizer>> _gestureRecognizers =
       <Factory<OneSequenceGestureRecognizer>>{
-        Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
+        Factory<OneSequenceGestureRecognizer>(
+          () => HorizontalDragGestureRecognizer(),
+        ),
       };
 
   InAppWebViewController? _controller;
