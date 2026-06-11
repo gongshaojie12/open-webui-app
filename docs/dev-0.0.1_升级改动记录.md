@@ -619,6 +619,17 @@ org.gradle.jvmargs=-Xmx2G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m
 
 - `flutter analyze lib/features/profile/views/profile_page.dart` → **No issues found**。
 
+### 补充：合并上游后赞助入口在原生 sheet 中“复活”，二次移除
+
+合并上游（见第 15 章）后，上游把设置页改为**原生 sheet** 渲染，赞助区块换到了
+`lib/features/navigation/widgets/sidebar_user_pill.dart`，导致「支持 众小智 AI」
+区块再次出现。已删除其中对应的整个 `NativeSheetSectionConfig`（标题
+`supportConduit` + `buy-me-a-coffee` + `github-sponsors` 两项，共 20 行）。
+
+> ⚠️ 升级注意：这是上游设置页的原生 sheet 结构，合并上游时**容易被带回**。
+> 若赞助区块再次出现，检查 `sidebar_user_pill.dart` 的 `sections` 中是否又
+> 出现 `title: l10n.supportConduit` 的 section，删除即可。
+
 ---
 
 ## 15. 合并上游 + 移除 CarPlay 语音 entitlement
