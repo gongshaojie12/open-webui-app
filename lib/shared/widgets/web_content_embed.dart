@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:conduit/l10n/app_localizations.dart';
 
 import '../theme/theme_extensions.dart';
@@ -393,7 +394,22 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
             initialSettings: InAppWebViewSettings(
               javaScriptEnabled: true,
               transparentBackground: true,
+              // 允许 embed 内 JS 通过 window.open 打开链接（如 PPT 查看器的
+              // 下载 PDF/PPTX 按钮），由 onCreateWindow 拦截后转交系统浏览器。
+              supportMultipleWindows: true,
+              javaScriptCanOpenWindowsAutomatically: true,
             ),
+            onCreateWindow: (controller, createWindowAction) async {
+              // WebUri 继承自 Uri，可直接交给 url_launcher。
+              final url = createWindowAction.request.url;
+              if (url != null) {
+                try {
+                  await launchUrl(url, mode: LaunchMode.externalApplication);
+                } catch (_) {}
+              }
+              // 返回 false：不在 WebView 内新开窗口，已交给系统浏览器处理。
+              return false;
+            },
             onWebViewCreated: (controller) {
               unawaited(_handleWebViewCreated(controller, requestId));
             },

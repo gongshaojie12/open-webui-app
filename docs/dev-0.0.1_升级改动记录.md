@@ -25,7 +25,7 @@
 13. [删除文件清单](#13-删除文件清单)
 14. [移除个人赞助入口（Profile 页面）](#14-移除个人赞助入口profile-页面)
 15. [合并上游 + 移除 CarPlay 语音 entitlement](#15-合并上游--移除-carplay-语音-entitlement)
-16. [PPT embed 在 iOS 上的进度条与滑动修复](#16-ppt-embed-在-ios-上的进度条与滑动修复)
+16. [PPT embed 在 iOS 上的进度条、滑动与下载修复](#16-ppt-embed-在-ios-上的进度条滑动与下载修复)
 17. [升级操作检查清单](#17-升级操作检查清单)
 
 ---
@@ -666,14 +666,15 @@ org.gradle.jvmargs=-Xmx2G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m
 
 ---
 
-## 16. PPT embed 在 iOS 上的进度条与滑动修复
+## 16. PPT embed 在 iOS 上的进度条、滑动与下载修复
 
 ### 背景
 
-open-webui 的 PPT 生成 pipe（`ppt_pipe.py`）通过 `event_emitter` 的 `embeds` 事件向客户端推送一段**自更新的 HTML**（进度条 / 最终的 PPT 查看器），iframe 内部用 JS 计时刷新进度、用 `postMessage({type:"iframe:height"})` 上报高度。Web 端正常显示进度条；但 iOS App 端出现两个问题：
+open-webui 的 PPT 生成 pipe（`ppt_pipe.py`）通过 `event_emitter` 的 `embeds` 事件向客户端推送一段**自更新的 HTML**（进度条 / 最终的 PPT 查看器），iframe 内部用 JS 计时刷新进度、用 `postMessage({type:"iframe:height"})` 上报高度，查看器底部的「下载 PDF/PPTX」按钮通过 `window.open(url)` 打开 OBS 公网直链。Web 端一切正常；但 iOS App 端出现三个问题：
 
 1. **没有进度条**：消息里只显示「Embedded Preview / 打开预览」卡片，不自动渲染进度条。
 2. **点「打开预览」后整页无法上下滑动**：手指在 embed 区域滑动时被 WebView 吃掉。
+3. **无法下载 PPT/PDF**：点击查看器的下载按钮无反应。
 
 > 注意：pipe 对 Web 和 iOS 推送的是**同一套 embed**，问题完全在 App 端，与 `ppt_pipe.py` 无关。
 
@@ -683,6 +684,7 @@ open-webui 的 PPT 生成 pipe（`ppt_pipe.py`）通过 `event_emitter` 的 `emb
 |------|------|
 | 无进度条 | `WebContentEmbed` 默认 `deferUntilExpanded = true` / `initiallyExpanded = false`（省流量策略），App 在 `assistant_message_widget.dart` 创建 embed 时未覆盖，导致本地 HTML embed 也被折叠成「打开预览」卡片。Web 原版会直接渲染 iframe，所以有进度条。 |
 | 无法滑动 | `web_content_embed.dart` 给内嵌 `InAppWebView` 用了 `EagerGestureRecognizer`，贪婪抢占**所有**触摸手势（含垂直滑动），外层聊天列表无法滚动。 |
+| 无法下载 | 查看器下载按钮执行 `window.open(url, '_blank')`，但 embed 的 `InAppWebView` 未配置多窗口、也未实现 `onCreateWindow`，iOS WKWebView 默认禁止 JS 开新窗口，导致点击无反应。下载链接本身是 OBS 公网直链（无需登录态），交给系统浏览器即可下载。 |
 
 ### 改动（仅 App 端，未改 open-webui）
 
@@ -720,19 +722,44 @@ final Set<Factory<OneSequenceGestureRecognizer>> _gestureRecognizers =
     };
 ```
 
+**3. `lib/shared/widgets/web_content_embed.dart`** — 支持 embed 内下载（window.open → 系统浏览器）
+
+新增 `import 'package:url_launcher/url_launcher.dart';`，在 `InAppWebViewSettings` 开启多窗口，并加 `onCreateWindow` 把 `window.open` 的链接交给系统浏览器：
+
+```dart
+initialSettings: InAppWebViewSettings(
+  javaScriptEnabled: true,
+  transparentBackground: true,
+  // 允许 embed 内 JS 通过 window.open 打开链接（如下载按钮）
+  supportMultipleWindows: true,
+  javaScriptCanOpenWindowsAutomatically: true,
+),
+onCreateWindow: (controller, createWindowAction) async {
+  final url = createWindowAction.request.url; // WebUri 继承自 Uri
+  if (url != null) {
+    try {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+  return false; // 不在 WebView 内开新窗口，已交给系统浏览器
+},
+```
+
 ### 效果与权衡
 
 - ✅ PPT 进度条 / 查看器在 iOS 自动显示进度条。
 - ✅ embed 区域上下滑 → 外层聊天页正常滚动；左右滑 → PPT 查看器切页正常；点击缩略图 / 下载按钮 / 上一页下一页（tap）不受影响。
+- ✅ 点击「下载 PDF/PPTX」→ Safari 打开 OBS 直链下载，可保存到 iOS「文件」App。
 - ✅ 远程网页 embed 仍保留「打开预览」省流量。
 - ⚠️ 权衡：若将来某 embed 内部有需要**垂直滚动**的长内容，其内部垂直滚动会失效（交给外层列表）。对固定高度、左右切页为主的 PPT 查看器无影响。
 
 ### ⚠️ 升级注意
 
-合并上游时，以下两处为本项目定制，**容易被上游覆盖回默认值，需检查**：
+合并上游时，以下三处为本项目定制，**容易被上游覆盖回默认值，需检查**：
 
 - `assistant_message_widget.dart` 中 `WebContentEmbed(... initiallyExpanded: !_isRemoteEmbedSource(source))` —— 上游默认为 `WebContentEmbed(source: source)`，会退回「打开预览」。
 - `web_content_embed.dart` 中 `_gestureRecognizers` —— 上游默认为 `EagerGestureRecognizer()`，会再次吞掉页面滑动。
+- `web_content_embed.dart` 中 `InAppWebViewSettings` 的 `supportMultipleWindows`/`javaScriptCanOpenWindowsAutomatically` 与 `onCreateWindow` 回调 —— 上游默认无，会导致 embed 内下载按钮再次失效。
 
 ---
 
