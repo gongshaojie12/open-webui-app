@@ -26,7 +26,9 @@
 14. [移除个人赞助入口（Profile 页面）](#14-移除个人赞助入口profile-页面)
 15. [合并上游 + 移除 CarPlay 语音 entitlement](#15-合并上游--移除-carplay-语音-entitlement)
 16. [PPT embed 在 iOS 上的进度条、滑动、下载、留白与顺序修复](#16-ppt-embed-在-ios-上的进度条滑动下载留白与顺序修复)
-17. [升级操作检查清单](#17-升级操作检查清单)
+17. [Bundle ID 与 App Group 前缀改为 focusmedia](#17-bundle-id-与-app-group-前缀改为-focusmedia)
+18. [STT 默认按平台区分（Android 用服务端）](#18-stt-默认按平台区分android-用服务端)
+19. [升级操作检查清单](#19-升级操作检查清单)
 
 ---
 
@@ -809,7 +811,92 @@ load 动态调高、`_embedMaxHeight` 900→2000、`onCreateWindow` 改 `shouldO
 
 ---
 
-## 17. 升级操作检查清单
+## 17. Bundle ID 与 App Group 前缀改为 focusmedia
+
+### 背景
+
+iOS Bundle ID 与 App Group 前缀原为 `com.gongshaojie.zhongxiaozhiAI`，统一改为
+`com.focusmedia.zhongxiaozhiAI`。此前曾在 Xcode 里手动改过，但未写入仓库，每次
+`git pull` 后 `project.pbxproj` 被覆盖又退回 `gongshaojie`。本次正式写入仓库。
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `ios/Runner.xcodeproj/project.pbxproj` | 全部 target 的 `PRODUCT_BUNDLE_IDENTIFIER` 与 `APP_GROUP_ID` 前缀 |
+| `ios/Runner/Runner.entitlements` | App Group |
+| `ios/ShareExtension/ShareExtension.entitlements` | App Group |
+| `ios/ConduitWidgetExtension.entitlements` | App Group |
+
+仅字面替换 `gongshaojie` → `focusmedia`（共 24 处），未改 App Group 结构。
+
+- 新 Bundle ID：`com.focusmedia.zhongxiaozhiAI`（及 `.debug`/`.ShareExtension`/`.ConduitWidget` 等变体）
+- 新 App Group：`group.com.focusmedia.zhongxiaozhiAI`
+
+> 遗留（未处理）：`ConduitWidget.entitlements` 用 `$(APP_GROUP_ID)` 变量，部分
+> 配置解析为带 `.x2662v5dt2.debug` 后缀，与其他 target 的不带后缀值不一致。这是
+> 历史遗留，本次保持原样未动。
+
+> ⚠️ 免费个人账号（Personal Team）**不支持 App Group**，真机签名仍会报
+> “Application Group ... is not available”。如需免费账号真机调试，需移除 App Group
+> 或改用付费账号 / 模拟器。
+
+---
+
+## 18. STT 默认按平台区分（Android 用服务端）
+
+### 背景
+
+Android 语音转文字报错 `SpeechRecognitionError msg: error_client, permanent: true`
+（见 docs/16.jpg），语音通话中断。iOS 同功能正常。
+
+### 根因
+
+- 默认 `sttPreference = SttPreference.deviceOnly`（仅用设备本地识别）。
+- Android 本地识别引擎（系统 `SpeechRecognizer`）在很多设备上缺失/不稳定，会抛
+  `error_client`；且 `voice_input_service.dart` 的 `_handleSttError` 未将其归入可
+  恢复错误，直接判为致命 → 抛异常中断。
+- `deviceOnly` 模式**不会回退服务端**，本地一失败即报错。
+- iOS 的 Speech 框架可靠，所以 iOS 走本地识别一切正常。
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `lib/core/services/settings_service.dart` | STT 默认偏好改为按平台决定 |
+
+### 具体改动
+
+- 新增平台感知 getter：
+
+```dart
+// Android→serverOnly（后端转写不依赖设备引擎，稳定）；
+// iOS（及其他）→deviceOnly（本地识别可靠，行为不变）。
+static SttPreference get _defaultSttPreference =>
+    Platform.isAndroid ? SttPreference.serverOnly : SttPreference.deviceOnly;
+```
+
+- `_parseSttPreference` 首次启动（无存储值）兜底返回 `_defaultSttPreference`。
+- `resetToDefaults()` 重置时也按平台设 STT 偏好（避免 Android 重置后退回本地）。
+
+### 效果与影响
+
+- ✅ **Android**：默认走服务端 STT，避开 `error_client`，语音转文字稳定可用（前提：后端已配置 STT）。
+- ✅ **iOS**：默认仍 `deviceOnly`，**行为完全不变**，不受影响。
+- 仅影响**未手动设置过 STT 偏好**的用户；已设置的保持自己的选择。
+- ⚠️ 取舍：Android 依赖后端 STT，后端 STT 异常/网络差时语音会失败（`serverOnly`
+  无本地回退）。如需"本地↔服务端"双向回退的混合策略，需扩展 `SttPreference`
+  枚举（目前仅 `deviceOnly`/`serverOnly` 两档），属更大改动，暂未做。
+
+### ⚠️ 升级注意
+
+- `settings_service.dart` 中 `_defaultSttPreference` 平台感知默认 + `_parseSttPreference`
+  / `resetToDefaults` 的调用 —— 上游默认写死 `deviceOnly`，合并时若被覆盖，Android
+  会再次回到 `error_client` 报错。
+
+---
+
+## 19. 升级操作检查清单
 
 从上游合并新版本后，按以下清单逐项检查：
 
