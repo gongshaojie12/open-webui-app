@@ -1,4 +1,5 @@
 import 'dart:developer' as developer;
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -280,6 +281,13 @@ class SettingsService {
     }
   }
 
+  /// 按平台决定的默认 STT 偏好：
+  /// - Android：serverOnly。Android 本地识别引擎在很多设备上缺失/不稳定，
+  ///   会抛 error_client 导致语音转文字失败；服务端转写不依赖设备，稳定可用。
+  /// - iOS（及其他）：deviceOnly。iOS Speech 框架可靠，保持本地识别（快、免上传）。
+  static SttPreference get _defaultSttPreference =>
+      Platform.isAndroid ? SttPreference.serverOnly : SttPreference.deviceOnly;
+
   static SttPreference _parseSttPreference(String? raw) {
     switch ((raw ?? '').toLowerCase()) {
       case 'deviceonly':
@@ -291,7 +299,8 @@ class SettingsService {
       case 'server':
         return SttPreference.serverOnly;
       default:
-        return SttPreference.deviceOnly;
+        // 无存储值（首次启动/未设置）→ 按平台默认。
+        return _defaultSttPreference;
     }
   }
 
@@ -646,6 +655,9 @@ class AppSettings {
     this.chatWebSearchEnabled,
     this.chatImageGenerationEnabled,
     this.sendOnEnter = false,
+    // 默认值见下方说明：实际默认由 _defaultSttPreference 按平台决定
+    // （Android→serverOnly 避开本地引擎 error_client；iOS→deviceOnly 保持
+    // 本地识别）。此处常量默认仅为构造兜底。
     this.sttPreference = SttPreference.deviceOnly,
     this.sttLanguageCode,
     this.ttsVoice,
@@ -1029,7 +1041,11 @@ class AppSettingsNotifier extends _$AppSettingsNotifier {
   }
 
   Future<void> resetToDefaults() async {
-    const defaultSettings = AppSettings();
+    // 按平台设置默认 STT 偏好（Android→serverOnly，iOS→deviceOnly），
+    // 避免重置后 Android 退回会报 error_client 的本地识别。
+    final defaultSettings = const AppSettings().copyWith(
+      sttPreference: SettingsService._defaultSttPreference,
+    );
     await SettingsService.saveSettings(defaultSettings);
     state = defaultSettings;
   }
