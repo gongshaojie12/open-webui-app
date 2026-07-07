@@ -1,6 +1,6 @@
 {
   "@@locale": "cs",
-  "appTitle": "Conduit",
+  "appTitle": "众小智AI",
   "serverIncompatibleTitle": "Server není podporován",
   "serverIncompatibleMessage": "Tento server používá Open WebUI {serverVersion}, což je novější verze, než tato aplikace podporuje (maximálně {maxVersion}).",
   "serverIncompatibleResolution": "Chcete-li pokračovat, snižte verzi serveru na {maxVersion} nebo nižší, nebo počkejte na aktualizaci aplikace, která podporu doplní.",
@@ -43,11 +43,11 @@
   "@account": {
     "description": "Section header for account-related options."
   },
-  "supportConduit": "Podpořit Conduit",
+  "supportConduit": "Podpořit 众小智AI",
   "@supportConduit": {
     "description": "Section header inviting the user to financially support the project."
   },
-  "supportConduitSubtitle": "Pomozte udržet Conduit nezávislý financováním dalšího vývoje.",
+  "supportConduitSubtitle": "Pomozte udržet 众小智AI nezávislý financováním dalšího vývoje.",
   "@supportConduitSubtitle": {
     "description": "Subtitle explaining why donations are helpful."
   },
@@ -521,7 +521,7 @@
   "@voiceCallErrorHelp": {
     "description": "Guidance shown when the voice call encounters an error."
   },
-  "messageHintText": "Zeptat se Conduitu",
+  "messageHintText": "Zeptat se 众小智AI",
   "@messageHintText": {
     "description": "Short placeholder text in the message input."
   },
@@ -633,7 +633,7 @@
   "@chatQueuedPendingTitle": {
     "description": "Title shown when a queued assistant response is waiting for sync/backoff."
   },
-  "chatQueuedPendingMessage": "Conduit spustí tuto odpověď, jakmile poběží synchronizace.",
+  "chatQueuedPendingMessage": "众小智AI spustí tuto odpověď, jakmile poběží synchronizace.",
   "@chatQueuedPendingMessage": {
     "description": "Body text shown for a queued assistant response that is waiting to be sent."
   },
@@ -931,7 +931,7 @@
   "@aboutApp": {
     "description": "Settings tile title to view app information."
   },
-  "aboutAppSubtitle": "Informace o Conduitu a odkazy",
+  "aboutAppSubtitle": "Informace o 众小智AI a odkazy",
   "@aboutAppSubtitle": {
     "description": "Subtitle/description for the About section."
   },
@@ -1236,11 +1236,11 @@
   "@themePalette": {
     "description": "Title for selecting the app color palette."
   },
-  "themePaletteConduitLabel": "Conduit",
+  "themePaletteConduitLabel": "众小智AI",
   "@themePaletteConduitLabel": {
     "description": "Palette name for the default Conduit theme."
   },
-  "themePaletteConduitDescription": "Čistý neutrální motiv navržený pro Conduit.",
+  "themePaletteConduitDescription": "Čistý neutrální motiv navržený pro 众小智AI.",
   "@themePaletteConduitDescription": {
     "description": "Description of the Conduit palette."
   },
@@ -1288,7 +1288,7 @@
   "@currentlyUsingLightTheme": {
     "description": "Status text indicating light theme is active."
   },
-  "aboutConduit": "O Conduitu",
+  "aboutConduit": "O 众小智AI",
   "@aboutConduit": {
     "description": "Dialog title for app information."
   },
@@ -1396,7 +1396,7 @@
   "@androidAssistantOverlayOption": {
     "description": "Option label for keeping the current assistant overlay."
   },
-  "androidAssistantNewChatOption": "Otevřít Conduit s novým chatem",
+  "androidAssistantNewChatOption": "Otevřít 众小智AI s novým chatem",
   "@androidAssistantNewChatOption": {
     "description": "Option label for opening the app to a fresh chat from the assistant trigger."
   },
@@ -2867,7 +2867,7 @@
   "@inactiveStatus": {
     "description": "Label for an inactive account status."
   },
-  "appInformation": "Aplikace Conduit",
+  "appInformation": "Aplikace 众小智AI",
   "@appInformation": {
     "description": "Heading for local app information."
   },

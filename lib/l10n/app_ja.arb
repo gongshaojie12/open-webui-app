@@ -1,6 +1,6 @@
 {
   "@@locale": "ja",
-  "appTitle": "Conduit",
+  "appTitle": "众小智AI",
   "serverIncompatibleTitle": "サーバーは未対応です",
   "serverIncompatibleMessage": "このサーバーは Open WebUI {serverVersion} を実行しており、このアプリが対応するバージョン（{maxVersion} まで）よりも新しいバージョンです。",
   "serverIncompatibleResolution": "続行するには、サーバーを {maxVersion} 以前にダウングレードするか、対応を追加するアプリの更新をお待ちください。",
@@ -43,11 +43,11 @@
   "@account": {
     "description": "Section header for account-related options."
   },
-  "supportConduit": "Conduit を支援",
+  "supportConduit": "众小智AI を支援",
   "@supportConduit": {
     "description": "Section header inviting the user to financially support the project."
   },
-  "supportConduitSubtitle": "継続的な開発を支援して、Conduit の独立性を保ちます。",
+  "supportConduitSubtitle": "継続的な開発を支援して、众小智AI の独立性を保ちます。",
   "@supportConduitSubtitle": {
     "description": "Subtitle explaining why donations are helpful."
   },
@@ -521,7 +521,7 @@
   "@voiceCallErrorHelp": {
     "description": "Guidance shown when the voice call encounters an error."
   },
-  "messageHintText": "Conduit に質問",
+  "messageHintText": "众小智AI に質問",
   "@messageHintText": {
     "description": "Short placeholder text in the message input."
   },
@@ -633,7 +633,7 @@
   "@chatQueuedPendingTitle": {
     "description": "Title shown when a queued assistant response is waiting for sync/backoff."
   },
-  "chatQueuedPendingMessage": "同期が実行され次第、Conduit がこの応答を開始します。",
+  "chatQueuedPendingMessage": "同期が実行され次第、众小智AI がこの応答を開始します。",
   "@chatQueuedPendingMessage": {
     "description": "Body text shown for a queued assistant response that is waiting to be sent."
   },
@@ -931,7 +931,7 @@
   "@aboutApp": {
     "description": "Settings tile title to view app information."
   },
-  "aboutAppSubtitle": "Conduit の情報とリンク",
+  "aboutAppSubtitle": "众小智AI の情報とリンク",
   "@aboutAppSubtitle": {
     "description": "Subtitle/description for the About section."
   },
@@ -1236,11 +1236,11 @@
   "@themePalette": {
     "description": "Title for selecting the app color palette."
   },
-  "themePaletteConduitLabel": "Conduit",
+  "themePaletteConduitLabel": "众小智AI",
   "@themePaletteConduitLabel": {
     "description": "Palette name for the default Conduit theme."
   },
-  "themePaletteConduitDescription": "Conduit 向けに設計されたクリーンなニュートラルテーマ。",
+  "themePaletteConduitDescription": "众小智AI 向けに設計されたクリーンなニュートラルテーマ。",
   "@themePaletteConduitDescription": {
     "description": "Description of the Conduit palette."
   },
@@ -1288,7 +1288,7 @@
   "@currentlyUsingLightTheme": {
     "description": "Status text indicating light theme is active."
   },
-  "aboutConduit": "Conduit について",
+  "aboutConduit": "众小智AI について",
   "@aboutConduit": {
     "description": "Dialog title for app information."
   },
@@ -1396,7 +1396,7 @@
   "@androidAssistantOverlayOption": {
     "description": "Option label for keeping the current assistant overlay."
   },
-  "androidAssistantNewChatOption": "新しいチャットで Conduit を開く",
+  "androidAssistantNewChatOption": "新しいチャットで 众小智AI を開く",
   "@androidAssistantNewChatOption": {
     "description": "Option label for opening the app to a fresh chat from the assistant trigger."
   },
@@ -2649,7 +2649,7 @@
   "passwordUpdated": "パスワードを更新しました。",
   "activeStatus": "有効",
   "inactiveStatus": "無効",
-  "appInformation": "Conduit アプリ",
+  "appInformation": "众小智AI アプリ",
   "appVersion": "バージョン",
   "serverInformation": "サーバー情報",
   "serverInfoUnavailable": "現在サーバー情報を利用できません。",
