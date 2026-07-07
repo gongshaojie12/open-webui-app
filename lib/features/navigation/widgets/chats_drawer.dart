@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:conduit/core/services/haptic_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/database/local_conversation_loader.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/services/native_sheet_bridge.dart';
 import '../../../shared/theme/theme_extensions.dart';
@@ -14,6 +15,7 @@ import '../../../shared/utils/platform_scroll_physics.dart';
 import '../../chat/providers/chat_providers.dart' as chat;
 import '../../../core/utils/debug_logger.dart';
 import '../../../core/services/navigation_service.dart';
+import '../../../shared/widgets/conduit_components.dart';
 import '../../../shared/widgets/conduit_loading.dart';
 import '../../../shared/widgets/themed_dialogs.dart';
 import 'package:conduit/l10n/app_localizations.dart';
@@ -60,6 +62,7 @@ class _ChatsDrawerState extends ConsumerState<ChatsDrawer>
   bool _isLoadingConversation = false;
   String? _pendingConversationId;
   bool _isLoadingMoreConversations = false;
+  bool _isRefreshingEmptyState = false;
 
   @override
   void initState() {
@@ -71,16 +74,16 @@ class _ChatsDrawerState extends ConsumerState<ChatsDrawer>
 
   Future<void> _refreshChats() async {
     try {
-      // Always refresh folders and conversations cache
-      refreshConversationsCache(ref, includeFolders: true);
-
       if (_query.trim().isEmpty) {
-        // Refresh main conversations list
+        // Refresh main conversations list. The database stream delivers rows.
         try {
-          await ref.read(conversationsProvider.future);
+          await ref
+              .read(conversationsProvider.notifier)
+              .refresh(includeFolders: true);
         } catch (_) {}
       } else {
-        // Refresh server-side search results
+        // Refresh server-side search results and keep the local cache warm.
+        refreshConversationsCache(ref, includeFolders: true);
         ref.invalidate(serverSearchProvider(_query));
         try {
           await ref.read(serverSearchProvider(_query).future);
@@ -92,6 +95,18 @@ class _ChatsDrawerState extends ConsumerState<ChatsDrawer>
         await ref.read(foldersProvider.future);
       } catch (_) {}
     } catch (_) {}
+  }
+
+  Future<void> _refreshEmptyStateChats() async {
+    if (_isRefreshingEmptyState) return;
+    setState(() => _isRefreshingEmptyState = true);
+    try {
+      await _refreshChats();
+    } finally {
+      if (mounted) {
+        setState(() => _isRefreshingEmptyState = false);
+      }
+    }
   }
 
   void _onListScrolled() {
@@ -228,6 +243,39 @@ class _ChatsDrawerState extends ConsumerState<ChatsDrawer>
                   ),
                 )
               : const SizedBox(height: Spacing.md),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(String message) {
+    final theme = context.conduitTheme;
+    final refreshLabel = MaterialLocalizations.of(
+      context,
+    ).refreshIndicatorSemanticLabel;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(Spacing.lg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              message,
+              style: AppTypography.bodyMediumStyle.copyWith(
+                color: theme.textSecondary,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: Spacing.md),
+            ConduitButton(
+              text: refreshLabel,
+              icon: Platform.isIOS ? CupertinoIcons.refresh : Icons.refresh,
+              onPressed: () => unawaited(_refreshEmptyStateChats()),
+              isSecondary: true,
+              isCompact: true,
+              isLoading: _isRefreshingEmptyState,
+            ),
+          ],
         ),
       ),
     );
@@ -515,16 +563,8 @@ class _ChatsDrawerState extends ConsumerState<ChatsDrawer>
           final hasVisibleFolders = foldersEnabled && folders.isNotEmpty;
 
           if (list.isEmpty && !hasVisibleFolders) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(Spacing.lg),
-                child: Text(
-                  AppLocalizations.of(context)!.noConversationsYet,
-                  style: AppTypography.bodyMediumStyle.copyWith(
-                    color: theme.textSecondary,
-                  ),
-                ),
-              ),
+            return _buildEmptyState(
+              AppLocalizations.of(context)!.noConversationsYet,
             );
           }
 
@@ -679,17 +719,7 @@ class _ChatsDrawerState extends ConsumerState<ChatsDrawer>
     return searchAsync.when(
       data: (list) {
         if (list.isEmpty) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(Spacing.lg),
-              child: Text(
-                'No results for "$_query"',
-                style: AppTypography.bodyMediumStyle.copyWith(
-                  color: theme.textSecondary,
-                ),
-              ),
-            ),
-          );
+          return _buildEmptyState(AppLocalizations.of(context)!.noResults);
         }
 
         final pinned = list.where((c) => c.pinned == true).toList();
@@ -1505,13 +1535,24 @@ class _ChatsDrawerState extends ConsumerState<ChatsDrawer>
         (_pendingConversationId == conv.id) &&
         (ref.watch(chat.isLoadingConversationProvider) == true);
     final bool isPinned = conv.pinned == true;
+    final activeChatIds = ref.watch(activeChatIdsProvider);
+    final bool unread = _conversationUnread(
+      conv,
+      selected: isActive,
+      activeChatIds: activeChatIds,
+    );
+
+    final bool isGenerating =
+        conv.id != null && activeChatIds.contains(conv.id);
 
     final tileWidget = ConversationTile(
       key: ValueKey<String>('drawer-chat-${conv.id}'),
       title: title,
       pinned: isPinned,
       selected: isActive,
+      unread: unread,
       isLoading: isLoadingSelected,
+      isGenerating: isGenerating,
       onTap: _isLoadingConversation
           ? null
           : () => _selectConversation(context, conv.id),
@@ -1625,6 +1666,21 @@ class _ChatsDrawerState extends ConsumerState<ChatsDrawer>
 
     // Selecting a real conversation exits temporary mode
     container.read(temporaryChatEnabledProvider.notifier).set(false);
+    final outgoingId = container.read(activeConversationProvider)?.id;
+    if (outgoingId != id) {
+      markConversationRead(container, outgoingId);
+    }
+    final selectedReadAt = DateTime.now();
+    markConversationRead(container, id, readAt: selectedReadAt);
+
+    // Overlay the just-selected read time when it is newer than the source's
+    // own lastReadAt, so the active conversation reflects the optimistic read.
+    Conversation withOptimisticReadAt(Conversation c) {
+      final readAt = c.lastReadAt;
+      return readAt == null || selectedReadAt.isAfter(readAt)
+          ? c.copyWith(lastReadAt: selectedReadAt)
+          : c;
+    }
 
     try {
       // Mark global loading to show skeletons in chat
@@ -1653,20 +1709,43 @@ class _ChatsDrawerState extends ConsumerState<ChatsDrawer>
         }
       }
 
-      // Load the full conversation details in the background
-      final api = container.read(apiServiceProvider);
-      if (api != null) {
-        final full = await api.getConversation(id);
-        container.read(activeConversationProvider.notifier).set(full);
-      } else {
-        // Fallback: use the lightweight item to update the active conversation
+      // DB-first open (CDT-RFC-001 Phase 1): a synced local row renders
+      // instantly — offline included — and a background pull freshens it.
+      final local = await loadLocalConversation(container, id);
+      if (local != null) {
         container
             .read(activeConversationProvider.notifier)
-            .set(
-              (await container.read(
-                conversationsProvider.future,
-              )).firstWhere((c) => c.id == id),
-            );
+            .set(withOptimisticReadAt(local));
+        schedulePullChatNow(container, id);
+      } else {
+        // No row / envelope stub / reviewer mode: load from the server.
+        final api = container.read(apiServiceProvider);
+        if (api != null) {
+          final full = await api.getConversation(id);
+          container
+              .read(activeConversationProvider.notifier)
+              .set(withOptimisticReadAt(full));
+          // Materialize the local row so the next open is DB-first.
+          schedulePullChatNow(container, id);
+        } else {
+          // Fallback: use the lightweight item to update the active
+          // conversation
+          final conversations = await container.read(
+            conversationsProvider.future,
+          );
+          Conversation? fallback;
+          for (final conversation in conversations) {
+            if (conversation.id == id) {
+              fallback = conversation;
+              break;
+            }
+          }
+          if (fallback != null) {
+            container
+                .read(activeConversationProvider.notifier)
+                .set(withOptimisticReadAt(fallback));
+          }
+        }
       }
 
       // Clear loading after data is ready
@@ -1678,6 +1757,22 @@ class _ChatsDrawerState extends ConsumerState<ChatsDrawer>
     } finally {
       if (mounted) setState(() => _isLoadingConversation = false);
     }
+  }
+
+  bool _conversationUnread(
+    dynamic conversation, {
+    required bool selected,
+    required Set<String> activeChatIds,
+  }) {
+    final id = conversation.id?.toString();
+    if (id == null || id.isEmpty || selected || activeChatIds.contains(id)) {
+      return false;
+    }
+    final updatedAt = conversation.updatedAt;
+    if (updatedAt is! DateTime) return false;
+    final lastReadAt = conversation.lastReadAt;
+    if (lastReadAt is! DateTime) return true;
+    return updatedAt.isAfter(lastReadAt);
   }
 }
 

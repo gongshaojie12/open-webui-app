@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:checks/checks.dart';
 import 'package:conduit/l10n/app_localizations.dart';
 import 'package:conduit/core/services/worker_manager.dart';
 import 'package:conduit/core/models/chat_message.dart';
@@ -14,6 +15,7 @@ import 'package:conduit/shared/widgets/markdown/compiled_markdown_document.dart'
 import 'package:conduit/shared/widgets/markdown/markdown_config.dart';
 import 'package:conduit/shared/widgets/markdown/markdown_compile_service.dart';
 import 'package:conduit/shared/widgets/markdown/markdown_loading_skeleton.dart';
+import 'package:conduit/shared/widgets/markdown/renderer/inline_renderer.dart';
 import 'package:conduit/shared/widgets/markdown/streaming_markdown_widget.dart';
 import 'package:conduit/shared/widgets/themed_sheets.dart';
 import 'package:flutter/foundation.dart';
@@ -36,6 +38,48 @@ Iterable<_RecordedPlatformCall> _mediumImpactCalls(
       call.method == 'HapticFeedback.vibrate' &&
       call.arguments == 'HapticFeedbackType.mediumImpact',
 );
+
+Iterable<_RecordedPlatformCall> _hapticFeedbackCalls(
+  List<_RecordedPlatformCall> calls,
+) => calls.where((call) => call.method == 'HapticFeedback.vibrate');
+
+/// Returns `true` if [text] contains any unpaired UTF-16 surrogate, which would
+/// render as a tofu/replacement glyph (the regression the fade-split snap
+/// guards against).
+bool _hasLoneSurrogate(String text) {
+  for (var index = 0; index < text.length; index += 1) {
+    final unit = text.codeUnitAt(index);
+    final isHigh = unit >= 0xD800 && unit <= 0xDBFF;
+    final isLow = unit >= 0xDC00 && unit <= 0xDFFF;
+    if (isHigh) {
+      final hasLowFollower =
+          index + 1 < text.length &&
+          text.codeUnitAt(index + 1) >= 0xDC00 &&
+          text.codeUnitAt(index + 1) <= 0xDFFF;
+      if (!hasLowFollower) {
+        return true;
+      }
+      index += 1;
+    } else if (isLow) {
+      return true;
+    }
+  }
+  return false;
+}
+
+Iterable<TextSpan> _textSpanLeaves(InlineSpan span) sync* {
+  if (span is! TextSpan) {
+    return;
+  }
+  final children = span.children;
+  if (children == null || children.isEmpty) {
+    yield span;
+    return;
+  }
+  for (final child in children) {
+    yield* _textSpanLeaves(child);
+  }
+}
 
 class _TestTextToSpeechController extends TextToSpeechController {
   @override
@@ -153,6 +197,53 @@ class _PrepareCountingMarkdownCompileService extends MarkdownCompileService {
   }
 }
 
+// Forces the deferred streaming path (async prepare) AND delays the compile of
+// one target prepared content, so a streaming scope change exercises the
+// `_pendingClearStaleDocument` flag and the streaming async-clear branch.
+class _DeferredStreamingCompileService extends MarkdownCompileService {
+  _DeferredStreamingCompileService({required this.delayedPreparedContent})
+    : super(workerManager: WorkerManager());
+
+  final String delayedPreparedContent;
+  final Completer<void> _release = Completer<void>();
+
+  void release() {
+    if (!_release.isCompleted) {
+      _release.complete();
+    }
+  }
+
+  @override
+  bool shouldPrepareSynchronously(String content, {bool widgetTest = false}) =>
+      false;
+
+  @override
+  Future<String> prepareContent(
+    String content, {
+    required bool streaming,
+    bool allowSynchronous = false,
+    bool widgetTest = false,
+  }) async => prepareMarkdownContent(content, streaming: streaming);
+
+  @override
+  bool shouldCompileSynchronously(
+    String preparedContent, {
+    bool widgetTest = false,
+  }) => preparedContent != delayedPreparedContent;
+
+  @override
+  Future<CompiledMarkdownDocument> compilePrepared(
+    String preparedContent, {
+    bool allowSynchronous = false,
+    bool widgetTest = false,
+  }) async {
+    if (preparedContent == delayedPreparedContent) {
+      await _release.future;
+    }
+    return compilePreparedSynchronously(preparedContent);
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -214,6 +305,8 @@ void main() {
     VoidCallback? onCompiledViewMounted,
     VoidCallback? onCompiledViewDisposed,
     VoidCallback? onStreamingRefreshFrame,
+    VoidCallback? onBaseRender,
+    MarkdownLinkTapCallback? onTapLink,
   }) {
     return ProviderScope(
       child: MaterialApp(
@@ -228,10 +321,12 @@ void main() {
               isStreaming: isStreaming,
               stateScopeId: stateScopeId,
               sources: sources,
+              onTapLink: onTapLink,
               debugRenderInterval: debugRenderInterval,
               debugOnCompiledViewMounted: onCompiledViewMounted,
               debugOnCompiledViewDisposed: onCompiledViewDisposed,
               debugOnStreamingRefreshFrame: onStreamingRefreshFrame,
+              debugOnBaseRender: onBaseRender,
             ),
           ),
         ),
@@ -244,6 +339,7 @@ void main() {
     required ChatMessage message,
     required bool isStreaming,
     bool disableAnimations = false,
+    bool suppressStreamingHaptics = false,
   }) {
     return UncontrolledProviderScope(
       container: container,
@@ -258,6 +354,7 @@ void main() {
               message: message,
               isStreaming: isStreaming,
               showFollowUps: false,
+              suppressStreamingHaptics: suppressStreamingHaptics,
               onDelete: () {},
             ),
           ),
@@ -430,11 +527,20 @@ graph TD
       await tester.pumpWidget(buildHarness(content, isStreaming: true));
       await tester.pumpAndSettle();
 
-      final row = tester.widget<Row>(
-        find.ancestor(of: find.text('•'), matching: find.byType(Row)),
+      // While streaming, the loose list-item inline run is rendered through a
+      // FadableRichText (so its suffix can fade), which builds a Text.rich
+      // internally. Locate that rendered Text regardless of the wrapper.
+      final textWidget = tester.widget<Text>(
+        find.descendant(
+          of: find.byType(FadableRichText),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is Text &&
+                widget.textSpan?.toPlainText() ==
+                    '$firstParagraph $secondParagraph',
+          ),
+        ),
       );
-      final expanded = row.children.last as Expanded;
-      final textWidget = expanded.child as Text;
 
       expect(
         textWidget.textSpan?.toPlainText(),
@@ -498,6 +604,313 @@ graph TD
       greaterThan(0),
     );
     expect((paragraphPaddings.last.padding as EdgeInsets).bottom, 0);
+  });
+
+  testWidgets('streaming markdown fades newly appended rendered text', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildHarness('Hello', isStreaming: true));
+    await tester.pump();
+
+    await tester.pumpWidget(buildHarness('Hello **world**', isStreaming: true));
+    await tester.pump();
+
+    Text renderedText() {
+      return tester.widget<Text>(
+        find.byWidgetPredicate((widget) {
+          return widget is Text &&
+              widget.textSpan?.toPlainText() == 'Hello world';
+        }),
+      );
+    }
+
+    final fadingLeaves = _textSpanLeaves(renderedText().textSpan!).toList();
+    final fadingWorld = fadingLeaves.singleWhere(
+      (span) => span.text == 'world',
+    );
+    expect(fadingWorld.style?.fontWeight, FontWeight.bold);
+    expect(fadingWorld.style?.color?.a, lessThan(1));
+
+    await tester.pump(const Duration(milliseconds: 360));
+
+    final settledLeaves = _textSpanLeaves(renderedText().textSpan!).toList();
+    final settledWorld = settledLeaves.singleWhere(
+      (span) => span.text == 'world',
+    );
+    expect(settledWorld.style?.fontWeight, FontWeight.bold);
+    expect(settledWorld.style?.color?.a ?? 1, 1);
+  });
+
+  testWidgets('streaming markdown fades newly appended plain text', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildHarness('Hello', isStreaming: true));
+    await tester.pump();
+
+    await tester.pumpWidget(buildHarness('Hello world', isStreaming: true));
+    await tester.pump();
+
+    Text renderedText() {
+      return tester.widget<Text>(
+        find.byWidgetPredicate((widget) {
+          return widget is Text &&
+              widget.textSpan?.toPlainText() == 'Hello world';
+        }),
+      );
+    }
+
+    final fadingLeaves = _textSpanLeaves(renderedText().textSpan!).toList();
+    final fadingSuffix = fadingLeaves.singleWhere(
+      (span) => span.text == ' world',
+    );
+    expect(fadingSuffix.style?.color?.a, lessThan(1));
+
+    await tester.pump(const Duration(milliseconds: 360));
+
+    final settledLeaves = _textSpanLeaves(renderedText().textSpan!).toList();
+    expect(settledLeaves.map((span) => span.text).join(), 'Hello world');
+    expect(
+      settledLeaves.every((span) => (span.style?.color?.a ?? 1) == 1),
+      isTrue,
+    );
+  });
+
+  testWidgets(
+    'fade reuses the cached base span tree instead of rebuilding per frame',
+    (tester) async {
+      var baseRenders = 0;
+      Widget harness(String content) => buildHarness(
+        content,
+        isStreaming: true,
+        onBaseRender: () => baseRenders += 1,
+      );
+
+      await tester.pumpWidget(harness('Hello'));
+      await tester.pump();
+      expect(baseRenders, 1, reason: 'base render once for the first content');
+
+      await tester.pumpWidget(harness('Hello **world**'));
+      await tester.pump();
+      final beforeFade = baseRenders;
+      expect(
+        beforeFade,
+        greaterThanOrEqualTo(2),
+        reason: 'at least one additional base render for the new content',
+      );
+
+      // Sweep the 320ms fade across ~20 frames. The base span tree is produced
+      // once per content change and the fade reuses that cache, so a pure fade
+      // (unchanged document) must add at most ONE base render (the settle pass)
+      // and never one-per-frame. A small constant bound — independent of the
+      // frame count — catches partial (every-other-frame) regressions that the
+      // old `frames ~/ 2` bound tolerated.
+      var frames = 0;
+      for (var elapsed = 0; elapsed < 320; elapsed += 16) {
+        await tester.pump(const Duration(milliseconds: 16));
+        frames += 1;
+      }
+      expect(
+        baseRenders - beforeFade,
+        lessThanOrEqualTo(1),
+        reason:
+            'base render is not driven per fade frame ($frames frames swept)',
+      );
+
+      final afterFade = baseRenders;
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(baseRenders, afterFade, reason: 'settling adds no base render');
+    },
+  );
+
+  testWidgets('only the faded suffix changes alpha and recognizers are stable', (
+    tester,
+  ) async {
+    void onTap(String url, String title) {}
+    var baseRenders = 0;
+    await tester.pumpWidget(
+      buildHarness(
+        'See [docs](https://a.test)',
+        isStreaming: true,
+        onTapLink: onTap,
+        onBaseRender: () => baseRenders += 1,
+      ),
+    );
+    await tester.pump();
+
+    await tester.pumpWidget(
+      buildHarness(
+        'See [docs](https://a.test) and **more**',
+        isStreaming: true,
+        onTapLink: onTap,
+        onBaseRender: () => baseRenders += 1,
+      ),
+    );
+    await tester.pump();
+
+    Text renderedText() {
+      return tester.widget<Text>(
+        find.byWidgetPredicate((widget) {
+          return widget is Text &&
+              (widget.textSpan?.toPlainText() ?? '') == 'See docs and more';
+        }),
+      );
+    }
+
+    final fadingLeaves = _textSpanLeaves(renderedText().textSpan!).toList();
+    // The link prefix recognizer is captured to assert identity stability.
+    final docsLeaf = fadingLeaves.singleWhere((span) => span.text == 'docs');
+    final docsRecognizer = docsLeaf.recognizer;
+    expect(docsRecognizer, isNotNull);
+
+    // The stable prefix is the common 'See docs' text. Everything appended after
+    // it (' and ' + 'more') is the streaming suffix and fades together; the
+    // prefix stays fully opaque.
+    const suffixTexts = {' and ', 'more'};
+    var sawFadedSuffix = false;
+    for (final leaf in fadingLeaves) {
+      final alpha = leaf.style?.color?.a ?? 1;
+      if (suffixTexts.contains(leaf.text)) {
+        expect(alpha, lessThan(1), reason: 'suffix fades in: "${leaf.text}"');
+        sawFadedSuffix = true;
+      } else {
+        expect(alpha, 1, reason: 'prefix stays opaque: "${leaf.text}"');
+      }
+    }
+    expect(sawFadedSuffix, isTrue);
+
+    // Step the fade frame-by-frame and assert recognizer identity is stable
+    // across consecutive reuse frames (frames that do NOT re-resolve the base
+    // span tree). applyFadeOpacity must never recreate the recognizer, so a
+    // reuse frame's recognizer must be identical to the previous reuse frame's.
+    // We require at least one such cross-frame comparison so the assertion can
+    // never be silently skipped: a regression that rebuilds the span tree on
+    // every fade frame would leave `reuseFrameComparisons` zero and fail the
+    // test — the failure mode the old single-frame `if` guard let pass green.
+    Object? previousReuseRecognizer = docsRecognizer;
+    var reuseFrameComparisons = 0;
+    for (var i = 0; i < 12; i++) {
+      final rendersBeforeFrame = baseRenders;
+      await tester.pump(const Duration(milliseconds: 16));
+      final frameLeaves = _textSpanLeaves(renderedText().textSpan!).toList();
+      final frameDocs = frameLeaves.singleWhere((span) => span.text == 'docs');
+      if (baseRenders != rendersBeforeFrame) {
+        // This frame re-resolved the document, so a fresh recognizer is
+        // expected; reset the baseline and only compare across reuse frames.
+        previousReuseRecognizer = frameDocs.recognizer;
+        continue;
+      }
+      reuseFrameComparisons++;
+      expect(
+        identical(frameDocs.recognizer, previousReuseRecognizer),
+        isTrue,
+        reason: 'link recognizer identity is stable across fade frames',
+      );
+      previousReuseRecognizer = frameDocs.recognizer;
+    }
+    expect(
+      reuseFrameComparisons,
+      greaterThan(0),
+      reason:
+          'at least one fade frame must reuse the cached span tree (otherwise '
+          'the recognizer-stability assertion is silently skipped)',
+    );
+
+    await tester.pump(const Duration(milliseconds: 360));
+    final settledLeaves = _textSpanLeaves(renderedText().textSpan!).toList();
+    expect(
+      settledLeaves.every((span) => (span.style?.color?.a ?? 1) == 1),
+      isTrue,
+      reason: 'every span settles to full opacity',
+    );
+    final settledDocs = settledLeaves.singleWhere(
+      (span) => span.text == 'docs',
+    );
+    expect(
+      settledDocs.recognizer,
+      isNotNull,
+      reason: 'the link recognizer survives the fade',
+    );
+  });
+
+  testWidgets('faded suffix begins after a fenced code block prefix', (
+    tester,
+  ) async {
+    const prefix = 'Intro\n\n```\ncode body\n```\n\nTail';
+    await tester.pumpWidget(buildHarness(prefix, isStreaming: true));
+    await tester.pump();
+
+    await tester.pumpWidget(
+      buildHarness('$prefix appended', isStreaming: true),
+    );
+    await tester.pump();
+
+    Text tailText() {
+      return tester.widget<Text>(
+        find.byWidgetPredicate((widget) {
+          return widget is Text &&
+              (widget.textSpan?.toPlainText() ?? '') == 'Tail appended';
+        }),
+      );
+    }
+
+    final leaves = _textSpanLeaves(tailText().textSpan!).toList();
+    // The code body precedes the tail in document coordinates; the fade offset
+    // must still land exactly on the appended ' appended' suffix, so the stable
+    // 'Tail' text never re-fades.
+    final stable = leaves.where((span) => span.text == 'Tail');
+    final faded = leaves.where((span) => (span.style?.color?.a ?? 1) < 1);
+    expect(stable.every((span) => (span.style?.color?.a ?? 1) == 1), isTrue);
+    expect(faded.map((span) => span.text).join(), contains('appended'));
+
+    await tester.pump(const Duration(milliseconds: 360));
+    final settled = _textSpanLeaves(tailText().textSpan!).toList();
+    expect(settled.every((span) => (span.style?.color?.a ?? 1) == 1), isTrue);
+  });
+
+  testWidgets('surrogate-pair boundary never splits mid-emoji while fading', (
+    tester,
+  ) async {
+    // Append text right after a non-BMP emoji; the fade split must snap off the
+    // surrogate pair so no lone-surrogate/replacement glyph appears.
+    await tester.pumpWidget(buildHarness('Hi \u{1F600}', isStreaming: true));
+    await tester.pump();
+
+    await tester.pumpWidget(
+      buildHarness('Hi \u{1F600} there', isStreaming: true),
+    );
+    await tester.pump();
+
+    Text renderedText() {
+      return tester.widget<Text>(
+        find.byWidgetPredicate((widget) {
+          return widget is Text &&
+              (widget.textSpan?.toPlainText() ?? '') == 'Hi \u{1F600} there';
+        }),
+      );
+    }
+
+    for (var elapsed = 0; elapsed < 320; elapsed += 40) {
+      final leaves = _textSpanLeaves(renderedText().textSpan!).toList();
+      final joined = leaves.map((span) => span.text ?? '').join();
+      // The emoji round-trips intact (no replacement char, no lone surrogate).
+      expect(joined, 'Hi \u{1F600} there');
+      expect(joined.contains('�'), isFalse);
+      for (final leaf in leaves) {
+        final text = leaf.text;
+        if (text == null || text.isEmpty) continue;
+        expect(
+          _hasLoneSurrogate(text),
+          isFalse,
+          reason: 'leaf "$text" must not split the emoji surrogate pair',
+        );
+      }
+      await tester.pump(const Duration(milliseconds: 40));
+    }
+
+    await tester.pump(const Duration(milliseconds: 360));
+    final settled = _textSpanLeaves(renderedText().textSpan!).toList();
+    expect(settled.map((span) => span.text ?? '').join(), 'Hi \u{1F600} there');
+    expect(settled.every((span) => (span.style?.color?.a ?? 1) == 1), isTrue);
   });
 
   testWidgets('renders OpenWebUI mentions without placeholder leakage', (
@@ -1004,6 +1417,7 @@ Tail keeps growing
             container: container,
             message: message,
             isStreaming: true,
+            disableAnimations: true,
           ),
         );
 
@@ -1016,6 +1430,7 @@ Tail keeps growing
             container: container,
             message: message.copyWith(content: 'Hello'),
             isStreaming: false,
+            disableAnimations: true,
           ),
         );
         await tester.pump();
@@ -1065,6 +1480,7 @@ Tail keeps growing
             container: container,
             message: message,
             isStreaming: true,
+            disableAnimations: true,
           ),
         );
 
@@ -1077,11 +1493,75 @@ Tail keeps growing
             container: container,
             message: message.copyWith(content: 'Hello'),
             isStreaming: false,
+            disableAnimations: true,
           ),
         );
         await tester.pump();
 
         expect(_mediumImpactCalls(platformCalls), isEmpty);
+      } finally {
+        messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+        container.dispose();
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
+
+  testWidgets(
+    'assistant streaming haptics stay silent when suppressed by voice mode',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+
+      final container = ProviderContainer(
+        overrides: [
+          appSettingsProvider.overrideWithValue(const AppSettings()),
+          textToSpeechControllerProvider.overrideWith(
+            _TestTextToSpeechController.new,
+          ),
+        ],
+      );
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final platformCalls = <_RecordedPlatformCall>[];
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        platformCalls.add(_RecordedPlatformCall(call.method, call.arguments));
+        return null;
+      });
+
+      final message = ChatMessage(
+        id: 'voice-streaming-message',
+        role: 'assistant',
+        content: '',
+        timestamp: DateTime(2026),
+      );
+
+      try {
+        await tester.pumpWidget(
+          buildAssistantHarness(
+            container: container,
+            message: message,
+            isStreaming: true,
+            disableAnimations: true,
+            suppressStreamingHaptics: true,
+          ),
+        );
+
+        container.read(streamingContentProvider.notifier).set('Hello');
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 350));
+
+        await tester.pumpWidget(
+          buildAssistantHarness(
+            container: container,
+            message: message.copyWith(content: 'Hello'),
+            isStreaming: false,
+            disableAnimations: true,
+            suppressStreamingHaptics: true,
+          ),
+        );
+        await tester.pump();
+
+        check(_hapticFeedbackCalls(platformCalls)).isEmpty();
       } finally {
         messenger.setMockMethodCallHandler(SystemChannels.platform, null);
         container.dispose();
@@ -1141,7 +1621,7 @@ Tail keeps growing
   );
 
   testWidgets(
-    'assistant streams long plain content through the cheap text path',
+    'assistant streams long plain content through markdown rendering',
     (tester) async {
       final container = ProviderContainer(
         overrides: [
@@ -1171,11 +1651,7 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsOneWidget,
-        );
-        expect(find.byType(StreamingMarkdownWidget), findsNothing);
+        expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
         expect(
           find.textContaining('Plain streaming sentence.'),
           findsOneWidget,
@@ -1187,7 +1663,7 @@ Tail keeps growing
   );
 
   testWidgets(
-    'assistant cheap streaming text path strips markdown reference definitions',
+    'assistant streaming markdown renderer omits reference definitions',
     (tester) async {
       final container = ProviderContainer(
         overrides: [
@@ -1220,10 +1696,7 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsOneWidget,
-        );
+        expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
         expect(
           find.textContaining('[docs]: https://example.com'),
           findsNothing,
@@ -1273,10 +1746,6 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsNothing,
-        );
         expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
       } finally {
         container.dispose();
@@ -1318,10 +1787,6 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsNothing,
-        );
         expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
       } finally {
         container.dispose();
@@ -1363,10 +1828,6 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsNothing,
-        );
         expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
       } finally {
         container.dispose();
@@ -1408,10 +1869,6 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsNothing,
-        );
         expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
       } finally {
         container.dispose();
@@ -1453,10 +1910,6 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsNothing,
-        );
         expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
       } finally {
         container.dispose();
@@ -1498,10 +1951,6 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsNothing,
-        );
         expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
       } finally {
         container.dispose();
@@ -1545,10 +1994,6 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsNothing,
-        );
         expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
       } finally {
         container.dispose();
@@ -1591,10 +2036,6 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsNothing,
-        );
         expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
       } finally {
         container.dispose();
@@ -1638,10 +2079,6 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsNothing,
-        );
         expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
       } finally {
         container.dispose();
@@ -1683,10 +2120,6 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsNothing,
-        );
         expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
       } finally {
         container.dispose();
@@ -1728,11 +2161,7 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsOneWidget,
-        );
-        expect(find.byType(StreamingMarkdownWidget), findsNothing);
+        expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
 
         await tester.pumpWidget(
           buildAssistantHarness(
@@ -1743,10 +2172,6 @@ Tail keeps growing
         );
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('assistant-streaming-plain-text')),
-          findsNothing,
-        );
         expect(find.byType(StreamingMarkdownWidget), findsOneWidget);
       } finally {
         container.dispose();
@@ -1931,6 +2356,103 @@ Tail keeps growing
   );
 
   testWidgets(
+    'typing indicator holds the footer slot while content streams, then swaps '
+    'to the action row on completion',
+    (tester) async {
+      final container = ProviderContainer(
+        overrides: [
+          appSettingsProvider.overrideWithValue(
+            const AppSettings(disableHapticsWhileStreaming: true),
+          ),
+          textToSpeechControllerProvider.overrideWith(
+            _TestTextToSpeechController.new,
+          ),
+        ],
+      );
+      final streaming = ChatMessage(
+        id: 'footer-slot-message',
+        role: 'assistant',
+        content: 'Partial answer',
+        timestamp: DateTime(2026),
+      );
+      try {
+        await tester.pumpWidget(
+          buildAssistantHarness(
+            container: container,
+            message: streaming,
+            isStreaming: true,
+            disableAnimations: true,
+          ),
+        );
+
+        // Before the 150ms gate, neither the indicator nor the action row shows.
+        await tester.pump();
+        expect(find.byKey(const ValueKey('typing')), findsNothing);
+        expect(find.byKey(const ValueKey('actions')), findsNothing);
+
+        // After the gate the typing indicator occupies the footer (action-row)
+        // slot even though content is already streaming in above it.
+        await tester.pump(const Duration(milliseconds: 150));
+        expect(find.byKey(const ValueKey('typing')), findsOneWidget);
+        expect(find.byKey(const ValueKey('actions')), findsNothing);
+
+        // Completion swaps the indicator for the action row.
+        await tester.pumpWidget(
+          buildAssistantHarness(
+            container: container,
+            message: streaming.copyWith(content: 'Full answer'),
+            isStreaming: false,
+            disableAnimations: true,
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(find.byKey(const ValueKey('typing')), findsNothing);
+        expect(find.byKey(const ValueKey('actions')), findsOneWidget);
+      } finally {
+        container.dispose();
+      }
+    },
+  );
+
+  testWidgets(
+    'action row shows immediately for a completed message that never streamed',
+    (tester) async {
+      final container = ProviderContainer(
+        overrides: [
+          appSettingsProvider.overrideWithValue(
+            const AppSettings(disableHapticsWhileStreaming: true),
+          ),
+          textToSpeechControllerProvider.overrideWith(
+            _TestTextToSpeechController.new,
+          ),
+        ],
+      );
+      final completed = ChatMessage(
+        id: 'history-message',
+        role: 'assistant',
+        content: 'A finished answer',
+        timestamp: DateTime(2026),
+      );
+      try {
+        await tester.pumpWidget(
+          buildAssistantHarness(
+            container: container,
+            message: completed,
+            isStreaming: false,
+            disableAnimations: true,
+          ),
+        );
+        await tester.pump();
+        expect(find.byKey(const ValueKey('typing')), findsNothing);
+        expect(find.byKey(const ValueKey('actions')), findsOneWidget);
+      } finally {
+        container.dispose();
+      }
+    },
+  );
+
+  testWidgets(
     'shows a loading skeleton when a completed document mounts before async compile finishes',
     (tester) async {
       final compiler = _DelayedMarkdownCompileService();
@@ -2088,6 +2610,258 @@ Tail keeps growing
 
       expect(
         find.text('Final settling line', findRichText: true),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'keeps rendered content visible when non-streaming content grows mid-response',
+    (tester) async {
+      // Reproduces issue #540: during the responseDone gap the turn phase
+      // latches to completed (isStreaming:false to the body) while answer tokens
+      // keep arriving. Each non-streaming content growth must NOT regress the
+      // already-rendered body to a loading skeleton (the ~13Hz strobe).
+      const firstContent = 'Settled answer paragraph.';
+      const grownContent = 'Settled answer paragraph.\n\nFollow-up sentence.';
+      final compiler = _SelectiveDelayedMarkdownCompileService(
+        delayedPreparedContent: prepareMarkdownContent(
+          grownContent,
+          streaming: false,
+        ),
+      );
+      addTearDown(compiler.dispose);
+      final skeletonFinder = find.byType(MarkdownLoadingSkeleton);
+
+      Widget buildSelectiveHarness(String content) {
+        return ProviderScope(
+          overrides: [
+            markdownCompileServiceProvider.overrideWithValue(compiler),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.light(TweakcnThemes.t3Chat),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: StreamingMarkdownWidget(
+                  content: content,
+                  // The body already treats the turn as settled (responseDone
+                  // gap), so isStreaming is false for both frames.
+                  isStreaming: false,
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+
+      // Frame 1: first settled content compiles immediately and renders. A
+      // fresh non-streaming document is selectable.
+      await tester.pumpWidget(buildSelectiveHarness(firstContent));
+      await tester.pump();
+      expect(skeletonFinder, findsNothing);
+      expect(
+        find.textContaining('Settled answer paragraph', findRichText: true),
+        findsOneWidget,
+      );
+      expect(find.byType(SelectionArea), findsOneWidget);
+
+      // Frame 2: content grows while still non-streaming; the grown content's
+      // compile is delayed. The previously-rendered body must stay visible, but
+      // the stale document must NOT be wrapped in SelectionArea (that would
+      // re-enable the concurrent-modification crash during ongoing updates).
+      await tester.pumpWidget(buildSelectiveHarness(grownContent));
+      await tester.pump();
+
+      expect(skeletonFinder, findsNothing);
+      expect(
+        find.textContaining('Settled answer paragraph', findRichText: true),
+        findsOneWidget,
+      );
+      expect(find.byType(SelectionArea), findsNothing);
+
+      compiler.release();
+      await tester.pump();
+      await tester.pump();
+
+      expect(skeletonFinder, findsNothing);
+      expect(
+        find.textContaining('Follow-up sentence', findRichText: true),
+        findsOneWidget,
+      );
+      // Once the compile settles, the document becomes selectable again.
+      expect(find.byType(SelectionArea), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'clears stale content when the scope changes to a new message/version',
+    (tester) async {
+      // #540 follow-up: a scope change (new message/version) must NOT keep the
+      // previous scope's rendered content on screen while the new body compiles;
+      // the skeleton covers the gap instead (same-scope growth keeps content).
+      const firstVersion = 'First version answer.';
+      const secondVersion = 'Second version answer.';
+      final compiler = _SelectiveDelayedMarkdownCompileService(
+        delayedPreparedContent: prepareMarkdownContent(
+          secondVersion,
+          streaming: false,
+        ),
+      );
+      addTearDown(compiler.dispose);
+      final skeletonFinder = find.byType(MarkdownLoadingSkeleton);
+
+      Widget buildScopedHarness(String content, String scope) {
+        return ProviderScope(
+          overrides: [
+            markdownCompileServiceProvider.overrideWithValue(compiler),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.light(TweakcnThemes.t3Chat),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: StreamingMarkdownWidget(
+                  content: content,
+                  isStreaming: false,
+                  stateScopeId: scope,
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+
+      await tester.pumpWidget(
+        buildScopedHarness(firstVersion, 'msg|version:0'),
+      );
+      await tester.pump();
+      expect(
+        find.textContaining('First version', findRichText: true),
+        findsOneWidget,
+      );
+
+      // Switch to a different version: scope + content change, compile delayed.
+      await tester.pumpWidget(
+        buildScopedHarness(secondVersion, 'msg|version:1'),
+      );
+      await tester.pump();
+      expect(
+        find.textContaining('First version', findRichText: true),
+        findsNothing,
+      );
+      expect(skeletonFinder, findsOneWidget);
+
+      compiler.release();
+      await tester.pump();
+      await tester.pump();
+      expect(
+        find.textContaining('Second version', findRichText: true),
+        findsOneWidget,
+      );
+      expect(skeletonFinder, findsNothing);
+    },
+  );
+
+  testWidgets(
+    'clears stale content when the scope changes while streaming',
+    (tester) async {
+      // #541 follow-up: the scope-change clear must also run on the deferred
+      // streaming path (e.g. switching from an old version back to the live,
+      // streaming current). The previous scope's document must not flash under
+      // the new scope while the streaming body compiles.
+      const oldVersion = 'Old version body.';
+      const liveResponse = 'Live streaming response.';
+      final compiler = _DeferredStreamingCompileService(
+        delayedPreparedContent: prepareMarkdownContent(
+          liveResponse,
+          streaming: true,
+        ),
+      );
+      addTearDown(compiler.dispose);
+      final skeletonFinder = find.byType(MarkdownLoadingSkeleton);
+
+      Widget buildScopedHarness(
+        String content,
+        String scope,
+        bool streaming,
+      ) {
+        return ProviderScope(
+          overrides: [
+            markdownCompileServiceProvider.overrideWithValue(compiler),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.light(TweakcnThemes.t3Chat),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: StreamingMarkdownWidget(
+                  // Shared key: the second pump must reuse this State so the
+                  // switch goes through didUpdateWidget's scope-change clear,
+                  // not a remount (which would hide the old content for the
+                  // wrong reason).
+                  key: const ValueKey('streaming-markdown-under-test'),
+                  content: content,
+                  isStreaming: streaming,
+                  stateScopeId: scope,
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+
+      await tester.pumpWidget(
+        buildScopedHarness(oldVersion, 'msg|version:0', false),
+      );
+      await tester.pump();
+      expect(
+        find.textContaining('Old version', findRichText: true),
+        findsOneWidget,
+      );
+
+      // Switch to the live, still-streaming current version: scope + content
+      // change with the new body needing an async compile.
+      await tester.pumpWidget(
+        buildScopedHarness(liveResponse, 'msg|current', true),
+      );
+      // The very first frame after the switch — before the scheduled streaming
+      // refresh runs — must already be clear of the old scope. A deferred clear
+      // would let the old document paint for this one frame under the new scope,
+      // which is exactly the flash this guards against (#541).
+      expect(
+        find.textContaining('Old version', findRichText: true),
+        findsNothing,
+      );
+      // Streaming never shows the skeleton; the gap is blank until the compile
+      // settles.
+      expect(skeletonFinder, findsNothing);
+
+      // Let the scheduled streaming refresh frame fire and the async prepare
+      // resolve; the old scope must stay gone throughout.
+      await tester.pump();
+      await tester.pump();
+      expect(
+        find.textContaining('Old version', findRichText: true),
+        findsNothing,
+      );
+      expect(skeletonFinder, findsNothing);
+      // The compile is still blocked, so the new body must NOT have appeared
+      // yet — this proves the gap is a genuine async wait, not a synchronous
+      // swap that would mask whether the clear happened at the right time.
+      expect(
+        find.textContaining('Live streaming response', findRichText: true),
+        findsNothing,
+      );
+
+      compiler.release();
+      await tester.pump();
+      await tester.pump();
+      expect(
+        find.textContaining('Live streaming response', findRichText: true),
         findsOneWidget,
       );
     },

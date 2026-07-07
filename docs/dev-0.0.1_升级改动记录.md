@@ -896,7 +896,111 @@ static SttPreference get _defaultSttPreference =>
 
 ---
 
-## 19. 升级操作检查清单
+## 19. 未登记的既有定制（补录）
+
+以下两处定制此前一直在 dev-0.0.1 上，但漏登记，本次补录（合并 3.4.2 时确认存活）：
+
+### 19.1 API 流式请求超时修复
+
+**文件：** `lib/core/services/api_service.dart`
+
+流式聊天请求设 `receiveTimeout: Duration.zero`（不限接收超时），修复 iOS 上长回复
+被 30s 默认超时提前中断的问题。
+
+### 19.2 语音通话 CallKit 显示名品牌
+
+**文件：** `lib/features/chat/voice_mode/chat_voice_mode_controller.dart`
+
+CallKit 来电显示 `handle: '众小智AI'`（原上游 `'Conduit AI'`）。属品牌改名，
+归到第 1 章品牌清单管理。
+
+> ⚠️ 升级注意：这两处上游都可能改动其所在文件，合并后 grep 确认：
+> `grep -n "receiveTimeout: Duration.zero" lib/core/services/api_service.dart`
+> `grep -n "handle: '众小智AI'" lib/features/chat/voice_mode/chat_voice_mode_controller.dart`
+
+---
+
+## 20. 2026-07-07 合并上游 3.4.2（118 个提交）
+
+### 背景
+
+从上游 `cogwheel0/conduit:main` 合并了 **118 个提交**（v3.3.1 → v3.4.2）。上游本次
+包含重大重构：**持久化层 Hive→Drift 迁移**、**原生语音管线**（native voice pipeline）、
+**应用内通知层**、**Notes 富文本编辑（Fleather）**、**Open WebUI 0.10 兼容 + 版本门禁**、
+新增 **捷克语(cs) / 日语(ja) / 斯洛伐克语(sk)** 已在更早版本引入。
+
+### 合并方式
+
+先审查后执行：预演合并（`git merge-tree`）→ 逐文件审查两侧差异 → 确认保留策略 →
+执行合并。合并前打 tag `pre-merge-3.4.2` 作为回退点。
+
+### 冲突文件（13 个）及处理
+
+| 文件 | 冲突性质 | 处理 |
+|------|---------|------|
+| `pubspec.yaml` | dev_dependencies 相邻行 | 版本号/依赖取上游，保留 dev 的 `flutter_launcher_icons` |
+| `ios/Runner/Info.plist` | dev 键顺序调整 + 上游新增键 | 保留 dev 品牌+顺序，合入上游 `NSPersonalVoiceUsageDescription`（品牌改众小智AI）|
+| `lib/core/auth/auth_state_manager.dart` | 上游重构整块 + dev 一处品牌词 | 全取上游重构，重贴品牌词 `please clear 众小智AI credentials` |
+| 9 个 `lib/l10n/app_*.arb` | 假冲突（品牌行 vs 新增 key 相邻） | 保留 dev 品牌，合入上游新增 key（serverIncompatible*/chatQueued*）|
+| `lib/shared/widgets/web_content_embed.dart` | **架构冲突**（见下方 20.1）| 方案 B 分流 |
+
+### 20.1 web_content_embed.dart 的架构级融合（重点）
+
+**冲突本质：** 上游把本地 HTML embed 内容搬进了 **sandbox iframe**
+（`sandbox="allow-scripts allow-forms"`，无 `allow-same-origin`），而 dev 的三个注入
+脚本（`_injectExternalOpenBridge` 重写 window.open、`_injectFixedViewportScroll`、
+以及原 `_injectHeightReporter`）都作用在**外层顶层文档**——在上游 iframe 结构下
+**全部失效**，会导致 PPT 的下载白屏 / 图片留白 / 多页滚动三个 bug 复现。
+
+**采用方案 B（按 `useFixedViewport` 分流）**，而非把 dev 逻辑改造进 srcdoc：
+
+- `_wrapHtmlDocument` 新增 `useSandbox` 参数。
+- **PPT/固定视口 embed**（`useFixedViewport == true` → `useSandbox == false`）：
+  走 **dev 原来的顶层文档直插**结构，dev 的注入脚本直接作用到 PPT 内容本身 →
+  三个修复完整保留、行为不变。
+- **其他本地 embed**（`useSandbox == true`）：走**上游 sandbox iframe**，保留安全
+  隔离 + 上游 `conduit-embed-height` postMessage 测高。
+- `onLoadStop` 融合：`_injectArguments` 在「远程 or 固定视口」时顶层注入（本地
+  sandbox 的 args 由上游 srcdoc bootstrap 注入）；`_injectExternalOpenBridge`
+  仍全模式注入；固定视口走 `_injectFixedViewportScroll`，否则走上游 `_scheduleHeightUpdates`。
+- **删除** `_injectHeightReporter`（其外层测高职责在两条路径下都已被取代：固定视口
+  不测高、sandbox 用上游 srcdoc ResizeObserver）。
+- 保留 dev 的 `shouldOverrideUrlLoading`（顶层外链兜底拦截）、`supportMultipleWindows: false`、
+  手势识别器 getter、`effectiveHeight` 固定视口高度、`_embedMaxHeight = 2000`。
+
+> ⚠️ 升级注意：下次上游若再改 `_wrapHtmlDocument` / sandbox 结构，需重新确认
+> `useSandbox` 分流是否成立。核心不变量：**PPT 走非 sandbox 顶层直插**，否则 dev
+> 注入脚本失效。合并后必须真机回归 PPT：进度条、图片显示、多页内部滚动、下载不白屏。
+
+### 20.2 品牌漏网补改（上游新增的旧品牌文本）
+
+上游新增的用户可见文本仍含 "Conduit"，非冲突（静默采纳），已手动补改为众小智AI：
+
+- 全部语言的 `chatQueuedPendingMessage`
+- `appInformation`（原仅 en 需改）
+
+### 20.3 cs / ja / sk 三语言品牌补齐
+
+这三个语言此前从未做过品牌改名（第 1、11 章只覆盖 10 个语言）。本次一并把用户可见
+的 Conduit（含词形 Conduitu/Conduite）改为众小智AI，与其他语言保持一致。
+**注意：** 只改 value，`supportConduit`/`aboutConduit`/`themePaletteConduit*` 等
+**key 名保持英文不动**（改 key 名会破坏本地化查找）。
+
+### 20.4 上游代码生成（Drift/freezed 升级）
+
+上游升级 freezed / json_serializable / 引入 drift，旧的 `.g.dart` / `.freezed.dart`
+过时，合并后必须重新生成：
+
+```bash
+flutter pub get
+dart run build_runner build --delete-conflicting-outputs
+```
+
+未跑 build_runner 前 `flutter analyze` 会报大量 `.g.dart` 错误（非手写代码问题）。
+
+---
+
+## 21. 升级操作检查清单
 
 从上游合并新版本后，按以下清单逐项检查：
 
@@ -945,3 +1049,21 @@ static SttPreference get _defaultSttPreference =>
 
 - [ ] `android/app/build.gradle.kts` 中签名配置包含 V1-V4 和 debug 回退
 - [ ] `android/gradle.properties` 中 JVM 内存参数合适
+- [ ] 合并后跑 `flutter pub get` + `dart run build_runner build --delete-conflicting-outputs` 重新生成 `.g.dart`/`.freezed.dart`
+- [ ] `flutter analyze lib` 无手写代码错误（`.g.dart` 报错通常是没跑 build_runner）
+
+### Embed（PPT）
+
+- [ ] `web_content_embed.dart` 中 `_wrapHtmlDocument` 的 `useSandbox` 参数存在
+- [ ] `useFixedViewport == true` 时走非 sandbox 顶层直插（PPT 注入脚本才生效）
+- [ ] `_injectExternalOpenBridge` / `_injectFixedViewportScroll` 保留
+- [ ] 真机回归：PPT 进度条、图片显示、多页内部滚动、下载不白屏
+
+### API / 语音（补录定制）
+
+- [ ] `grep -n "receiveTimeout: Duration.zero" lib/core/services/api_service.dart`
+- [ ] `grep -n "handle: '众小智AI'" lib/features/chat/voice_mode/chat_voice_mode_controller.dart`
+
+### 品牌（补充）
+
+- [ ] cs / ja / sk 三语言 arb 用户可见 Conduit 已改众小智AI（key 名保持英文）

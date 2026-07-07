@@ -1,6 +1,13 @@
 {
   "@@locale": "ja",
   "appTitle": "Conduit",
+  "serverIncompatibleTitle": "サーバーは未対応です",
+  "serverIncompatibleMessage": "このサーバーは Open WebUI {serverVersion} を実行しており、このアプリが対応するバージョン（{maxVersion} まで）よりも新しいバージョンです。",
+  "serverIncompatibleResolution": "続行するには、サーバーを {maxVersion} 以前にダウングレードするか、対応を追加するアプリの更新をお待ちください。",
+  "serverIncompatibleConnectBlocked": "このサーバーは、このアプリが対応するバージョン（{maxVersion} まで）よりも新しいバージョンです。",
+  "serverIncompatibleRecheck": "サーバーを再確認",
+  "serverIncompatibleSwitchServer": "別のサーバーを使用",
+  "serverIncompatibleStillUnsupported": "このサーバーは、まだこのアプリが対応するバージョンよりも新しいバージョンです。",
   "@appTitle": {
     "description": "Application name displayed in the app and OS UI."
   },
@@ -613,6 +620,34 @@
   "cancel": "キャンセル",
   "@cancel": {
     "description": "Cancel button label."
+  },
+  "chatQueuedOfflineTitle": "オフラインでキュー済み",
+  "@chatQueuedOfflineTitle": {
+    "description": "Title shown on an assistant placeholder when a chat request is queued because the server is unreachable."
+  },
+  "chatQueuedOfflineMessage": "サーバーに接続できるようになると、この応答が開始されます。",
+  "@chatQueuedOfflineMessage": {
+    "description": "Body text shown for an offline queued assistant response."
+  },
+  "chatQueuedPendingTitle": "送信用にキュー済み",
+  "@chatQueuedPendingTitle": {
+    "description": "Title shown when a queued assistant response is waiting for sync/backoff."
+  },
+  "chatQueuedPendingMessage": "同期が実行され次第、Conduit がこの応答を開始します。",
+  "@chatQueuedPendingMessage": {
+    "description": "Body text shown for a queued assistant response that is waiting to be sent."
+  },
+  "chatQueuedFailedTitle": "送信に失敗しました",
+  "@chatQueuedFailedTitle": {
+    "description": "Title shown when a queued assistant response has failed and needs user action."
+  },
+  "chatQueuedFailedMessage": "キュー内の応答を再試行するか、キャンセルしてください。",
+  "@chatQueuedFailedMessage": {
+    "description": "Body text shown when a queued assistant response has failed and offers retry or cancel."
+  },
+  "chatQueuedSnackBar": "メッセージをキューに追加しました。サーバーに接続できるようになると送信されます。",
+  "@chatQueuedSnackBar": {
+    "description": "Snackbar shown after sending a chat message while offline."
   },
   "ok": "OK",
   "@ok": {
@@ -1413,7 +1448,7 @@
   "@sttTranscriptionLanguage": {
     "description": "Title for the server speech-to-text language setting."
   },
-  "sttTranscriptionLanguageDescription": "Auto ではこのデバイスの言語を使用します。必要に応じて pl などのコードを入力してください。",
+  "sttTranscriptionLanguageDescription": "Auto ではこのデバイスの言語を使用します。必要に応じて en などのコードを入力してください。",
   "@sttTranscriptionLanguageDescription": {
     "description": "Description for the server speech-to-text language setting."
   },
@@ -1425,11 +1460,11 @@
   "@sttTranscriptionLanguageCustom": {
     "description": "Option label for entering an explicit speech-to-text language code."
   },
-  "sttTranscriptionLanguagePlaceholder": "ISO-639-1 コード（例: pl）",
+  "sttTranscriptionLanguagePlaceholder": "ISO-639-1 コード（例: en）",
   "@sttTranscriptionLanguagePlaceholder": {
     "description": "Placeholder for entering a two-letter speech-to-text language code."
   },
-  "sttTranscriptionLanguageInvalid": "pl などの 2 文字の言語コードを使用してください。",
+  "sttTranscriptionLanguageInvalid": "en などの 2 文字の言語コードを使用してください。",
   "@sttTranscriptionLanguageInvalid": {
     "description": "Validation message for invalid speech-to-text language codes."
   },

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/tools/providers/tools_providers.dart';
+import '../../features/chat/providers/text_to_speech_provider.dart';
 import '../../l10n/app_localizations.dart';
 import '../../shared/theme/tweakcn_themes.dart';
 import '../models/model.dart';
@@ -143,6 +144,9 @@ class NativeSheetHydrationService {
         return;
       case NativeSheetRoutes.personalization:
         await _hydrateNativePersonalizationDetail(ctx, l10n);
+        return;
+      case NativeSheetRoutes.notificationSettings:
+        await _hydrateNativeNotificationsDetail(l10n);
         return;
       case 'advanced-prompt-overrides':
         await _hydrateNativeAdvancedPromptDetail(ctx, l10n);
@@ -468,9 +472,109 @@ class NativeSheetHydrationService {
     }
   }
 
+  Future<void> _hydrateNativeNotificationsDetail(AppLocalizations l10n) async {
+    try {
+      final s = _ref.read(appSettingsProvider);
+      // Dynamic detail patches only carry a flat `items` list (sections are
+      // dropped by applyDetailPatch), so build a single ordered list.
+      await _applyNativeDetail(
+        NativeSheetDetailConfig(
+          id: NativeSheetRoutes.notificationSettings,
+          title: l10n.notificationsTitle,
+          subtitle: l10n.notificationsSubtitle,
+          items: [
+            NativeSheetItemConfig(
+              id: 'notifications-enabled',
+              title: l10n.notificationsEnabledTitle,
+              subtitle: l10n.notificationsEnabledDescription,
+              sfSymbol: 'bell.fill',
+              kind: NativeSheetItemKind.toggle,
+              value: s.notificationsEnabled,
+            ),
+            NativeSheetItemConfig(
+              id: 'notification-in-app-banner',
+              title: l10n.notificationInAppBannerTitle,
+              subtitle: l10n.notificationInAppBannerDescription,
+              sfSymbol: 'rectangle.topthird.inset.filled',
+              kind: NativeSheetItemKind.toggle,
+              value: s.notificationInAppBanner,
+            ),
+            NativeSheetItemConfig(
+              id: 'notification-system',
+              title: l10n.notificationSystemTitle,
+              subtitle: l10n.notificationSystemDescription,
+              sfSymbol: 'bell.badge',
+              kind: NativeSheetItemKind.toggle,
+              value: s.notificationSystem,
+            ),
+            NativeSheetItemConfig(
+              id: 'notification-sound',
+              title: l10n.notificationSoundTitle,
+              subtitle: l10n.notificationSoundDescription,
+              sfSymbol: 'speaker.wave.2.fill',
+              kind: NativeSheetItemKind.toggle,
+              value: s.notificationSound,
+            ),
+            NativeSheetItemConfig(
+              id: 'notification-sound-always',
+              title: l10n.notificationSoundAlwaysTitle,
+              subtitle: l10n.notificationSoundAlwaysDescription,
+              sfSymbol: 'speaker.wave.3.fill',
+              kind: NativeSheetItemKind.toggle,
+              value: s.notificationSoundAlways,
+            ),
+            NativeSheetItemConfig(
+              id: 'notification-chat',
+              title: l10n.notificationChatTitle,
+              subtitle: l10n.notificationChatDescription,
+              sfSymbol: 'bubble.left.and.bubble.right.fill',
+              kind: NativeSheetItemKind.toggle,
+              value: s.notificationChatEnabled,
+            ),
+            NativeSheetItemConfig(
+              id: 'notification-channel',
+              title: l10n.notificationChannelTitle,
+              subtitle: l10n.notificationChannelDescription,
+              sfSymbol: 'number',
+              kind: NativeSheetItemKind.toggle,
+              value: s.notificationChannelEnabled,
+            ),
+          ],
+        ),
+      );
+    } catch (error, stackTrace) {
+      DebugLogger.error(
+        'native-notifications-hydration-failed',
+        scope: 'native-sheet',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      await _patchNativeDetailError(
+        NativeSheetRoutes.notificationSettings,
+        l10n.unableToLoadOpenWebuiSettings,
+      );
+    }
+  }
+
   Future<void> _hydrateNativeVoiceDetail(AppLocalizations l10n) async {
     final appSettings = _ref.read(appSettingsProvider);
-    final nativeAudio = buildNativeAudioSheetParts(l10n, appSettings);
+    var ttsVoices = const <Map<String, dynamic>>[];
+    try {
+      final ttsService = _ref.read(textToSpeechServiceProvider);
+      await ttsService.updateSettings(engine: appSettings.ttsEngine);
+      ttsVoices = await ttsService.getAvailableVoices();
+    } catch (error, stackTrace) {
+      DebugLogger.warning(
+        'native-tts-voices-load-failed',
+        scope: 'native-sheet',
+        data: {'error': error, 'stackTrace': stackTrace},
+      );
+    }
+    final nativeAudio = buildNativeAudioSheetParts(
+      l10n,
+      appSettings,
+      ttsVoices: ttsVoices,
+    );
     await _applyNativeDetail(
       NativeSheetDetailConfig(
         id: NativeSheetRoutes.voice,

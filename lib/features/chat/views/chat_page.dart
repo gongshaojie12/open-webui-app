@@ -21,7 +21,9 @@ import '../../../core/services/native_sheet_bridge.dart';
 import '../../../core/services/native_sheet_hydration_service.dart';
 import '../../../core/services/performance_profiler.dart';
 import '../../../core/services/api_service.dart';
+import '../../../core/services/connectivity_service.dart';
 import '../../../core/services/settings_service.dart';
+import '../../../core/database/database_provider.dart';
 import '../../auth/providers/unified_auth_providers.dart';
 import '../providers/chat_providers.dart';
 import '../../../core/utils/debug_logger.dart';
@@ -44,7 +46,7 @@ import '../services/historical_message_regeneration.dart';
 import '../voice_mode/chat_voice_mode_controller.dart';
 import '../voice_mode/chat_voice_mode_overlay.dart';
 import '../voice_call/presentation/voice_call_launcher.dart';
-import '../../../shared/services/tasks/task_queue.dart';
+import '../../../core/services/media_upload_controller.dart';
 import '../../tools/providers/tools_providers.dart';
 import '../../../core/models/chat_message.dart';
 import '../../../core/models/conversation.dart';
@@ -116,12 +118,6 @@ class _PinToTopState {
       streamingMessageId: streamingMessageId,
     );
   }
-
-  _PinToTopState clearTracking() => _PinToTopState._(
-    isActive: isActive,
-    userMessageId: null,
-    streamingMessageId: null,
-  );
 }
 
 class ChatPage extends ConsumerStatefulWidget {
@@ -477,6 +473,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   @override
   void dispose() {
+    markConversationRead(ref, _lastConversationId);
     _screenContextSub?.close();
     _reviewerModeSub?.close();
     _conversationIdSub?.close();
@@ -545,25 +542,47 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
       // Get selected tools
       final toolIds = ref.read(selectedToolIdsProvider);
+      final wasOffline = !ref.read(isOnlineProvider);
+      final hasDurableOutbox =
+          ref.read(appDatabaseProvider) != null &&
+          !ref.read(reviewerModeProvider) &&
+          !ref.read(temporaryChatEnabledProvider) &&
+          !isTemporaryChat(ref.read(activeConversationProvider)?.id);
 
-      // Enqueue task-based send to unify flow across text, images, and tools
-      final activeConv = ref.read(activeConversationProvider);
-      await ref
-          .read(taskQueueProvider.notifier)
-          .enqueueSendText(
-            conversationId: activeConv?.id,
-            text: text,
-            attachments: uploadedFileIds.isNotEmpty ? uploadedFileIds : null,
-            toolIds: toolIds.isNotEmpty ? toolIds : null,
-          );
+      // Durable send: persists rows + outbox op in one tx (survives a
+      // force-quit) and drives streaming via the requestCompletion op.
+      await durableSend(
+        ref,
+        text,
+        uploadedFileIds.isNotEmpty ? uploadedFileIds : null,
+        toolIds: toolIds.isNotEmpty ? toolIds : null,
+      );
 
       // Clear attachments after successful send
       ref.read(attachedFilesProvider.notifier).clearAll();
 
+      if (wasOffline && hasDurableOutbox && mounted) {
+        AdaptiveSnackBar.show(
+          context,
+          message: AppLocalizations.of(context)!.chatQueuedSnackBar,
+          type: AdaptiveSnackBarType.info,
+          duration: const Duration(seconds: 3),
+        );
+      }
+
       // Pin-to-top: the detection in _buildActualMessagesList will handle
       // scrolling to the user message once the streaming placeholder appears.
-    } catch (e) {
-      // Message send failed - error already handled by sendMessage
+    } catch (e, stackTrace) {
+      // durableSend persists rows + drains synchronously; on failure (DB error,
+      // lock failure, …) recover the UI by finishing the streaming placeholder
+      // so it does not hang in `isStreaming: true` forever.
+      DebugLogger.error(
+        'durable-send-failed',
+        scope: 'chat/page',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      ref.read(chatMessagesProvider.notifier).failLastStreamingAssistant(e);
     }
   }
 
@@ -598,22 +617,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       // Add files to the attachment list
       ref.read(attachedFilesProvider.notifier).addFiles(attachments);
 
-      // Enqueue uploads via task queue for unified retry/progress
-      final activeConv = ref.read(activeConversationProvider);
+      // Drive uploads via the shared media-upload controller (fold-out, not an
+      // outbox op) for unified retry/progress.
       for (final attachment in attachments) {
-        try {
-          await ref
-              .read(taskQueueProvider.notifier)
-              .enqueueUploadMedia(
-                conversationId: activeConv?.id,
+        unawaited(
+          ref
+              .read(mediaUploadControllerProvider)
+              .upload(
                 filePath: attachment.file.path,
                 fileName: attachment.displayName,
                 fileSize: await attachment.file.length(),
-              );
-        } catch (e) {
-          if (!mounted) return;
-          DebugLogger.log('Enqueue upload failed: $e', scope: 'chat/page');
-        }
+              )
+              .catchError((Object e) {
+                DebugLogger.log('Upload failed: $e', scope: 'chat/page');
+              }),
+        );
       }
     } catch (e) {
       if (!mounted) return;
@@ -758,26 +776,23 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         scope: 'chat/page',
       );
 
-      // Enqueue upload via task queue for unified retry/progress
-      DebugLogger.log('Enqueueing image upload(s)...', scope: 'chat/page');
-      final activeConv = ref.read(activeConversationProvider);
+      // Drive uploads via the shared media-upload controller for unified
+      // retry/progress.
+      DebugLogger.log('Uploading image(s)...', scope: 'chat/page');
       for (final attachment in attachments) {
-        try {
-          await ref
-              .read(taskQueueProvider.notifier)
-              .enqueueUploadMedia(
-                conversationId: activeConv?.id,
+        unawaited(
+          ref
+              .read(mediaUploadControllerProvider)
+              .upload(
                 filePath: attachment.file.path,
                 fileName: attachment.displayName,
                 fileSize:
                     imageSizes[attachment] ?? await attachment.file.length(),
-              );
-        } catch (e) {
-          DebugLogger.log(
-            'Enqueue image upload failed: $e',
-            scope: 'chat/page',
-          );
-        }
+              )
+              .catchError((Object e) {
+                DebugLogger.log('Image upload failed: $e', scope: 'chat/page');
+              }),
+        );
       }
     } catch (e) {
       DebugLogger.log('Image attachment error: $e', scope: 'chat/page');
@@ -799,8 +814,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     // Add attachments to the list
     ref.read(attachedFilesProvider.notifier).addFiles(attachments);
 
-    // Enqueue uploads via task queue for unified retry/progress
-    final activeConv = ref.read(activeConversationProvider);
+    // Drive uploads via the shared media-upload controller for unified
+    // retry/progress.
     for (final attachment in attachments) {
       try {
         final fileSize = await attachment.file.length();
@@ -808,16 +823,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           'Pasted file: ${attachment.displayName}, size: $fileSize bytes',
           scope: 'chat/page',
         );
-        await ref
-            .read(taskQueueProvider.notifier)
-            .enqueueUploadMedia(
-              conversationId: activeConv?.id,
-              filePath: attachment.file.path,
-              fileName: attachment.displayName,
-              fileSize: fileSize,
-            );
+        unawaited(
+          ref
+              .read(mediaUploadControllerProvider)
+              .upload(
+                filePath: attachment.file.path,
+                fileName: attachment.displayName,
+                fileSize: fileSize,
+              )
+              .catchError((Object e) {
+                DebugLogger.log('Pasted upload failed: $e', scope: 'chat/page');
+              }),
+        );
       } catch (e) {
-        DebugLogger.log('Enqueue pasted upload failed: $e', scope: 'chat/page');
+        DebugLogger.log('Pasted upload prep failed: $e', scope: 'chat/page');
       }
     }
 
@@ -1284,6 +1303,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (conversationId == _lastConversationId) return;
 
     final outgoingId = _lastConversationId;
+    if (isActiveConversationInPlaceRemap(ref, outgoingId, conversationId)) {
+      if (outgoingId != null &&
+          conversationId != null &&
+          _savedScrollOffsets.containsKey(outgoingId)) {
+        _savedScrollOffsets[conversationId] = _savedScrollOffsets.remove(
+          outgoingId,
+        )!;
+      }
+      _lastConversationId = conversationId;
+      markConversationRead(ref, conversationId);
+      return;
+    }
+
+    markConversationRead(ref, outgoingId);
+    markConversationRead(ref, conversationId);
     if (outgoingId != null && _scrollController.hasClients) {
       _savedScrollOffsets[outgoingId] = _scrollController.position.pixels;
     }
@@ -1597,9 +1631,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   /// Transitions out of pin-to-top mode.
   ///
-  /// When [instant] is true (e.g. during streaming), uses jumpTo to
-  /// avoid competing with per-chunk scroll updates. When false (e.g.
-  /// streaming just completed), animates smoothly.
+  /// When [instant] is true, uses jumpTo to avoid competing with streaming
+  /// row-size corrections.
   void _endPinToTop({bool instant = false, bool preserveStreamingId = false}) {
     if (!_wantsPinToTop || !mounted || _endPinToTopInFlight) return;
     if (_isUserInteractingWithScroll) {
@@ -1688,6 +1721,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Widget _buildMessagesList(ThemeData theme, WidgetRef watchRef) {
     watchRef.watch(chatMessageStructureSignatureProvider);
+    // Rebuild the list shell only when streaming starts or ends so pin-to-top
+    // cleanup runs on completion without rebuilding on every streamed chunk.
+    watchRef.watch(isChatStreamingProvider);
     final messages = watchRef.read(chatMessagesProvider);
     final isLoadingConversation = watchRef.watch(isLoadingConversationProvider);
     final showLoadingSkeleton = isLoadingConversation && messages.isEmpty;
@@ -1810,6 +1846,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     // Watch models once here instead of per-message in the item builder.
     final modelsAsync = watchRef.watch(modelsProvider);
     final models = modelsAsync.hasValue ? modelsAsync.value : null;
+    final suppressAssistantStreamingHaptics = watchRef.watch(
+      chatVoiceModeControllerProvider.select((voice) => voice.isActive),
+    );
     final layoutMetadata = _resolveChatListStableLayoutMetadata(
       messages: messages,
       models: models,
@@ -1820,7 +1859,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _scheduleExtentCacheInvalidation();
     }
     _scheduleMarkdownPrewarm(messages, layoutMetadata: layoutMetadata);
-    final hasStreamingMessage = layoutMetadata.hasStreamingMessage;
+    final hasStreamingMessage = _hasActiveStreamingAssistant(messages);
 
     // Pin-to-top: detect new streaming response and scroll user message to top
     if (hasStreamingMessage && messages.length >= 2) {
@@ -1838,13 +1877,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         _scrollToUserMessage();
       }
     }
-    // Don't end pin-to-top when streaming completes. Keep the phantom sliver so
-    // the user message remains near the top; it dismisses on user scroll, new
-    // message, manual scroll-to-bottom, or conversation switch.
-    //
-    // Clear the pinned ID so the next message can activate pin-to-top.
-    if (!hasStreamingMessage && _pinnedStreamingId != null) {
-      _pinToTopState = _pinToTopState.clearTracking();
+    if (!hasStreamingMessage && !_wantsPinToTop && _pinnedStreamingId != null) {
+      // Streaming finished but pin-to-top is no longer active: clear the stale
+      // pinned streaming id. When pin-to-top IS still active we deliberately
+      // keep the phantom spacer so the prompt stays near the top until the user
+      // scrolls, sends, or switches chats — avoids a viewport jump mid-read.
+      _pinToTopState = const _PinToTopState.inactive();
     }
 
     final pinnedUserMessageIndex =
@@ -1990,6 +2028,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           versionModelNames: rowMetadata.versionModelNames,
                           versionModelIconUrls:
                               rowMetadata.versionModelIconUrls,
+                          suppressStreamingHaptics:
+                              suppressAssistantStreamingHaptics,
                           onCopy: () {
                             final currentMessage = rowRef.read(
                               chatMessageByIdProvider(messageId),
@@ -2146,9 +2186,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     final latestMessages = ref.read(chatMessagesProvider);
     final removedIds = _messageIdsToDelete(latestMessages, message.id);
-    final updatedMessages = latestMessages
-        .where((candidate) => !removedIds.contains(candidate.id))
-        .toList(growable: false);
+    final updatedMessages = message_tree.deleteOpenWebUiMessageFromChatMessages(
+      latestMessages,
+      message.id,
+    );
 
     final removedStreamingMessage = latestMessages
         .where((candidate) => removedIds.contains(candidate.id))
@@ -2214,7 +2255,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   Set<String> _messageIdsToDelete(
     List<ChatMessage> messages,
     String messageId,
-  ) => message_tree.chatMessageDescendantIds(messages, messageId);
+  ) => message_tree.openWebUiDeletedMessageIds(messages, messageId);
 
   void _regenerateMessage(String assistantMessageId) async {
     try {
@@ -2996,12 +3037,22 @@ String _formatChatModelDisplayName(String name) {
 
 ({String? displayName, Model? matchedModel}) _resolveChatModelPresentation({
   required String? rawModel,
+  String? fallbackModelName,
   required List<Model>? models,
   Map<String, Model>? modelLookup,
 }) {
   final trimmedModel = rawModel?.trim();
+  final trimmedFallback = fallbackModelName?.trim();
+  final fallback = trimmedFallback == null || trimmedFallback.isEmpty
+      ? null
+      : trimmedFallback;
   if (trimmedModel == null || trimmedModel.isEmpty) {
-    return (displayName: null, matchedModel: null);
+    return (
+      displayName: fallback == null
+          ? null
+          : _formatChatModelDisplayName(fallback),
+      matchedModel: null,
+    );
   }
 
   final matched = modelLookup?[trimmedModel];
@@ -3024,9 +3075,15 @@ String _formatChatModelDisplayName(String name) {
   }
 
   return (
-    displayName: _formatChatModelDisplayName(trimmedModel),
+    displayName: _formatChatModelDisplayName(fallback ?? trimmedModel),
     matchedModel: null,
   );
+}
+
+String? _messageModelNameFallback(ChatMessage message) {
+  final raw = message.metadata?['modelName'] ?? message.metadata?['model_name'];
+  final value = raw?.toString().trim();
+  return value == null || value.isEmpty ? null : value;
 }
 
 Map<String, Model>? _buildChatModelLookup(List<Model>? models) {
@@ -3109,13 +3166,11 @@ class _ChatListStableLayoutMetadata {
     required this.rows,
     required this.indexByMessageId,
     required this.indexByMessageKey,
-    required this.hasStreamingMessage,
   });
 
   final List<_ChatRowLayoutMetadata> rows;
   final Map<String, int> indexByMessageId;
   final Map<String, int> indexByMessageKey;
-  final bool hasStreamingMessage;
 
   double estimatedOffsetBefore(int targetIndex) {
     if (targetIndex <= 0 || targetIndex >= rows.length) {
@@ -3137,9 +3192,7 @@ _ChatListStableLayoutSignature _buildChatListStableLayoutSignature(
       ..write('\u0000')
       ..write(message.model ?? '')
       ..write('\u0000')
-      ..write(message.isStreaming ? 1 : 0)
-      ..write('\u0000')
-      ..write(message.isStreaming ? -1 : message.content.trim().length)
+      ..write(_messageModelNameFallback(message) ?? '')
       ..write('\u0000')
       ..write(message.attachmentIds?.length ?? 0)
       ..write('\u0000')
@@ -3165,7 +3218,9 @@ _ChatListStableLayoutSignature _buildChatListStableLayoutSignature(
     for (final version in message.versions) {
       buffer
         ..write('\u0000')
-        ..write(version.model ?? '');
+        ..write(version.model ?? '')
+        ..write('\u0000')
+        ..write(version.modelName ?? '');
     }
     buffer.writeln();
   }
@@ -3184,17 +3239,16 @@ _ChatListStableLayoutMetadata _buildChatListStableLayoutMetadata({
   final indexByMessageId = <String, int>{};
   final indexByMessageKey = <String, int>{};
   var leadingOffset = 0.0;
-  var hasStreamingMessage = false;
 
   for (var index = 0; index < messages.length; index++) {
     final message = messages[index];
     final isUser = message.role == 'user';
-    hasStreamingMessage = hasStreamingMessage || message.isStreaming;
     indexByMessageId[message.id] = index;
     indexByMessageKey['message-${message.id}'] = index;
 
     final modelPresentation = _resolveChatModelPresentation(
       rawModel: message.model,
+      fallbackModelName: _messageModelNameFallback(message),
       models: models,
       modelLookup: modelLookup,
     );
@@ -3203,6 +3257,7 @@ _ChatListStableLayoutMetadata _buildChatListStableLayoutMetadata({
     for (final version in message.versions) {
       final versionPresentation = _resolveChatModelPresentation(
         rawModel: version.model,
+        fallbackModelName: version.modelName,
         models: models,
         modelLookup: modelLookup,
       );
@@ -3252,7 +3307,6 @@ _ChatListStableLayoutMetadata _buildChatListStableLayoutMetadata({
     rows: List<_ChatRowLayoutMetadata>.unmodifiable(rows),
     indexByMessageId: Map<String, int>.unmodifiable(indexByMessageId),
     indexByMessageKey: Map<String, int>.unmodifiable(indexByMessageKey),
-    hasStreamingMessage: hasStreamingMessage,
   );
 }
 
@@ -3343,6 +3397,7 @@ List<
     double estimatedExtent,
     bool isArchivedVariant,
     bool showFollowUps,
+    String? displayModelName,
   })
 >
 debugBuildChatListLayoutSummaryForTesting(
@@ -3362,6 +3417,7 @@ debugBuildChatListLayoutSummaryForTesting(
           estimatedExtent: row.estimatedExtent,
           isArchivedVariant: row.isArchivedVariant,
           showFollowUps: row.showFollowUps,
+          displayModelName: row.displayModelName,
         ),
       )
       .toList(growable: false);
@@ -3457,25 +3513,6 @@ List<int> debugSelectMarkdownPrewarmCandidateIndicesForTesting(
     viewportTop: viewportTop,
     viewportHeight: viewportHeight,
     maxCount: maxCount,
-  );
-}
-
-@visibleForTesting
-({bool isActive, String? userMessageId, String? streamingMessageId})
-debugClearPinToTopTrackingForTesting({
-  required bool isActive,
-  String? userMessageId,
-  String? streamingMessageId,
-}) {
-  final state = _PinToTopState._(
-    isActive: isActive,
-    userMessageId: userMessageId,
-    streamingMessageId: streamingMessageId,
-  ).clearTracking();
-  return (
-    isActive: state.isActive,
-    userMessageId: state.userMessageId,
-    streamingMessageId: state.streamingMessageId,
   );
 }
 
@@ -3611,9 +3648,6 @@ double _estimateChatMessageExtent(
   var estimate = message.role == 'user' ? 84.0 : 132.0;
   estimate += estimatedLineCount * 22.0;
 
-  if (message.isStreaming) {
-    estimate += 56.0;
-  }
   if (message.error != null) {
     estimate += 64.0;
   }

@@ -56,6 +56,11 @@ class WebContentEmbed extends StatefulWidget {
   @visibleForTesting
   final VoidCallback? debugOnControllerReset;
 
+  @visibleForTesting
+  static String debugWrapHtmlDocument(String source, {String argsText = ''}) {
+    return _WebContentEmbedState._wrapHtmlDocument(source, argsText: argsText);
+  }
+
   @override
   State<WebContentEmbed> createState() => _WebContentEmbedState();
 }
@@ -195,7 +200,10 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
   }
 
   void _scheduleControllerInitialization(BuildContext context) {
-    if (!_isExpanded || _loadScheduled || _shouldRenderWebView || !_isSupported) {
+    if (!_isExpanded ||
+        _loadScheduled ||
+        _shouldRenderWebView ||
+        !_isSupported) {
       return;
     }
 
@@ -226,7 +234,9 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
     });
   }
 
-  Future<void> _initializeController({bool reuseCurrentRequestId = false}) async {
+  Future<void> _initializeController({
+    bool reuseCurrentRequestId = false,
+  }) async {
     if (!_isSupported || !_isExpanded) {
       _loadScheduled = false;
       return;
@@ -287,7 +297,14 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
       } else {
         final baseUrl = WebUri('https://embed.conduit.local/');
         await controller.loadData(
-          data: _wrapHtmlDocument(widget.source),
+          // 固定视口（PPT 进度条/查看器）走顶层文档直插，让 dev 的注入脚本
+          // （window.open 重写、overflow 滚动）能作用到内容本身；其余本地
+          // embed 走上游 sandbox iframe，保留安全隔离与高度上报。
+          data: _wrapHtmlDocument(
+            widget.source,
+            argsText: widget.argsText,
+            useSandbox: !widget.useFixedViewport,
+          ),
           baseUrl: baseUrl,
           historyUrl: baseUrl,
         );
@@ -315,62 +332,6 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
       await controller.evaluateJavascript(
         source: 'window.args = ${jsonEncode(argsText)};',
       );
-    } catch (_) {}
-  }
-
-  /// 注入高度上报脚本：
-  /// 1. 拦截 embed 内 `parent.postMessage({type:"iframe:height",height})`，
-  ///    转交给 Flutter 的 `conduitEmbedHeight` handler（与 Web 端机制一致）。
-  /// 2. 监听所有 `<img>` 的 load 事件与 window.resize / DOM 变化，图片异步
-  ///    加载完成后重新测高并上报——解决 PPT 查看器首帧图片未加载导致的留白
-  ///    （即“点下载返回后才显示”的本质：图片加载完成后重新布局）。
-  Future<void> _injectHeightReporter(InAppWebViewController controller) async {
-    const script = r'''
-(function(){
-  function report(){
-    try{
-      var h=Math.max(
-        document.documentElement.scrollHeight||0,
-        document.body?document.body.scrollHeight:0,
-        document.documentElement.offsetHeight||0
-      );
-      if(h>0 && window.flutter_inappwebview){
-        window.flutter_inappwebview.callHandler('conduitEmbedHeight', h);
-      }
-    }catch(e){}
-  }
-  // 拦截 embed 通过 parent.postMessage 上报的高度（pipe 进度条/查看器）
-  try{
-    window.addEventListener('message', function(ev){
-      var d=ev&&ev.data;
-      if(d&&d.type==='iframe:height'&&d.height>0&&window.flutter_inappwebview){
-        window.flutter_inappwebview.callHandler('conduitEmbedHeight', d.height);
-      }
-    });
-  }catch(e){}
-  // 图片异步加载完成后重新测高
-  try{
-    var imgs=document.getElementsByTagName('img');
-    for(var i=0;i<imgs.length;i++){
-      if(!imgs[i].complete){
-        imgs[i].addEventListener('load', report);
-        imgs[i].addEventListener('error', report);
-      }
-    }
-  }catch(e){}
-  // DOM 变化（查看器切页换图）后重新测高
-  try{
-    new MutationObserver(report).observe(document.body,{childList:true,subtree:true,attributes:true});
-  }catch(e){}
-  window.addEventListener('resize', report);
-  report();
-  setTimeout(report,300);
-  setTimeout(report,1000);
-  setTimeout(report,2500);
-})();
-''';
-    try {
-      await controller.evaluateJavascript(source: script);
     } catch (_) {}
   }
 
@@ -420,7 +381,10 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
     } catch (_) {}
   }
 
-  void _scheduleHeightUpdates(InAppWebViewController controller, int requestId) {
+  void _scheduleHeightUpdates(
+    InAppWebViewController controller,
+    int requestId,
+  ) {
     _updateHeight(controller, requestId);
     for (final delay in <int>[60, 250, 600]) {
       Future<void>.delayed(Duration(milliseconds: delay), () {
@@ -589,9 +553,14 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
               if (requestId != _loadRequestId) {
                 return;
               }
-              await _injectArguments(controller);
+              // 远程页面与固定视口（PPT）embed 是顶层文档，需在顶层注入 args；
+              // 普通本地 embed 走上游 sandbox iframe，args 已由 srcdoc bootstrap
+              // 注入进 iframe 内部（见 _injectSandboxBootstrap），此处不再重复。
+              if (_isRemoteUrl || widget.useFixedViewport) {
+                await _injectArguments(controller);
+              }
               // 重写 window.open → Flutter handler（系统浏览器打开），避免
-              // 下载按钮触发 WebView 新窗口导致返回后白屏。所有模式都注入。
+              // 下载按钮触发 WebView 新窗口导致返回后白屏。
               await _injectExternalOpenBridge(controller);
               if (widget.useFixedViewport) {
                 // 固定视口：高度恒定、内容内部滚动，不测高。注入 CSS 让文档在
@@ -601,7 +570,9 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
                   setState(() => _isLoading = false);
                 }
               } else {
-                await _injectHeightReporter(controller);
+                // 普通本地（sandbox iframe）/其他：iframe 内部通过
+                // parent.postMessage('conduit-embed-height') 上报高度，由外层
+                // wrapper 文档设置 iframe 高度，再由此测量外层文档高度上报 Flutter。
                 _scheduleHeightUpdates(controller, requestId);
               }
             },
@@ -669,13 +640,20 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
     );
   }
 
-  static String _wrapHtmlDocument(String source) {
-    final trimmed = source.trimLeft();
-    if (trimmed.startsWith('<!DOCTYPE html') || trimmed.startsWith('<html')) {
-      return source;
-    }
-
-    return '''
+  static String _wrapHtmlDocument(
+    String source, {
+    String argsText = '',
+    bool useSandbox = true,
+  }) {
+    // 固定视口（PPT）路径：不套 sandbox iframe，把内容作为顶层文档渲染，
+    // 这样 dev 的注入脚本（window.open 重写、overflow 滚动、下载拦截）能直接
+    // 作用到 PPT 内容本身。若已是完整 HTML 文档则原样返回。
+    if (!useSandbox) {
+      final trimmed = source.trimLeft();
+      if (trimmed.startsWith('<!DOCTYPE html') || trimmed.startsWith('<html')) {
+        return source;
+      }
+      return '''
 <!DOCTYPE html>
 <html>
   <head>
@@ -694,6 +672,137 @@ class _WebContentEmbedState extends State<WebContentEmbed> {
   </body>
 </html>
 ''';
+    }
+
+    final sandboxedSource = _injectSandboxBootstrap(source, argsText: argsText);
+    final encodedSource = _escapeHtmlAttribute(sandboxedSource);
+    return '''
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        width: 100%;
+      }
+      #embed-frame {
+        display: block;
+        width: 100%;
+        height: ${_embedDefaultHeight}px;
+        min-height: ${_embedMinHeight}px;
+        border: 0;
+        background: transparent;
+      }
+    </style>
+    <script>
+      (() => {
+        const minHeight = $_embedMinHeight;
+        const maxHeight = $_embedMaxHeight;
+        window.addEventListener('message', (event) => {
+          const data = event.data || {};
+          if (data.type !== 'conduit-embed-height') return;
+
+          const height = Number(data.height);
+          if (!Number.isFinite(height) || height <= 0) return;
+
+          const frame = document.getElementById('embed-frame');
+          if (!frame) return;
+
+          const clamped = Math.min(Math.max(height, minHeight), maxHeight);
+          frame.style.height = `\${clamped}px`;
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <iframe
+      id="embed-frame"
+      sandbox="allow-scripts allow-forms"
+      referrerpolicy="no-referrer"
+      srcdoc="$encodedSource"
+    ></iframe>
+  </body>
+</html>
+''';
+  }
+
+  static String _injectSandboxBootstrap(
+    String source, {
+    required String argsText,
+  }) {
+    final assignments = <String>[];
+    if (argsText.trim().isNotEmpty) {
+      assignments.add('window.args = ${_jsonForInlineScript(argsText)};');
+    }
+
+    final bootstrap =
+        '''
+<script>
+  ${assignments.join('\n  ')}
+  (() => {
+    const reportHeight = () => {
+      const body = document.body;
+      const html = document.documentElement;
+      const height = Math.ceil(Math.max(
+        body?.scrollHeight || 0,
+        body?.offsetHeight || 0,
+        html?.clientHeight || 0,
+        html?.scrollHeight || 0,
+        html?.offsetHeight || 0
+      ));
+      parent.postMessage({ type: 'conduit-embed-height', height }, '*');
+    };
+
+    window.addEventListener('load', reportHeight);
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(reportHeight);
+      observer.observe(document.documentElement);
+      if (document.body) observer.observe(document.body);
+    }
+    setTimeout(reportHeight, 0);
+    setTimeout(reportHeight, 250);
+    setTimeout(reportHeight, 1000);
+  })();
+</script>
+''';
+
+    final headMatch = RegExp(
+      r'<head\b[^>]*>',
+      caseSensitive: false,
+    ).firstMatch(source);
+    if (headMatch != null) {
+      return source.replaceRange(headMatch.end, headMatch.end, bootstrap);
+    }
+
+    final htmlMatch = RegExp(
+      r'<html\b[^>]*>',
+      caseSensitive: false,
+    ).firstMatch(source);
+    if (htmlMatch != null) {
+      return source.replaceRange(htmlMatch.end, htmlMatch.end, bootstrap);
+    }
+
+    return '$bootstrap$source';
+  }
+
+  static String _jsonForInlineScript(String value) {
+    return jsonEncode(value)
+        .replaceAll('&', r'\u0026')
+        .replaceAll('<', r'\u003C')
+        .replaceAll('>', r'\u003E');
+  }
+
+  static String _escapeHtmlAttribute(String value) {
+    return value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
   }
 }
 

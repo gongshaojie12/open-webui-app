@@ -79,6 +79,7 @@ class _StubAdapter implements HttpClientAdapter {
   final Map<String, dynamic>? pollResponse;
   final cancelledIds = <String>[];
   final stoppedTaskIds = <String>[];
+  final stoppedChatIds = <String>[];
 
   @override
   Future<ResponseBody> fetch(
@@ -90,6 +91,25 @@ class _StubAdapter implements HttpClientAdapter {
     if (options.method == 'POST' && options.path.contains('/api/tasks/stop/')) {
       final taskId = options.path.split('/').last;
       stoppedTaskIds.add(taskId);
+      return ResponseBody(
+        Stream.value(utf8.encode('{"status": true}')),
+        200,
+        headers: {
+          'content-type': ['application/json'],
+        },
+      );
+    }
+
+    if (options.method == 'POST' &&
+        options.path.contains('/api/tasks/chat/') &&
+        options.path.endsWith('/stop')) {
+      const prefix = '/api/tasks/chat/';
+      const suffix = '/stop';
+      final start = options.path.indexOf(prefix) + prefix.length;
+      final end = options.path.length - suffix.length;
+      stoppedChatIds.add(
+        Uri.decodeComponent(options.path.substring(start, end)),
+      );
       return ResponseBody(
         Stream.value(utf8.encode('{"status": true}')),
         200,
@@ -250,6 +270,7 @@ ActiveChatStream _attach({
   String sessionId = 'sess-1',
   String? activeConversationId = 'conv-1',
   SocketService? socketService,
+  void Function(String? chatId, bool active)? onChatActiveChanged,
 }) {
   return attachUnifiedChunkedStreaming(
     session: session,
@@ -261,6 +282,7 @@ ActiveChatStream _attach({
     activeConversationId: activeConversationId,
     api: api ?? _buildFakeApi(),
     socketService: socketService,
+    onChatActiveChanged: onChatActiveChanged,
     workerManager: workerManager ?? WorkerManager(maxConcurrentTasks: 1),
     appendToLastMessage: log.appendToLastMessage,
     bufferLastMessageContent: log.bufferLastMessageContent,
@@ -546,6 +568,421 @@ void main() {
     });
   });
 
+  group('Feature C — socket resume session shape', () {
+    test('resumeSocket maps to a socket-only taskSocket session', () {
+      final session = ChatCompletionSession.resumeSocket(
+        messageId: 'local-msg-1',
+        conversationId: 'conv-1',
+      );
+
+      // Resume must be a socket-only taskSocket: no HTTP body to forward and no
+      // abort handle (cancellation flows through the task registry). sessionId
+      // is forced null so foreign-session chat:completion events still bind.
+      check(session.transport).equals(ChatCompletionTransport.taskSocket);
+      check(session.messageId).equals('local-msg-1');
+      check(session.conversationId).equals('conv-1');
+      check(session.byteStream).isNull();
+      check(session.abort).isNull();
+      check(session.sessionId).isNull();
+    });
+
+    test('resume binds a foreign server message_id by chat_id '
+        'when sessionId is null (REPLACE semantics)', () async {
+      // Local placeholder id differs from the server's message_id. With a null
+      // session id the helper must bind the foreign id via chat_id and apply
+      // cumulative `content` as REPLACE onto the local message.
+      final log = _CallbackLog(
+        initialMessages: _fakeStreamingMessages(id: 'local-msg-1'),
+      );
+      final registrar = FakeSocketInjector();
+      final socket = _MockSocketService(registrar);
+
+      _attach(
+        session: ChatCompletionSession.resumeSocket(
+          messageId: 'local-msg-1',
+          conversationId: 'conv-1',
+        ),
+        log: log,
+        assistantMessageId: 'local-msg-1',
+        // Force the helper into the resume registration mode (chat-id-only).
+        sessionId: '',
+        activeConversationId: 'conv-1',
+        socketService: socket,
+      );
+
+      await pumpMicrotasks();
+
+      // Cumulative REPLACE deltas carrying a *foreign* server message_id.
+      registrar.emitChatEvent(
+        'chat:completion',
+        {'content': 'Hel'},
+        conversationId: 'conv-1',
+        messageId: 'server-msg-1',
+      );
+      await pumpMicrotasks();
+      registrar.emitChatEvent(
+        'chat:completion',
+        {'content': 'Hello'},
+        conversationId: 'conv-1',
+        messageId: 'server-msg-1',
+      );
+      await pumpMicrotasks();
+
+      // The local message id is preserved; cumulative content is the latest.
+      check(log.messages.last.id).equals('local-msg-1');
+      check(log.messages.last.content).equals('Hello');
+      check(log.replacedContents.last).equals('Hello');
+
+      registrar.emitChatEvent(
+        'chat:completion',
+        {'done': true},
+        conversationId: 'conv-1',
+        messageId: 'server-msg-1',
+      );
+      await pumpMicrotasks();
+
+      check(log.finishCount).equals(1);
+      check(log.messages.last.isStreaming).isFalse();
+    });
+
+    test('resume socket done finalizes exactly once (helper-layer '
+        'idempotency)', () async {
+      // Helper-layer guard: a single socket `done` for the resumed message must
+      // produce exactly one finalize and leave the message settled. (The
+      // notifier-level poll/socket double-finalize grace window is covered in
+      // chat_messages_notifier_remote_sync_test.dart; this seam does not run
+      // that poll.)
+      final log = _CallbackLog(
+        initialMessages: _fakeStreamingMessages(id: 'local-msg-1'),
+      );
+      final registrar = FakeSocketInjector();
+      final socket = _MockSocketService(registrar);
+
+      _attach(
+        session: ChatCompletionSession.resumeSocket(
+          messageId: 'local-msg-1',
+          conversationId: 'conv-1',
+        ),
+        log: log,
+        assistantMessageId: 'local-msg-1',
+        sessionId: '',
+        activeConversationId: 'conv-1',
+        socketService: socket,
+      );
+
+      await pumpMicrotasks();
+
+      registrar.emitChatEvent(
+        'chat:completion',
+        {'content': 'Hello', 'done': true},
+        conversationId: 'conv-1',
+        messageId: 'server-msg-1',
+      );
+
+      // Pump generously so any redundant recovery path would have a chance to
+      // fire a second finalize.
+      for (var i = 0; i < 10; i++) {
+        await pumpMicrotasks();
+      }
+
+      check(log.finishCount).equals(1);
+      check(log.messages.last.isStreaming).isFalse();
+      check(log.messages.last.content).equals('Hello');
+    });
+
+    test('resume APPENDs choices[].delta.content increments', () async {
+      final log = _CallbackLog(
+        initialMessages: _fakeStreamingMessages(id: 'local-msg-1'),
+      );
+      final registrar = FakeSocketInjector();
+      final socket = _MockSocketService(registrar);
+
+      _attach(
+        session: ChatCompletionSession.resumeSocket(
+          messageId: 'local-msg-1',
+          conversationId: 'conv-1',
+        ),
+        log: log,
+        assistantMessageId: 'local-msg-1',
+        sessionId: '',
+        activeConversationId: 'conv-1',
+        socketService: socket,
+      );
+
+      await pumpMicrotasks();
+
+      registrar.emitChatEvent(
+        'chat:completion',
+        {
+          'choices': [
+            {
+              'delta': {'content': 'He'},
+            },
+          ],
+        },
+        conversationId: 'conv-1',
+        messageId: 'server-msg-1',
+      );
+      await pumpMicrotasks();
+      registrar.emitChatEvent(
+        'chat:completion',
+        {
+          'choices': [
+            {
+              'delta': {'content': 'llo'},
+            },
+          ],
+        },
+        conversationId: 'conv-1',
+        messageId: 'server-msg-1',
+      );
+      await pumpMicrotasks();
+
+      check(log.appendedChunks).deepEquals(['He', 'llo']);
+      check(log.messages.last.content).equals('Hello');
+    });
+
+    test('resume APPEND deltas concatenate onto already-visible partial '
+        'content (seed, no prefix loss or duplication)', () async {
+      // The real resume scenario: the chat was opened already showing a partial
+      // assistant response, and the live socket continues it with incremental
+      // deltas. The rendered buffer must seed from the visible partial so the
+      // first delta appends onto it rather than replacing or duplicating it.
+      final log = _CallbackLog(
+        initialMessages: _fakeStreamingMessages(
+          id: 'local-msg-1',
+          content: 'Par',
+        ),
+      );
+      final registrar = FakeSocketInjector();
+      final socket = _MockSocketService(registrar);
+
+      _attach(
+        session: ChatCompletionSession.resumeSocket(
+          messageId: 'local-msg-1',
+          conversationId: 'conv-1',
+        ),
+        log: log,
+        assistantMessageId: 'local-msg-1',
+        sessionId: '',
+        activeConversationId: 'conv-1',
+        socketService: socket,
+      );
+
+      await pumpMicrotasks();
+
+      registrar.emitChatEvent(
+        'chat:completion',
+        {
+          'choices': [
+            {
+              'delta': {'content': 'tial'},
+            },
+          ],
+        },
+        conversationId: 'conv-1',
+        messageId: 'server-msg-1',
+      );
+      await pumpMicrotasks();
+
+      // Only the new delta is appended; the already-visible 'Par' prefix is
+      // preserved (not re-sent, not dropped).
+      check(log.appendedChunks).deepEquals(['tial']);
+      check(log.messages.last.content).equals('Partial');
+    });
+  });
+
+  group('Sidebar indicator — optimistic START gating', () {
+    ChatCompletionSession taskSocket({String? taskId = 'task-1'}) =>
+        ChatCompletionSession.taskSocket(
+          messageId: 'msg-1',
+          sessionId: 'sess-1',
+          conversationId: 'conv-1',
+          taskId: taskId ?? '',
+        );
+
+    test('taskSocket with task id + persisted chat => true', () {
+      check(
+        shouldOptimisticallyMarkChatActive(
+          session: taskSocket(),
+          conversationId: 'conv-1',
+        ),
+      ).isTrue();
+    });
+
+    test('httpStream => false (no task_ids signal)', () {
+      check(
+        shouldOptimisticallyMarkChatActive(
+          session: ChatCompletionSession.httpStream(
+            messageId: 'msg-1',
+            byteStream: const Stream.empty(),
+            abort: () async {},
+          ),
+          conversationId: 'conv-1',
+        ),
+      ).isFalse();
+    });
+
+    test('jsonCompletion => false', () {
+      check(
+        shouldOptimisticallyMarkChatActive(
+          session: ChatCompletionSession.jsonCompletion(
+            messageId: 'msg-1',
+            jsonPayload: const <String, dynamic>{},
+          ),
+          conversationId: 'conv-1',
+        ),
+      ).isFalse();
+    });
+
+    test('taskSocket with empty task id => false', () {
+      check(
+        shouldOptimisticallyMarkChatActive(
+          session: taskSocket(taskId: ''),
+          conversationId: 'conv-1',
+        ),
+      ).isFalse();
+    });
+
+    test('null / empty conversation id => false', () {
+      check(
+        shouldOptimisticallyMarkChatActive(
+          session: taskSocket(),
+          conversationId: null,
+        ),
+      ).isFalse();
+      check(
+        shouldOptimisticallyMarkChatActive(
+          session: taskSocket(),
+          conversationId: '',
+        ),
+      ).isFalse();
+    });
+
+    test('temporary chat => false', () {
+      check(
+        shouldOptimisticallyMarkChatActive(
+          session: taskSocket(),
+          conversationId: 'local:abc',
+        ),
+      ).isFalse();
+    });
+  });
+
+  group('Sidebar indicator — paired setInactive on success/cancel/error', () {
+    test(
+      'chat:completion {done:true} fires onChatActiveChanged(chatId, false)',
+      () async {
+        final log = _CallbackLog();
+        final registrar = FakeSocketInjector();
+        final socket = _MockSocketService(registrar);
+        final activeEvents = <(String?, bool)>[];
+
+        _attach(
+          session: ChatCompletionSession.taskSocket(
+            messageId: 'msg-1',
+            sessionId: 'sess-1',
+            conversationId: 'conv-1',
+            taskId: 'task-1',
+          ),
+          log: log,
+          socketService: socket,
+          onChatActiveChanged: (chatId, active) =>
+              activeEvents.add((chatId, active)),
+        );
+
+        registrar.emitChatEvent(
+          'chat:completion',
+          {'content': 'Hello', 'done': true},
+          conversationId: 'conv-1',
+          sessionId: 'sess-1',
+          messageId: 'msg-1',
+        );
+
+        await pumpMicrotasks();
+
+        // The normal success finalize must clear the spinner directly, so a
+        // dropped/late backend chat:active{false} cannot strand it. Symmetric
+        // with the cancel + error branches.
+        check(activeEvents).contains(('conv-1', false));
+      },
+    );
+
+    test(
+      'chat:tasks:cancel fires onChatActiveChanged(chatId, false)',
+      () async {
+        final log = _CallbackLog();
+        final registrar = FakeSocketInjector();
+        final socket = _MockSocketService(registrar);
+        final activeEvents = <(String?, bool)>[];
+
+        _attach(
+          session: ChatCompletionSession.taskSocket(
+            messageId: 'msg-1',
+            sessionId: 'sess-1',
+            conversationId: 'conv-1',
+            taskId: 'task-1',
+          ),
+          log: log,
+          socketService: socket,
+          onChatActiveChanged: (chatId, active) =>
+              activeEvents.add((chatId, active)),
+        );
+
+        registrar.emitChatEvent(
+          'chat:tasks:cancel',
+          <String, dynamic>{},
+          conversationId: 'conv-1',
+          sessionId: 'sess-1',
+          messageId: 'msg-1',
+        );
+
+        await pumpMicrotasks();
+
+        // The spinner must be cleared even if the backend's chat:active{false}
+        // is never delivered (it only fires when the LAST task finishes).
+        check(activeEvents).contains(('conv-1', false));
+      },
+    );
+
+    test(
+      'chat:message:error fires onChatActiveChanged(chatId, false)',
+      () async {
+        final log = _CallbackLog();
+        final registrar = FakeSocketInjector();
+        final socket = _MockSocketService(registrar);
+        final activeEvents = <(String?, bool)>[];
+
+        _attach(
+          session: ChatCompletionSession.taskSocket(
+            messageId: 'msg-1',
+            sessionId: 'sess-1',
+            conversationId: 'conv-1',
+            taskId: 'task-1',
+          ),
+          log: log,
+          socketService: socket,
+          onChatActiveChanged: (chatId, active) =>
+              activeEvents.add((chatId, active)),
+        );
+
+        registrar.emitChatEvent(
+          'chat:message:error',
+          {
+            'error': {'content': 'boom'},
+          },
+          conversationId: 'conv-1',
+          sessionId: 'sess-1',
+          messageId: 'msg-1',
+        );
+
+        await pumpMicrotasks();
+
+        check(activeEvents).contains(('conv-1', false));
+      },
+    );
+  });
+
   group('Transport-aware stop', () {
     // -------------------------------------------------------------------
     // 3. Stop aborts direct HTTP streaming without task lookup
@@ -602,6 +1039,38 @@ void main() {
 
       check(adapter.stoppedTaskIds).deepEquals(['task-abc']);
     });
+
+    test(
+      'stop cancels taskSocket by chat when conversation metadata exists',
+      () async {
+        final api = _buildFakeApi();
+        final adapter = api.dio.httpClientAdapter as _StubAdapter;
+
+        final message = ChatMessage(
+          id: 'msg-task-chat',
+          role: 'assistant',
+          content: 'partial...',
+          timestamp: DateTime.now(),
+          isStreaming: true,
+          metadata: const {
+            'transport': 'taskSocket',
+            'taskId': 'task-abc',
+            'taskConversationId': 'conv/with/slash',
+          },
+        );
+
+        stopActiveTransport(message, api);
+
+        await pumpMicrotasks();
+        await pumpMicrotasks();
+        await pumpMicrotasks();
+        await pumpMicrotasks();
+        await pumpMicrotasks();
+
+        check(adapter.stoppedChatIds).deepEquals(['conv/with/slash']);
+        check(adapter.stoppedTaskIds).isEmpty();
+      },
+    );
 
     // -------------------------------------------------------------------
     // 5. Stop cancels both abort handle and task id for mixed initiation

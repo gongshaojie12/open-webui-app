@@ -142,7 +142,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
   StreamSubscription<IosNativePastePayload>? _pasteSubscription;
   StreamSubscription<IosKeyboardAttachmentEvent>?
   _keyboardAttachmentSubscription;
-  late VoiceInputService _voiceService;
+  VoiceInputService? _voiceService;
   StreamSubscription<String>? _textSub;
   Timer? _contextSuggestionDebounce;
   String _baseTextAtStart = '';
@@ -167,7 +167,6 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
   @override
   void initState() {
     super.initState();
-    _voiceService = ref.read(voiceInputServiceProvider);
 
     // Apply any prefilled text on first frame (focus handled via inputFocusTrigger)
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -241,6 +240,13 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     // Do not auto-focus on mount; only focus on explicit user intent
   }
 
+  VoiceInputService get _voiceInputService {
+    final VoiceInputService service =
+        _voiceService ?? ref.read(voiceInputServiceProvider);
+    _voiceService = service;
+    return service;
+  }
+
   @override
   void dispose() {
     // Note: Avoid using ref in dispose as per Riverpod best practices
@@ -257,7 +263,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     if (!kIsWeb && Platform.isIOS) {
       unawaited(IosKeyboardAttachmentBridge.instance.hide());
     }
-    _voiceService.stopListening();
+    _voiceService?.stopListening();
     super.dispose();
   }
 
@@ -792,6 +798,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     int requestId,
   ) async {
     final api = ref.read(apiServiceProvider);
+    final token = ref.read(authTokenProvider3);
     if (api == null) {
       if (!mounted || _isDeactivated) return;
       if (requestId != _contextSuggestionRequestId) return;
@@ -828,7 +835,11 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
             noteResults = await api.searchNotes(query: normalizedQuery);
           } on DioException catch (error) {
             final statusCode = error.response?.statusCode;
-            if (statusCode == 401 || statusCode == 403) {
+            if ((statusCode == 401 || statusCode == 403) &&
+                mounted &&
+                !_isDeactivated &&
+                identical(ref.read(apiServiceProvider), api) &&
+                ref.read(authTokenProvider3) == token) {
               ref.read(notesFeatureEnabledProvider.notifier).setEnabled(false);
             }
             noteResults = const <Map<String, dynamic>>[];
@@ -1187,11 +1198,13 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     final locale = Localizations.localeOf(context);
     String? userLocation;
     const parser = PromptVariableParser();
-    final needsUserLocation = parser.parse(prompt.content).any(
-      (variable) =>
-          variable.isSystemVariable &&
-          variable.name.toUpperCase() == 'USER_LOCATION',
-    );
+    final needsUserLocation = parser
+        .parse(prompt.content)
+        .any(
+          (variable) =>
+              variable.isSystemVariable &&
+              variable.name.toUpperCase() == 'USER_LOCATION',
+        );
 
     if (needsUserLocation) {
       final locationResult = await ref
@@ -1993,7 +2006,6 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
       orElse: () => false,
     );
     final selectedToolIds = ref.watch(selectedToolIdsProvider);
-    final selectedTerminalId = ref.watch(selectedTerminalIdProvider);
     final selectedFilterIds = ref.watch(selectedFilterIdsProvider);
 
     // Get filters from the selected model for quick pills
@@ -2002,10 +2014,6 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
         (model) => model?.filters ?? const <ToggleFilter>[],
       ),
     );
-    final terminalModelSupported = ref.watch(
-      selectedModelProvider.select(modelSupportsTerminal),
-    );
-    final terminalActive = selectedTerminalId != null && terminalModelSupported;
     final nativeAttachmentActions = _nativeKeyboardAttachmentActions(
       l10n: l10n,
       webSearchAvailable: webSearchAvailable,
@@ -2034,7 +2042,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     _controller.mentionBackground = mentionColor.withValues(alpha: 0.12);
 
     final bool hasComposerFocus = _focusNode.hasFocus;
-    final bool isActive = hasComposerFocus || _hasText;
+    final bool isActive = hasComposerFocus || _hasText || _isRecording;
     final Color placeholderColor = context.conduitTheme.textSecondary
         .withValues(alpha: 0.5);
     final Color placeholderBase = placeholderColor;
@@ -2238,16 +2246,14 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
           ),
           child: Row(
             children: [
-              _buildOverflowButton(
-                tooltip: l10n.more,
-                webSearchActive: webSearchEnabled,
-                imageGenerationActive: imageGenEnabled,
-                toolsActive: selectedToolIds.isNotEmpty,
-                terminalActive: terminalActive,
-                filtersActive: selectedFilterIds.isNotEmpty,
-                dense: true,
-                nativeActions: nativeAttachmentActions,
-              ),
+              if (_isRecording)
+                _buildDictationStopButton(size: 36.0)
+              else
+                _buildOverflowButton(
+                  tooltip: l10n.more,
+                  dense: true,
+                  nativeActions: nativeAttachmentActions,
+                ),
               const SizedBox(width: Spacing.xs),
               Expanded(
                 child: ClipRect(
@@ -2265,7 +2271,10 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                 const SizedBox(width: Spacing.xs),
                 _buildCreateDraftNoteButton(isLoading: isCreatingDraftNote),
               ],
-              if (!_hasText && voiceAvailable && !isGenerating) ...[
+              if (!_isRecording &&
+                  !_hasText &&
+                  voiceAvailable &&
+                  !isGenerating) ...[
                 const SizedBox(width: Spacing.xs),
                 _buildInlineMicAction(voiceAvailable),
               ],
@@ -2326,7 +2335,10 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                     ),
                   ),
                 ),
-                if (!_hasText && voiceAvailable && !isGenerating) ...[
+                if (!_isRecording &&
+                    !_hasText &&
+                    voiceAvailable &&
+                    !isGenerating) ...[
                   const SizedBox(width: Spacing.xs),
                   Platform.isAndroid
                       ? Transform.translate(
@@ -2375,6 +2387,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
         key: const ValueKey('compact-composer-shell'),
         borderRadius: shellRadius,
         useSmoothRectangleBorder: _isMultiline,
+        isRecording: _isRecording,
         child: textFieldContent,
       );
 
@@ -2396,17 +2409,17 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                 child: _buildActiveOverlay(),
               ),
             Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+              crossAxisAlignment: _isMultiline
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.center,
               children: [
-                _buildOverflowButton(
-                  tooltip: l10n.more,
-                  webSearchActive: webSearchEnabled,
-                  imageGenerationActive: imageGenEnabled,
-                  toolsActive: selectedToolIds.isNotEmpty,
-                  terminalActive: terminalActive,
-                  filtersActive: selectedFilterIds.isNotEmpty,
-                  nativeActions: nativeAttachmentActions,
-                ),
+                if (_isRecording)
+                  _buildDictationStopButton()
+                else
+                  _buildOverflowButton(
+                    tooltip: l10n.more,
+                    nativeActions: nativeAttachmentActions,
+                  ),
                 const SizedBox(width: Spacing.sm),
                 Expanded(
                   child: _wrapIosSurfaceShadow(
@@ -2443,7 +2456,11 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     );
 
     final Widget shell = _wrapIosSurfaceShadow(
-      _buildComposerShell(borderRadius: shellRadius, child: shellContent),
+      _buildComposerShell(
+        borderRadius: shellRadius,
+        isRecording: _isRecording,
+        child: shellContent,
+      ),
       borderRadius: shellRadius,
     );
 
@@ -2586,6 +2603,10 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                   ? FontWeight.w500
                   : FontWeight.w400;
               final TextStyle baseChatStyle = AppTypography.chatMessageStyle;
+              final inputPlaceholder = _isRecording
+                  ? AppLocalizations.of(context)!.recordingAudio
+                  : widget.placeholder ??
+                        AppLocalizations.of(context)!.messageHintText;
 
               // IMPORTANT: Always use TextInputAction.newline for multiline
               // chat input. Using TextInputAction.send causes issues with
@@ -2597,9 +2618,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                 return CupertinoTextField(
                   controller: _controller,
                   focusNode: _focusNode,
-                  placeholder:
-                      widget.placeholder ??
-                      AppLocalizations.of(context)!.messageHintText,
+                  placeholder: inputPlaceholder,
                   placeholderStyle: baseChatStyle.copyWith(
                     color: animatedPlaceholder,
                     fontWeight: recordingWeight,
@@ -2669,11 +2688,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
                   fontWeight: recordingWeight,
                 ),
                 decoration: context.conduitInputStyles
-                    .borderless(
-                      hint:
-                          widget.placeholder ??
-                          AppLocalizations.of(context)!.messageHintText,
-                    )
+                    .borderless(hint: inputPlaceholder)
                     .copyWith(
                       hintStyle: baseChatStyle.copyWith(
                         color: animatedPlaceholder,
@@ -2714,11 +2729,6 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
 
   Widget _buildOverflowButton({
     required String tooltip,
-    required bool webSearchActive,
-    required bool imageGenerationActive,
-    required bool toolsActive,
-    required bool terminalActive,
-    required bool filtersActive,
     bool dense = false,
     List<IosKeyboardAttachmentActionConfig> nativeActions = const [],
   }) {
@@ -2731,48 +2741,19 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
 
     final bool enabled = widget.enabled && !_isRecording;
 
-    Color? activeColor;
     final bool nativePanelVisible =
         !kIsWeb && Platform.isIOS && _isNativeAttachmentPanelVisible;
-
-    // Native attachment panel uses an X to dismiss; keep it neutral like the idle
-    // + control, not the same primary-filled treatment as feature/tool "active" states.
-    if (webSearchActive ||
-        imageGenerationActive ||
-        toolsActive ||
-        terminalActive ||
-        filtersActive) {
-      activeColor = context.conduitTheme.buttonPrimary;
-    }
-
-    final bool isActive = activeColor != null;
     final theme = context.conduitTheme;
 
     final Color iconColor = !enabled
         ? theme.textPrimary.withValues(alpha: Alpha.disabled)
         : nativePanelVisible
         ? theme.textPrimary.withValues(alpha: Alpha.strong)
-        : isActive
-        ? theme.buttonPrimaryText
         : theme.textPrimary.withValues(alpha: Alpha.strong);
 
     final IconData overflowIcon;
     if (nativePanelVisible) {
       overflowIcon = CupertinoIcons.xmark;
-    } else if (webSearchActive) {
-      overflowIcon = Platform.isIOS ? CupertinoIcons.search : Icons.search;
-    } else if (imageGenerationActive) {
-      overflowIcon = Platform.isIOS ? CupertinoIcons.photo : Icons.image;
-    } else if (toolsActive) {
-      overflowIcon = Platform.isIOS ? CupertinoIcons.wrench : Icons.build;
-    } else if (terminalActive) {
-      overflowIcon = Platform.isIOS
-          ? CupertinoIcons.chevron_left_slash_chevron_right
-          : Icons.terminal_rounded;
-    } else if (filtersActive) {
-      overflowIcon = Platform.isIOS
-          ? CupertinoIcons.sparkles
-          : Icons.auto_awesome;
     } else {
       overflowIcon = Platform.isIOS ? CupertinoIcons.add : Icons.add;
     }
@@ -2786,8 +2767,8 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
               }
             : null,
         size: buttonSize,
-        isProminent: isActive && !nativePanelVisible,
-        androidShowBackground: !isActive,
+        isProminent: false,
+        androidShowBackground: true,
         color: nativePanelVisible ? theme.surfaceContainerHighest : null,
         child: Icon(overflowIcon, size: IconSize.large, color: iconColor),
       ),
@@ -2809,16 +2790,73 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     );
   }
 
-  Widget _buildInlineMicAction(bool voiceAvailable, {double? size}) {
-    final bool enabledMic = widget.enabled && voiceAvailable;
-    final icon = Icon(
-      Platform.isIOS ? CupertinoIcons.mic : Icons.mic,
-      size: IconSize.large,
-      color: _isRecording
-          ? context.conduitTheme.buttonPrimary
-          : context.conduitTheme.textSecondary.withValues(
-              alpha: enabledMic ? Alpha.strong : Alpha.disabled,
+  Widget _buildDictationStopButton({double size = TouchTarget.minimum}) {
+    final theme = context.conduitTheme;
+    final iconSize = size <= 36.0 ? IconSize.medium : IconSize.large;
+    final background = theme.surfaceContainerHighest.withValues(alpha: 0.96);
+    final border = theme.cardBorder.withValues(alpha: 0.75);
+
+    return AdaptiveTooltip(
+      message: AppLocalizations.of(context)!.stopRecording,
+      child: GestureDetector(
+        key: const ValueKey('composer-dictation-stop-button'),
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.enabled
+            ? () {
+                unawaited(_stopVoice());
+              }
+            : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            color: background,
+            shape: BoxShape.circle,
+            border: Border.all(color: border, width: BorderWidth.thin),
+          ),
+          child: Center(
+            child: Icon(
+              Platform.isIOS ? CupertinoIcons.stop_fill : Icons.stop_rounded,
+              size: iconSize,
+              color: theme.textPrimary.withValues(alpha: Alpha.strong),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInlineMicAction(bool voiceAvailable, {double? size}) {
+    final bool enabledMic = widget.enabled && (voiceAvailable || _isRecording);
+    final theme = context.conduitTheme;
+    final bool active = _isRecording;
+    final double buttonSize = size ?? 36.0;
+    final IconData iconData = active
+        ? (Platform.isIOS ? CupertinoIcons.stop_fill : Icons.stop_rounded)
+        : (Platform.isIOS ? CupertinoIcons.mic : Icons.mic);
+    final Color iconColor = active
+        ? theme.buttonPrimaryText
+        : theme.textSecondary.withValues(
+            alpha: enabledMic ? Alpha.strong : Alpha.disabled,
+          );
+    final icon = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 160),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeOutCubic,
+      transitionBuilder: (child, animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(scale: animation, child: child),
+        );
+      },
+      child: Icon(
+        iconData,
+        key: ValueKey<IconData>(iconData),
+        size: IconSize.large,
+        color: iconColor,
+      ),
     );
     final onPressed = enabledMic
         ? () {
@@ -2827,20 +2865,20 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
           }
         : null;
 
-    if (size != null) {
-      return _buildComposerIconButton(
-        onPressed: onPressed,
-        size: size,
-        child: icon,
-      );
-    }
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onPressed,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
-        child: icon,
+    return AdaptiveTooltip(
+      message: active
+          ? AppLocalizations.of(context)!.stopRecording
+          : AppLocalizations.of(context)!.startDictation,
+      child: GestureDetector(
+        key: ValueKey<String>(
+          active ? 'composer-dictation-stop' : 'composer-dictation-start',
+        ),
+        behavior: HitTestBehavior.opaque,
+        onTap: onPressed,
+        child: SizedBox.square(
+          dimension: buttonSize,
+          child: Center(child: icon),
+        ),
       ),
     );
   }
@@ -2915,11 +2953,17 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
       );
     }
 
-    // If there's text, render SEND variant; otherwise render VOICE CALL variant
-    if (hasText) {
+    // If there's text, render SEND variant. During active dictation, keep the
+    // send affordance visible even before text arrives so the layout stays
+    // stable around the middle text field.
+    if (hasText || _isRecording) {
       final onPressed = enabled
           ? () {
-              _sendMessage();
+              if (_isRecording) {
+                unawaited(_stopVoiceAndSend());
+              } else {
+                _sendMessage();
+              }
             }
           : null;
       final sendChild = hasUploadsInProgress
@@ -2957,7 +3001,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     // VOICE CALL variant when no text is present and voice is available.
     // Otherwise fall back to a muted send button.
     if (widget.onVoiceCall != null) {
-      final bool enabledVoiceCall = widget.enabled;
+      final bool enabledVoiceCall = widget.enabled && !_isRecording;
       return AdaptiveTooltip(
         message: AppLocalizations.of(context)!.voiceCallTitle,
         child: _buildComposerIconButton(
@@ -3138,8 +3182,14 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     required Widget child,
     required BorderRadius borderRadius,
     bool useSmoothRectangleBorder = true,
+    bool isRecording = false,
   }) {
     final theme = context.conduitTheme;
+    final recordingBorderColor = theme.buttonPrimary.withValues(alpha: 0.56);
+    final recordingSurfaceColor = Color.alphaBlend(
+      theme.buttonPrimary.withValues(alpha: 0.045),
+      theme.surfaceContainerHighest,
+    );
 
     if (conduitSupportsNativeGlass()) {
       return Stack(
@@ -3159,17 +3209,41 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
               ),
             ),
           ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                curve: Curves.easeOutCubic,
+                decoration: BoxDecoration(
+                  borderRadius: borderRadius,
+                  border: Border.all(
+                    color: isRecording
+                        ? recordingBorderColor
+                        : Colors.transparent,
+                    width: isRecording ? BorderWidth.thin * 1.5 : 0,
+                  ),
+                ),
+              ),
+            ),
+          ),
           child,
         ],
       );
     }
 
-    return Container(
+    return AnimatedContainer(
       key: key,
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOutCubic,
       decoration: BoxDecoration(
-        color: theme.surfaceContainerHighest,
+        color: isRecording
+            ? recordingSurfaceColor
+            : theme.surfaceContainerHighest,
         borderRadius: borderRadius,
-        border: Border.all(color: theme.cardBorder, width: BorderWidth.thin),
+        border: Border.all(
+          color: isRecording ? recordingBorderColor : theme.cardBorder,
+          width: isRecording ? BorderWidth.thin * 1.5 : BorderWidth.thin,
+        ),
       ),
       child: child,
     );
@@ -3351,7 +3425,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
   Future<void> _startVoice() async {
     if (!widget.enabled) return;
     try {
-      final ok = await _voiceService.initialize();
+      final ok = await _voiceInputService.initialize();
       if (!mounted) return;
       if (!ok) {
         _showVoiceUnavailable(
@@ -3361,7 +3435,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
         return;
       }
       // Centralized permission + start
-      final stream = await _voiceService.beginListening();
+      final stream = await _voiceInputService.beginListening();
       if (!mounted) return;
       setState(() {
         _isRecording = true;
@@ -3399,10 +3473,22 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
   }
 
   Future<void> _stopVoice() async {
-    await _voiceService.stopListening();
+    await _voiceInputService.stopListening();
     if (!mounted) return;
     setState(() => _isRecording = false);
     ConduitHaptics.selectionClick();
+  }
+
+  Future<void> _stopVoiceAndSend() async {
+    if (_controller.text.trim().isEmpty) {
+      await _stopVoice();
+      return;
+    }
+    await _voiceInputService.stopListening();
+    if (!mounted) return;
+    setState(() => _isRecording = false);
+    ConduitHaptics.lightImpact();
+    _sendMessage();
   }
 
   // When on-device STT is unavailable we rely on server transcription.

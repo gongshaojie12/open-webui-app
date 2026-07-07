@@ -22,6 +22,7 @@ import '../models/server_user_settings.dart';
 import '../models/user.dart';
 import '../auth/api_auth_interceptor.dart';
 import '../error/api_error_interceptor.dart';
+import '../sync/sync_api_client.dart' show SyncTerminalException;
 // Tool-call details are parsed in the UI layer to render collapsible blocks
 import 'connectivity_service.dart';
 import '../utils/debug_logger.dart';
@@ -248,6 +249,7 @@ class ApiService {
   final Dio _dio;
   final ServerConfig serverConfig;
   final WorkerManager _workerManager;
+  final DateTime Function() _now;
   late final ApiAuthInterceptor _authInterceptor;
   _ChatRequestMetadataFormat? _chatRequestMetadataFormat;
   // Public getter for dio instance
@@ -266,6 +268,7 @@ class ApiService {
     required this.serverConfig,
     required WorkerManager workerManager,
     String? authToken,
+    DateTime Function()? now,
   }) : _dio = Dio(
          BaseOptions(
            baseUrl: serverConfig.url,
@@ -280,7 +283,8 @@ class ApiService {
                : null,
          ),
        ),
-       _workerManager = workerManager {
+       _workerManager = workerManager,
+       _now = now ?? DateTime.now {
     ServerTlsHttpClientFactory.configureDio(_dio, serverConfig);
 
     // Use API key from server config if provided and no explicit auth token
@@ -614,22 +618,14 @@ class ApiService {
   Future<BackendConfig> _enrichBackendConfigWithAudioConfig(
     BackendConfig config,
   ) async {
-    try {
-      final audioConfig = await _loadServerAudioConfig();
-      return config.copyWith(
-        ttsVoice: audioConfig.voice ?? config.ttsVoice,
-        ttsSplitOn: audioConfig.splitOn,
-        ttsVoices: audioConfig.voices,
-      );
-    } catch (e, stackTrace) {
-      DebugLogger.error(
-        'backend-config-audio-defaults',
-        scope: 'api/config',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      return config;
-    }
+    final audioConfig = await _loadServerAudioConfig();
+    return config.copyWith(
+      ttsVoice: audioConfig.voice ?? config.ttsVoice,
+      ttsSplitOn: audioConfig.splitOn ?? config.ttsSplitOn ?? 'punctuation',
+      ttsVoices: audioConfig.voices.isEmpty
+          ? config.ttsVoices
+          : audioConfig.voices,
+    );
   }
 
   Future<ServerAboutInfo> getServerAboutInfo() async {
@@ -845,13 +841,14 @@ class ApiService {
       } catch (_) {}
     }
 
+    final payloadMap = _coerceJsonMap(payload);
     List<dynamic>? rawModels;
-    if (payload is Map && payload['data'] is List) {
-      rawModels = payload['data'] as List;
-    } else if (payload is Map && payload['models'] is List) {
-      rawModels = payload['models'] as List;
-    } else if (payload is List) {
-      rawModels = payload;
+    if (payloadMap != null) {
+      rawModels =
+          _asListOrNull(payloadMap['data']) ??
+          _asListOrNull(payloadMap['models']);
+    } else {
+      rawModels = _asListOrNull(payload);
     }
 
     if (rawModels == null) {
@@ -933,7 +930,7 @@ class ApiService {
     try {
       final response = await _dio.get('/api/config');
       final config = _coerceResponseMap(response.data);
-      final defaultModels = _coerceStringList(config?['default_models']);
+      final defaultModels = _coerceConfigStringList(config?['default_models']);
       if (defaultModels.isNotEmpty) {
         final defaultModel = defaultModels.first;
         DebugLogger.log(
@@ -1264,6 +1261,325 @@ class ApiService {
     );
   }
 
+  // ---- CDT-RFC-001 Phase 1: raw sync-engine reads ----------------------
+  // These exist because every legacy chat method parses to `Conversation`
+  // and discards the blob/epoch ints the sync engine needs. All three are
+  // read-only GETs through the existing Dio instance, so ApiAuthInterceptor
+  // bearer/custom-header behavior applies unchanged.
+  //
+  // TODO(CDT-RFC-001 §7.2, §3.iii): Phase 2 push needs a generic
+  // `updateChat(id, blob)` that always sends the complete `rowsToBlob`
+  // reconstruction, never a partial dict (the server shallow-merges
+  // top-level keys).
+
+  /// GET `/api/v1/chats/?page={page}&include_pinned={..}&include_folders={..}`
+  ///
+  /// Raw `ChatTitleIdResponse` maps: `{id, title, updated_at, created_at,
+  /// last_read_at}`. No model parsing; epoch-second ints preserved. Server
+  /// page size is 60 (`routers/chats.py` `get_session_user_chat_list`,
+  /// `limit = 60`); the legacy `expectedPageSize: 50` path above is
+  /// untouched (it goes dead in Stage C).
+  Future<List<Map<String, dynamic>>> getChatListPageRaw({
+    required int page,
+    bool includePinned = true,
+    bool includeFolders = true,
+  }) async {
+    final response = await _dio.get(
+      '/api/v1/chats/',
+      queryParameters: {
+        'page': page,
+        'include_pinned': includePinned,
+        'include_folders': includeFolders,
+      },
+    );
+    return _coerceRawMapList(response.data);
+  }
+
+  /// GET `/api/v1/chats/archived?page={page}&order_by=updated_at&direction=desc`
+  ///
+  /// Raw `ChatTitleIdResponse` maps; fixed server limit 60
+  /// (`get_archived_session_user_chat_list`). The existing
+  /// [getArchivedChats] sends limit/offset params the server ignores; it is
+  /// left alone and goes dead in Stage C.
+  Future<List<Map<String, dynamic>>> getArchivedChatListPageRaw({
+    required int page,
+  }) async {
+    final response = await _dio.get(
+      '/api/v1/chats/archived',
+      queryParameters: {
+        'page': page,
+        'order_by': 'updated_at',
+        'direction': 'desc',
+      },
+    );
+    return _coerceRawMapList(response.data);
+  }
+
+  /// GET `/api/v1/chats/{id}` — the raw `ChatResponse` map (id, user_id,
+  /// title, chat, updated_at, created_at, share_id, archived, pinned, meta,
+  /// folder_id).
+  ///
+  /// Returns null on 404; malformed 2xx bodies throw. NOTE: the vendored route
+  /// signals a missing/unowned chat with HTTP 401 (`ERROR_MESSAGES.NOT_FOUND`),
+  /// which intentionally surfaces here as an error so an expired token can
+  /// never read as a mass delete; Phase 3 deletion reconcile handles 404/401
+  /// explicitly. Large payloads are decoded off the UI isolate, mirroring
+  /// the bytes->worker path of [_parseConversationPayload], but stop at the
+  /// decoded map — no `Conversation` parsing.
+  Future<Map<String, dynamic>?> getChatRaw(String id) async {
+    DebugLogger.log('fetch-raw', scope: 'api/chat', data: {'id': id});
+    try {
+      final response = await _dio.get(
+        '/api/v1/chats/$id',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final data = response.data;
+      final bytes = data is Uint8List
+          ? data
+          : (data is List<int> ? Uint8List.fromList(data) : null);
+      if (bytes == null) {
+        // Defensive: some adapters may have decoded already.
+        return _requireResponseMap(data, 'getChatRaw $id');
+      }
+      final Map<String, dynamic>? map =
+          bytes.lengthInBytes >= _conversationWorkerByteThreshold
+          ? await _workerManager.schedule<Uint8List, Map<String, dynamic>?>(
+              decodeChatResponseEnvelopeWorker,
+              bytes,
+              debugLabel: 'decode_chat_raw',
+            )
+          : decodeChatResponseEnvelopeWorker(bytes);
+      if (map == null) {
+        throw FormatException('getChatRaw $id: expected JSON object response');
+      }
+      return map;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        return null;
+      }
+      rethrow;
+    }
+  }
+
+  // ===== Phase 2 sync write seams (CDT-RFC-001 §7.2/§7.4) =====
+  //
+  // These accept a prebuilt `rowsToBlob` blob and return the decoded
+  // `ChatResponse` map verbatim. They deliberately do NOT reuse
+  // `createConversation` (which builds its own blob from `ChatMessage`) nor
+  // `updateConversation` (which sends a partial `{title, system}` dict — the
+  // §3.iii shallow-merge hazard).
+
+  /// POST `/api/v1/chats/new` with the COMPLETE blob; returns the parsed
+  /// `ChatResponse` map (the server mints `id`).
+  Future<Map<String, dynamic>> createChatRaw(
+    Map<String, dynamic> chatBlob, {
+    String? folderId,
+  }) async {
+    try {
+      final response = await _dio.post(
+        '/api/v1/chats/new',
+        data: {'chat': chatBlob, 'folder_id': ?folderId},
+      );
+      return _requireResponseMap(response.data, 'createChatRaw');
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'createChat forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// POST `/api/v1/chats/{id}` with the COMPLETE blob. Returns the parsed
+  /// `ChatResponse` map; throws [SyncTerminalException] on 401/403.
+  /// NOTE: the vendored `update_chat_by_id` route returns 401 (not 404) for a
+  /// missing/unowned chat, so a server-side delete surfaces as
+  /// [SyncTerminalException], not null; the 404->null branch is defensive only.
+  Future<Map<String, dynamic>?> updateChatRaw(
+    String id,
+    Map<String, dynamic> chat,
+  ) async {
+    try {
+      final response = await _dio.post(
+        '/api/v1/chats/$id',
+        data: {'chat': chat},
+      );
+      return _requireResponseMap(response.data, 'updateChatRaw $id');
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404) return null;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'updateChat $id forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// DELETE `/api/v1/chats/{id}`. `true` on success; 404 -> `false` (already
+  /// gone, no throw); 401/403 -> [SyncTerminalException].
+  Future<bool> deleteChatRaw(String id) async {
+    try {
+      await _dio.delete('/api/v1/chats/$id');
+      return true;
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404) return false;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'deleteChat $id forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// GET `/api/v1/chats/{id}/pinned` -> bool (false on a null/absent body).
+  Future<bool> getChatPinnedRaw(String id) async {
+    try {
+      final response = await _dio.get('/api/v1/chats/$id/pinned');
+      return response.data == true;
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404) return false;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'getChatPinned $id forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// POST `/api/v1/chats/{id}/pin` — low-level stateless toggle primitive.
+  ///
+  /// Do not enqueue or retry this operation directly. Sync write paths must call
+  /// desired-state reconcilers that probe before toggling and confirm after,
+  /// because retrying this primitive alone can double-flip.
+  ///
+  /// Returns the parsed `ChatResponse`; null on 404.
+  Future<Map<String, dynamic>?> togglePinRaw(String id) async {
+    try {
+      final response = await _dio.post('/api/v1/chats/$id/pin');
+      return _requireResponseMap(response.data, 'togglePinRaw $id');
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404) return null;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'pinChat $id forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// POST `/api/v1/chats/{id}/archive` — low-level stateless toggle primitive.
+  ///
+  /// Do not enqueue or retry this operation directly. Sync write paths must call
+  /// desired-state reconcilers that probe before toggling and confirm after,
+  /// because retrying this primitive alone can double-flip.
+  ///
+  /// Returns the parsed `ChatResponse`; null on 404.
+  Future<Map<String, dynamic>?> toggleArchiveRaw(String id) async {
+    try {
+      final response = await _dio.post('/api/v1/chats/$id/archive');
+      return _requireResponseMap(response.data, 'toggleArchiveRaw $id');
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404) return null;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'archiveChat $id forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// POST `/api/v1/chats/{id}/folder` body `{folder_id: folderId}`. Returns
+  /// the parsed `ChatResponse`; null on 404.
+  Future<Map<String, dynamic>?> moveChatToFolderRaw(
+    String id,
+    String? folderId,
+  ) async {
+    try {
+      final response = await _dio.post(
+        '/api/v1/chats/$id/folder',
+        data: {'folder_id': folderId},
+      );
+      return _requireResponseMap(response.data, 'moveChatToFolderRaw $id');
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404) return null;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'moveChatToFolder $id forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// DELETE `/api/v1/folders/{id}?delete_contents=<flag>`.
+  ///
+  /// Distinct from [deleteFolder] (which omits the param and gets the
+  /// DESTRUCTIVE server default `true`). Sync-driven deletes pass `false` so
+  /// contained chats are re-parented to root, not deleted (verified
+  /// `routers/folders.py:delete_folder_by_id`).
+  /// Returns `true` on success; `false` on 404 (already gone); 401/403 ->
+  /// [SyncTerminalException].
+  Future<bool> deleteFolderRaw(String id, {bool deleteContents = false}) async {
+    try {
+      await _dio.delete(
+        '/api/v1/folders/$id',
+        queryParameters: {'delete_contents': deleteContents},
+      );
+      return true;
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404) return false;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'deleteFolder $id forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  static List<Map<String, dynamic>> _coerceRawMapList(Object? data) {
+    Object? normalized = data;
+    if (normalized is String && normalized.isNotEmpty) {
+      normalized = jsonDecode(normalized);
+    }
+    if (normalized is! List) {
+      throw FormatException('Expected JSON array response, got $normalized');
+    }
+    final rows = <Map<String, dynamic>>[];
+    for (final item in normalized) {
+      if (item is Map<String, dynamic>) {
+        rows.add(item);
+      } else if (item is Map) {
+        rows.add(Map<String, dynamic>.from(item));
+      } else {
+        throw FormatException('Expected JSON object item, got $item');
+      }
+    }
+    return rows;
+  }
+
   // Parse full OpenWebUI chat with messages
   // Parse OpenWebUI message format to our ChatMessage format
   // Build ordered messages list from Open‑WebUI history using parent chain to currentId
@@ -1591,6 +1907,7 @@ class ApiService {
               'modelIdx': 0,
               'done': true,
               if (ver.files != null) 'files': _sanitizeFilesForWebUI(ver.files),
+              if (ver.output != null) 'output': ver.output,
               if (_sanitizeEmbedsForWebUI(ver.embeds) != null)
                 'embeds': _sanitizeEmbedsForWebUI(ver.embeds),
               // Mirror follow-ups, code executions, sources, and errors for versions
@@ -1652,6 +1969,8 @@ class ApiService {
     return null;
   }
 
+  List<dynamic>? _asListOrNull(Object? value) => value is List ? value : null;
+
   Map<String, dynamic>? _coerceResponseMap(dynamic value) {
     if (value is String && value.isNotEmpty) {
       try {
@@ -1664,8 +1983,24 @@ class ApiService {
     return _coerceJsonMap(value);
   }
 
+  Map<String, dynamic> _requireResponseMap(dynamic value, String context) {
+    final map = _coerceResponseMap(value);
+    if (map == null) {
+      throw FormatException('$context: expected JSON object response');
+    }
+    return map;
+  }
+
   String? _normalizeNullableString(String? value) {
     final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed;
+  }
+
+  String? _normalizeDynamicString(dynamic value) {
+    final trimmed = value?.toString().trim();
     if (trimmed == null || trimmed.isEmpty) {
       return null;
     }
@@ -1683,6 +2018,17 @@ class ApiService {
         .toList(growable: true);
   }
 
+  List<String> _coerceConfigStringList(dynamic value) {
+    if (value is String) {
+      return value
+          .split(',')
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toList(growable: true);
+    }
+    return _coerceStringList(value);
+  }
+
   List<Map<String, dynamic>> _buildHistoryChainMessages(
     Map<String, Map<String, dynamic>> messagesMap,
     String currentId,
@@ -1697,39 +2043,46 @@ class ApiService {
         .toList(growable: false);
   }
 
-  Set<String> _collectMessageDescendantIds(
-    Map<String, Map<String, dynamic>> messagesMap,
-    String messageId,
-  ) {
-    return message_tree.collectDescendantIds(messageId, {
-      for (final entry in messagesMap.entries)
-        entry.key: message_tree.rawMessageChildrenIds(entry.value),
-    });
-  }
-
-  String? _latestRemainingMessageId(
-    Map<String, Map<String, dynamic>> messagesMap,
-  ) {
-    return message_tree.latestRemainingMessageId<Map<String, dynamic>>(
-      messagesMap,
-      timestampOf: (message) {
-        final timestamp = message['timestamp'];
-        return timestamp is num ? timestamp : null;
-      },
-    );
-  }
-
   /// Deletes one message from the current server-side chat history.
-  ///
-  /// This edits the latest raw chat payload from the server instead of replaying
-  /// a local message list, preserving any server-only history fields and
-  /// messages that may have arrived since the local state last synced.
   Future<void> deleteConversationMessage(
     String conversationId,
     String messageId,
   ) async {
     _traceApi('Deleting message $messageId from chat $conversationId');
+    try {
+      await _dio.delete('/api/v1/chats/$conversationId/messages/$messageId');
+    } on DioException catch (error) {
+      if (!_shouldFallbackToLegacyMessageDelete(error)) {
+        rethrow;
+      }
+      DebugLogger.log(
+        'delete-message-legacy-fallback',
+        scope: 'api/conversation',
+        data: {
+          'chatId': conversationId,
+          'messageId': messageId,
+          'status': error.response?.statusCode,
+        },
+      );
+      await _deleteConversationMessageByHistoryRewrite(
+        conversationId,
+        messageId,
+      );
+    }
+  }
 
+  bool _shouldFallbackToLegacyMessageDelete(DioException error) {
+    final statusCode = error.response?.statusCode;
+    return statusCode == 404 || statusCode == 405;
+  }
+
+  /// Legacy fallback for older Open WebUI servers that predate the per-message
+  /// DELETE endpoint. It edits the latest raw chat payload instead of replaying
+  /// a local message list, preserving server-only history fields.
+  Future<void> _deleteConversationMessageByHistoryRewrite(
+    String conversationId,
+    String messageId,
+  ) async {
     final response = await _dio.get('/api/v1/chats/$conversationId');
     final rawConversation = _coerceJsonMap(response.data);
     final rawChat = _coerceJsonMap(rawConversation?['chat']);
@@ -1755,21 +2108,15 @@ class ApiService {
       return;
     }
 
-    final removedIds = _collectMessageDescendantIds(messagesMap, messageId);
-    messagesMap.removeWhere((id, _) => removedIds.contains(id));
-
-    for (final entry in messagesMap.entries) {
-      final message = entry.value;
-      final children = _coerceStringList(
-        message['childrenIds'],
-      ).where((id) => !removedIds.contains(id)).toList(growable: false);
-      message['childrenIds'] = children;
+    final deleteResult = message_tree.deleteOpenWebUiMessageFromRawHistory(
+      messagesMap,
+      messageId,
+    );
+    if (deleteResult == null) {
+      return;
     }
 
-    final currentId = history['currentId']?.toString();
-    final nextCurrentId = currentId != null && !removedIds.contains(currentId)
-        ? currentId
-        : _latestRemainingMessageId(messagesMap);
+    final nextCurrentId = deleteResult.currentId;
 
     history['messages'] = messagesMap;
     if (nextCurrentId == null || nextCurrentId.isEmpty) {
@@ -1923,21 +2270,131 @@ class ApiService {
   // Pin/Unpin conversation
   Future<void> pinConversation(String id, bool pinned) async {
     _traceApi('${pinned ? 'Pinning' : 'Unpinning'} conversation: $id');
-    await _dio.post('/api/v1/chats/$id/pin', data: {'pinned': pinned});
+    await _setConversationToggle(
+      id: id,
+      field: 'pinned',
+      endpoint: '/api/v1/chats/$id/pin',
+      desired: pinned,
+    );
   }
 
   // Archive/Unarchive conversation
   Future<void> archiveConversation(String id, bool archived) async {
     _traceApi('${archived ? 'Archiving' : 'Unarchiving'} conversation: $id');
-    await _dio.post('/api/v1/chats/$id/archive', data: {'archived': archived});
+    await _setConversationToggle(
+      id: id,
+      field: 'archived',
+      endpoint: '/api/v1/chats/$id/archive',
+      desired: archived,
+    );
+  }
+
+  Future<void> _setConversationToggle({
+    required String id,
+    required String field,
+    required String endpoint,
+    required bool desired,
+  }) async {
+    final current = await _fetchConversationBooleanField(id, field);
+    if (current == desired) {
+      return;
+    }
+    if (current == null) {
+      throw StateError(
+        'Cannot set $field for chat $id because the current state is unknown',
+      );
+    }
+
+    final response = await _dio.post(endpoint);
+    final data = _coerceResponseMap(response.data);
+    final actual = data?[field] is bool
+        ? data![field] as bool
+        : await _fetchConversationBooleanField(id, field);
+    if (actual == null) {
+      throw StateError(
+        'Cannot confirm $field for chat $id after toggling to $desired',
+      );
+    }
+    if (actual != desired) {
+      DebugLogger.warning(
+        'toggle-mismatch',
+        scope: 'api/conversation',
+        data: {'id': id, 'field': field, 'desired': desired, 'actual': actual},
+      );
+      throw StateError(
+        'Cannot confirm $field for chat $id after toggling to $desired '
+        '(actual: $actual)',
+      );
+    }
+  }
+
+  Future<bool?> _fetchConversationBooleanField(String id, String field) async {
+    try {
+      if (field == 'pinned') {
+        try {
+          final pinnedResponse = await _dio.get('/api/v1/chats/$id/pinned');
+          final pinned = pinnedResponse.data;
+          if (pinned is bool) {
+            return pinned;
+          }
+          if (pinned == null) {
+            return false;
+          }
+        } on DioException {
+          // Older servers may not expose the dedicated pinned-status endpoint;
+          // fall through to the full chat payload below.
+        }
+      }
+      final response = await _dio.get('/api/v1/chats/$id');
+      final data = _coerceResponseMap(response.data);
+      final value = data?[field];
+      if (value == null && (data?.containsKey(field) ?? false)) {
+        return false;
+      }
+      if (value is bool) {
+        return value;
+      }
+      final wrappedChat = _coerceJsonMap(data?['chat']);
+      final wrappedValue = wrappedChat?[field];
+      if (wrappedValue == null && (wrappedChat?.containsKey(field) ?? false)) {
+        return false;
+      }
+      return wrappedValue is bool ? wrappedValue : null;
+    } catch (e, stackTrace) {
+      DebugLogger.error(
+        'toggle-state-fetch-failed',
+        scope: 'api/conversation',
+        error: e,
+        stackTrace: stackTrace,
+        data: {'id': id, 'field': field},
+      );
+      return null;
+    }
   }
 
   // Share conversation
   Future<String?> shareConversation(String id) async {
     _traceApi('Sharing conversation: $id');
     final response = await _dio.post('/api/v1/chats/$id/share');
-    final data = response.data as Map<String, dynamic>;
-    return data['share_id'] as String?;
+    final data = _coerceJsonMap(response.data);
+    if (data == null) {
+      DebugLogger.error(
+        'share-format',
+        scope: 'api/conversation',
+        data: {'type': response.data.runtimeType},
+      );
+      return null;
+    }
+    final shareId = data['share_id'];
+    if (shareId == null || shareId is String) {
+      return shareId;
+    }
+    DebugLogger.error(
+      'share-id-format',
+      scope: 'api/conversation',
+      data: {'type': shareId.runtimeType},
+    );
+    return null;
   }
 
   Future<void> deleteSharedConversation(String id) async {
@@ -1950,6 +2407,7 @@ class ApiService {
     _traceApi('Cloning conversation: $id');
     final response = await _dio.post(
       '/api/v1/chats/$id/clone',
+      data: const <String, dynamic>{},
       options: Options(responseType: ResponseType.bytes),
     );
     return _parseConversationPayload(
@@ -2038,6 +2496,34 @@ class ApiService {
     return ServerUserSettings.fromJson(data);
   }
 
+  /// Persists the notification preferences that Open WebUI stores server-side.
+  /// These live at the top level of the user settings object (not under `ui`).
+  /// Only non-null values are written so callers can update a subset.
+  Future<ServerUserSettings> updateUserNotificationSettings({
+    bool? notificationEnabled,
+    bool? notificationSound,
+    bool? notificationSoundAlways,
+  }) async {
+    final settings = _deepCloneJsonMap(await getUserSettings());
+    if (notificationEnabled != null) {
+      settings['notificationEnabled'] = notificationEnabled;
+    }
+    if (notificationSound != null) {
+      settings['notificationSound'] = notificationSound;
+    }
+    if (notificationSoundAlways != null) {
+      settings['notificationSoundAlways'] = notificationSoundAlways;
+    }
+
+    _traceApi('Updating user notification settings');
+    final response = await _dio.post(
+      '/api/v1/users/user/settings/update',
+      data: settings,
+    );
+    final data = _coerceResponseMap(response.data) ?? settings;
+    return ServerUserSettings.fromJson(data);
+  }
+
   Future<ServerUserSettings> updateUserPinnedModels(
     List<String> modelIds,
   ) async {
@@ -2057,12 +2543,69 @@ class ApiService {
   // Suggestions
   Future<List<String>> getSuggestions() async {
     _traceApi('Fetching conversation suggestions');
-    final response = await _dio.get('/api/v1/configs/suggestions');
-    final data = response.data;
-    if (data is List) {
-      return data.cast<String>();
+    final data = await _loadPromptSuggestionConfig();
+    final suggestions = data?['default_prompt_suggestions'];
+    if (suggestions is List) {
+      return suggestions
+          .map(_promptSuggestionToString)
+          .whereType<String>()
+          .toList(growable: false);
+    }
+    return _loadLegacyPromptSuggestions();
+  }
+
+  Future<Map<String, dynamic>?> _loadPromptSuggestionConfig() async {
+    try {
+      final response = await _dio.get('/api/config');
+      return _coerceResponseMap(response.data);
+    } on DioException {
+      return null;
+    }
+  }
+
+  Future<List<String>> _loadLegacyPromptSuggestions() async {
+    try {
+      final response = await _dio.get('/api/v1/configs/suggestions');
+      final data = response.data;
+      final suggestions = data is List
+          ? data
+          : _coerceResponseMap(data)?['suggestions'] ??
+                _coerceResponseMap(data)?['default_prompt_suggestions'];
+      if (suggestions is List) {
+        return suggestions
+            .map(_promptSuggestionToString)
+            .whereType<String>()
+            .toList(growable: false);
+      }
+    } on DioException {
+      return const [];
     }
     return [];
+  }
+
+  String? _promptSuggestionToString(dynamic value) {
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+    final suggestion = _coerceJsonMap(value);
+    if (suggestion == null) {
+      return null;
+    }
+    final content = suggestion['content']?.toString().trim();
+    if (content != null && content.isNotEmpty) {
+      return content;
+    }
+    final title = suggestion['title'];
+    if (title is List) {
+      final parts = title
+          .map((part) => part?.toString().trim() ?? '')
+          .where((part) => part.isNotEmpty)
+          .toList(growable: false);
+      return parts.isEmpty ? null : parts.join(' ');
+    }
+    final fallback = title?.toString().trim();
+    return fallback == null || fallback.isEmpty ? null : fallback;
   }
 
   Future<Conversation> _parseConversationPayload(
@@ -2262,11 +2805,18 @@ class ApiService {
   Future<Map<String, dynamic>> createFolder({
     required String name,
     String? parentId,
+    Map<String, dynamic>? data,
+    Map<String, dynamic>? meta,
   }) async {
     _traceApi('Creating folder: $name');
     final response = await _dio.post(
       '/api/v1/folders/',
-      data: {'name': name, 'parent_id': ?parentId},
+      data: {
+        'name': name,
+        'parent_id': ?parentId,
+        'data': ?data,
+        'meta': ?meta,
+      },
     );
     return response.data as Map<String, dynamic>;
   }
@@ -2360,14 +2910,24 @@ class ApiService {
     final response = await _dio.get('/api/v1/chats/$conversationId/tags');
     final data = response.data;
     if (data is List) {
-      return data.cast<String>();
+      return data.map(_tagNameFromEntry).whereType<String>().toList();
     }
     return [];
   }
 
   Future<void> addTagToConversation(String conversationId, String tag) async {
     _traceApi('Adding tag "$tag" to conversation: $conversationId');
-    await _dio.post('/api/v1/chats/$conversationId/tags', data: {'tag': tag});
+    try {
+      await _dio.post(
+        '/api/v1/chats/$conversationId/tags',
+        data: {'name': tag},
+      );
+    } on DioException catch (error) {
+      if (!_shouldFallbackToLegacyTagApi(error)) {
+        rethrow;
+      }
+      await _dio.post('/api/v1/chats/$conversationId/tags', data: {'tag': tag});
+    }
   }
 
   Future<void> removeTagFromConversation(
@@ -2375,29 +2935,101 @@ class ApiService {
     String tag,
   ) async {
     _traceApi('Removing tag "$tag" from conversation: $conversationId');
-    await _dio.delete('/api/v1/chats/$conversationId/tags/$tag');
+    try {
+      await _dio.delete(
+        '/api/v1/chats/$conversationId/tags',
+        data: {'name': tag},
+      );
+    } on DioException catch (error) {
+      if (!_shouldFallbackToLegacyTagApi(error)) {
+        rethrow;
+      }
+      await _dio.delete(
+        '/api/v1/chats/$conversationId/tags/${Uri.encodeComponent(tag)}',
+      );
+    }
   }
 
   Future<List<String>> getAllTags() async {
     _traceApi('Fetching all available tags');
-    final response = await _dio.get('/api/v1/chats/tags');
+    Response<dynamic> response;
+    try {
+      response = await _dio.get('/api/v1/chats/all/tags');
+    } on DioException catch (error) {
+      if (!_shouldFallbackToLegacyTagApi(error)) {
+        rethrow;
+      }
+      response = await _dio.get('/api/v1/chats/tags');
+    }
     final data = response.data;
     if (data is List) {
-      return data.cast<String>();
+      return data.map(_tagNameFromEntry).whereType<String>().toList();
     }
     return [];
   }
 
   Future<List<Conversation>> getConversationsByTag(String tag) async {
     _traceApi('Fetching conversations with tag: $tag');
-    final response = await _dio.get(
-      '/api/v1/chats/tags/$tag',
-      options: Options(responseType: ResponseType.bytes),
-    );
-    return _parseConversationSummaryPayload(
-      regular: response.data,
-      debugLabel: 'parse_tag_$tag',
-    );
+    try {
+      const pageSize = 50;
+      const maxPages = 100;
+      final conversations = <Conversation>[];
+      var skip = 0;
+      var pageCount = 0;
+      while (true) {
+        final response = await _dio.post(
+          '/api/v1/chats/tags',
+          data: {'name': tag, 'skip': skip, 'limit': pageSize},
+          options: Options(responseType: ResponseType.bytes),
+        );
+        final page = await _parseConversationSummaryPayload(
+          regular: response.data,
+          debugLabel: 'parse_tag_${tag}_skip_$skip',
+        );
+        conversations.addAll(page);
+        if (page.length < pageSize) {
+          break;
+        }
+        skip += pageSize;
+        pageCount += 1;
+        if (pageCount >= maxPages) {
+          _traceApi('Warning: Hit max tag page limit ($maxPages) for $tag');
+          break;
+        }
+      }
+      return conversations;
+    } on DioException catch (error) {
+      if (!_shouldFallbackToLegacyTagApi(error)) {
+        rethrow;
+      }
+      final response = await _dio.get(
+        '/api/v1/chats/tags/${Uri.encodeComponent(tag)}',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return _parseConversationSummaryPayload(
+        regular: response.data,
+        debugLabel: 'parse_tag_$tag',
+      );
+    }
+  }
+
+  bool _shouldFallbackToLegacyTagApi(DioException error) {
+    final statusCode = error.response?.statusCode;
+    return statusCode == 400 ||
+        statusCode == 404 ||
+        statusCode == 405 ||
+        statusCode == 422;
+  }
+
+  String? _tagNameFromEntry(dynamic value) {
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+    final tag = _coerceJsonMap(value);
+    final name = tag?['name'] ?? tag?['id'];
+    final normalized = name?.toString().trim();
+    return normalized == null || normalized.isEmpty ? null : normalized;
   }
 
   // Files
@@ -2700,10 +3332,21 @@ class ApiService {
     String? description,
   }) async {
     _traceApi('Creating knowledge base: $name');
-    final response = await _dio.post(
-      '/api/v1/knowledge/',
-      data: {'name': name, 'description': ?description},
-    );
+    Response<dynamic> response;
+    try {
+      response = await _dio.post(
+        '/api/v1/knowledge/create',
+        data: {'name': name, 'description': description ?? ''},
+      );
+    } on DioException catch (error) {
+      if (!_shouldFallbackToLegacyKnowledgeApi(error)) {
+        rethrow;
+      }
+      response = await _dio.post(
+        '/api/v1/knowledge/',
+        data: {'name': name, 'description': ?description},
+      );
+    }
     return response.data as Map<String, dynamic>;
   }
 
@@ -2713,31 +3356,199 @@ class ApiService {
     String? description,
   }) async {
     _traceApi('Updating knowledge base: $id');
-    await _dio.put(
-      '/api/v1/knowledge/$id',
-      data: {'name': ?name, 'description': ?description},
-    );
+    var nextName = name;
+    var nextDescription = description;
+    if (nextName == null || nextDescription == null) {
+      try {
+        final current = _coerceResponseMap(
+          (await _dio.get('/api/v1/knowledge/$id')).data,
+        );
+        nextName ??= current?['name']?.toString();
+        nextDescription ??= current?['description']?.toString();
+      } on DioException catch (error) {
+        if (!_shouldFallbackToLegacyKnowledgeApi(error)) {
+          rethrow;
+        }
+        await _dio.put(
+          '/api/v1/knowledge/$id',
+          data: {'name': ?name, 'description': ?description},
+        );
+        return;
+      }
+    }
+    try {
+      await _dio.post(
+        '/api/v1/knowledge/$id/update',
+        data: {'name': nextName ?? '', 'description': nextDescription ?? ''},
+      );
+    } on DioException catch (error) {
+      if (!_shouldFallbackToLegacyKnowledgeApi(error)) {
+        rethrow;
+      }
+      await _dio.put(
+        '/api/v1/knowledge/$id',
+        data: {'name': ?nextName, 'description': ?nextDescription},
+      );
+    }
   }
 
   Future<void> deleteKnowledgeBase(String id) async {
     _traceApi('Deleting knowledge base: $id');
-    await _dio.delete('/api/v1/knowledge/$id');
+    try {
+      final response = await _dio.delete('/api/v1/knowledge/$id/delete');
+      if (response.data is bool && response.data == false) {
+        throw StateError('Failed to delete knowledge base: $id');
+      }
+    } on DioException catch (error) {
+      if (!_shouldFallbackToLegacyKnowledgeApi(error)) {
+        rethrow;
+      }
+      await _dio.delete('/api/v1/knowledge/$id');
+    }
   }
 
   Future<List<KnowledgeBaseItem>> getKnowledgeBaseItems(
     String knowledgeBaseId,
   ) async {
     _traceApi('Fetching knowledge base items: $knowledgeBaseId');
-    final response = await _dio.get('/api/v1/knowledge/$knowledgeBaseId/items');
-    final data = response.data;
-    if (data is List) {
+    final rawItems = <dynamic>[];
+    var page = 1;
+    int? total;
+    const maxPages = 100;
+    var useLegacyItemsFallback = false;
+
+    try {
+      while (true) {
+        final response = await _dio.get(
+          '/api/v1/knowledge/$knowledgeBaseId/files',
+          queryParameters: {'page': page, 'include_content': true},
+        );
+        final data = response.data;
+        if (data is List) {
+          rawItems.addAll(data);
+          break;
+        }
+
+        final responseMap = _coerceJsonMap(data);
+        if (responseMap == null) {
+          useLegacyItemsFallback = true;
+          break;
+        }
+        final pageItems = responseMap['items'] is List
+            ? responseMap['items'] as List
+            : const <dynamic>[];
+        rawItems.addAll(pageItems);
+        final rawTotal = responseMap['total'];
+        if (rawTotal is int) {
+          total = rawTotal;
+        } else if (rawTotal is num) {
+          total = rawTotal.toInt();
+        }
+
+        if (pageItems.isEmpty || (total != null && rawItems.length >= total)) {
+          break;
+        }
+        page += 1;
+        if (page > maxPages) {
+          _traceApi(
+            'Warning: Hit max knowledge item page limit '
+            '($maxPages) for $knowledgeBaseId',
+          );
+          break;
+        }
+      }
+    } on DioException catch (error) {
+      if (!_shouldFallbackToLegacyKnowledgeApi(error)) {
+        rethrow;
+      }
+      useLegacyItemsFallback = true;
+    }
+
+    if (useLegacyItemsFallback) {
+      rawItems.clear();
+      final response = await _dio.get(
+        '/api/v1/knowledge/$knowledgeBaseId/items',
+      );
+      final data = response.data;
+      if (data is List) {
+        rawItems
+          ..clear()
+          ..addAll(data);
+      }
+    }
+
+    if (rawItems.isNotEmpty) {
       final normalized = await _normalizeList(
-        data,
+        rawItems,
         debugLabel: 'parse_kb_items',
       );
-      return normalized.map(KnowledgeBaseItem.fromJson).toList(growable: false);
+      return normalized.map(_knowledgeEntryToItem).toList(growable: false);
     }
     return const [];
+  }
+
+  KnowledgeBaseItem _knowledgeEntryToItem(Map<String, dynamic> file) {
+    if (file.containsKey('title')) {
+      return KnowledgeBaseItem.fromJson(file);
+    }
+    final meta = _coerceJsonMap(file['meta']) ?? const <String, dynamic>{};
+    final filename =
+        _normalizeDynamicString(file['filename']) ??
+        _normalizeDynamicString(file['name']) ??
+        _normalizeDynamicString(meta['filename']) ??
+        _normalizeDynamicString(meta['name']) ??
+        'Unknown';
+    String? nonBlankContent(dynamic value) {
+      final text = value?.toString();
+      if (text == null || text.trim().isEmpty) {
+        return null;
+      }
+      return text;
+    }
+
+    final dataMap = _coerceJsonMap(file['data']);
+    final content =
+        nonBlankContent(file['content']) ??
+        nonBlankContent(file['text']) ??
+        nonBlankContent(dataMap?['content']) ??
+        nonBlankContent(dataMap?['text']) ??
+        '';
+    return KnowledgeBaseItem.fromJson({
+      'id': file['id'],
+      'content': content,
+      'title': filename,
+      'created_at': file['created_at'] ?? file['createdAt'],
+      'updated_at':
+          file['updated_at'] ?? file['updatedAt'] ?? file['created_at'],
+      'metadata': {
+        ...meta,
+        'filename': filename,
+        if (file['hash'] != null) 'hash': file['hash'],
+        if (file['content_hash'] != null) 'content_hash': file['content_hash'],
+      },
+    });
+  }
+
+  bool _shouldFallbackToLegacyKnowledgeApi(DioException error) {
+    final statusCode = error.response?.statusCode;
+    return statusCode == 404 ||
+        statusCode == 405 ||
+        statusCode == 422 ||
+        (statusCode == 400 && _looksLikeLegacyShapeError(error.response?.data));
+  }
+
+  bool _looksLikeLegacyShapeError(dynamic data) {
+    final detail = data is Map
+        ? data['detail']?.toString()
+        : data is String
+        ? data
+        : null;
+    final normalized = detail?.toLowerCase() ?? '';
+    return normalized.contains('invalid body') ||
+        normalized.contains('field required') ||
+        normalized.contains('extra') ||
+        normalized.contains('schema') ||
+        normalized.contains('validation');
   }
 
   Future<Map<String, dynamic>> addKnowledgeBaseItem(
@@ -2923,15 +3734,47 @@ class ApiService {
     _traceApi('Adding file to knowledge base: $knowledgeBaseId ($filename)');
     try {
       final mimeType = _getMimeType(filename);
+      FormData formData() => FormData.fromMap({
+        'file': MultipartFile.fromBytes(
+          content,
+          filename: filename,
+          contentType: mimeType != null ? MediaType.parse(mimeType) : null,
+        ),
+      });
+      try {
+        final uploadResponse = await _dio.post(
+          '/api/v1/files/',
+          queryParameters: const {
+            'process': true,
+            'process_in_background': false,
+          },
+          data: formData(),
+        );
+        final uploadData = uploadResponse.data as Map<String, dynamic>;
+        final fileId = _fileIdFromUploadResponse(uploadData);
+        if (fileId == null) {
+          await _deleteUploadedFileFromUploadResponseBestEffort(uploadData);
+          throw StateError(
+            'Upload succeeded but did not return a file id to attach',
+          );
+        }
+        try {
+          await _attachUploadedFileToKnowledgeBase(knowledgeBaseId, fileId);
+          return uploadData;
+        } on DioException catch (error) {
+          await _deleteUploadedFileBestEffort(fileId);
+          if (!_shouldFallbackToLegacyKnowledgeFileAdd(error)) {
+            rethrow;
+          }
+        }
+      } on DioException catch (error) {
+        if (!_shouldFallbackToLegacyKnowledgeApi(error)) {
+          rethrow;
+        }
+      }
       final response = await _dio.post(
         '/api/v1/knowledge/$knowledgeBaseId/file/add',
-        data: FormData.fromMap({
-          'file': MultipartFile.fromBytes(
-            content,
-            filename: filename,
-            contentType: mimeType != null ? MediaType.parse(mimeType) : null,
-          ),
-        }),
+        data: formData(),
       );
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
@@ -2948,6 +3791,120 @@ class ApiService {
       }
       rethrow;
     }
+  }
+
+  Future<void> _attachUploadedFileToKnowledgeBase(
+    String knowledgeBaseId,
+    String fileId,
+  ) async {
+    await _dio.post(
+      '/api/v1/knowledge/$knowledgeBaseId/file/add',
+      data: {'file_id': fileId},
+    );
+  }
+
+  Future<void> _deleteUploadedFileBestEffort(String fileId) async {
+    try {
+      await _dio.delete('/api/v1/files/$fileId');
+    } catch (e, stackTrace) {
+      DebugLogger.warning(
+        'knowledge-upload-orphan-cleanup-failed',
+        scope: 'api/knowledge',
+        data: {'fileId': fileId, 'error': e, 'stackTrace': stackTrace},
+      );
+    }
+  }
+
+  Future<void> _deleteUploadedFileFromUploadResponseBestEffort(
+    Map<String, dynamic> data,
+  ) async {
+    final ids = _fileIdsFromUploadResponse(data);
+    for (final id in ids) {
+      await _deleteUploadedFileBestEffort(id);
+    }
+  }
+
+  bool _shouldFallbackToLegacyKnowledgeFileAdd(DioException error) {
+    final statusCode = error.response?.statusCode;
+    return statusCode == 404 ||
+        statusCode == 405 ||
+        statusCode == 422 ||
+        (statusCode == 400 && _looksLikeLegacyShapeError(error.response?.data));
+  }
+
+  String? _fileIdFromUploadResponse(Map<String, dynamic> data) {
+    final ids = _fileIdsFromUploadResponse(data);
+    return ids.isEmpty ? null : ids.first;
+  }
+
+  List<String> _fileIdsFromUploadResponse(Map<String, dynamic> data) {
+    final ids = <String>{};
+    const fileContainerKeys = {
+      'file',
+      'files',
+      'upload',
+      'uploadedfile',
+      'uploadedfiles',
+      'document',
+      'documents',
+    };
+    const filePayloadWrapperKeys = {'data', 'item', 'result'};
+    void collect(dynamic value, {String? key, bool inFileContainer = false}) {
+      if (value is Map) {
+        for (final entry in value.entries) {
+          final childKey = entry.key.toString();
+          final normalizedChildKey = childKey
+              .replaceAll(RegExp(r'[_-]'), '')
+              .toLowerCase();
+          final valueIsNestedContainer =
+              entry.value is Map || entry.value is List;
+          final childIsFileContainer =
+              fileContainerKeys.contains(normalizedChildKey) ||
+              (inFileContainer &&
+                  (!valueIsNestedContainer ||
+                      filePayloadWrapperKeys.contains(normalizedChildKey)));
+          collect(
+            entry.value,
+            key: childKey,
+            inFileContainer: childIsFileContainer,
+          );
+        }
+        return;
+      }
+      if (value is List) {
+        for (final item in value) {
+          collect(item, inFileContainer: inFileContainer);
+        }
+        return;
+      }
+      final normalizedKey = key?.replaceAll(RegExp(r'[_-]'), '').toLowerCase();
+      if (normalizedKey == 'fileid' ||
+          (inFileContainer &&
+              (normalizedKey == 'id' ||
+                  normalizedKey == 'uuid' ||
+                  normalizedKey == 'identifier'))) {
+        final id = _normalizeDynamicString(value);
+        if (id != null) {
+          ids.add(id);
+        }
+      }
+    }
+
+    final id = _normalizeDynamicString(
+      data['id'] ?? data['file_id'] ?? data['fileId'] ?? data['uuid'],
+    );
+    if (id != null) {
+      ids.add(id);
+    }
+    final file = _coerceJsonMap(data['file']) ?? _coerceJsonMap(data['data']);
+    final nestedId = _normalizeDynamicString(
+      file?['id'] ?? file?['file_id'] ?? file?['fileId'] ?? file?['uuid'],
+    );
+    if (nestedId != null) {
+      ids.add(nestedId);
+    }
+    collect(data);
+    return ids.toList(growable: false);
   }
 
   Future<Map<String, dynamic>?> processWebpage({
@@ -3164,8 +4121,8 @@ class ApiService {
       'model': model,
       'messages': formattedMessages,
       'chat_id': chatId,
-      'session_id': ?sessionId,
       'id': messageId,
+      'session_id': ?sessionId,
     };
 
     // Include filter_ids if provided (for outlet filters)
@@ -3267,29 +4224,46 @@ class ApiService {
   }
 
   // Audio
-  Future<({String? voice, String splitOn, List<BackendTtsVoice> voices})>
+  Future<({String? voice, String? splitOn, List<BackendTtsVoice> voices})>
   _loadServerAudioConfig() async {
-    _traceApi('Fetching server TTS defaults');
-    final response = await _dio.get('/api/v1/audio/config');
-    final data = response.data;
-    final voices = await _loadServerTtsVoicesFromAudioEndpoint();
-    if (data is Map<String, dynamic>) {
-      final ttsConfig = data['tts'];
-      if (ttsConfig is Map<String, dynamic>) {
-        final rawVoice = ttsConfig['VOICE'] ?? ttsConfig['voice'];
-        final rawSplitOn = ttsConfig['SPLIT_ON'] ?? ttsConfig['split_on'];
+    String? voice;
+    String? splitOn;
 
-        final voice = rawVoice is String && rawVoice.trim().isNotEmpty
-            ? rawVoice.trim()
-            : null;
-        final splitOn = rawSplitOn is String && rawSplitOn.trim().isNotEmpty
-            ? rawSplitOn.trim()
-            : 'punctuation';
-
-        return (voice: voice, splitOn: splitOn, voices: voices);
-      }
+    try {
+      _traceApi('Fetching server TTS defaults');
+      final response = await _dio.get('/api/v1/audio/config');
+      final data = response.data;
+      final config = _coerceJsonMap(data);
+      final ttsConfig = _coerceJsonMap(config?['tts']);
+      final rawVoice = ttsConfig?['VOICE'] ?? ttsConfig?['voice'];
+      final rawSplitOn = ttsConfig?['SPLIT_ON'] ?? ttsConfig?['split_on'];
+      voice = _normalizeDynamicString(rawVoice);
+      splitOn = _normalizeDynamicString(rawSplitOn);
+    } catch (e, stackTrace) {
+      DebugLogger.error(
+        'backend-config-audio-defaults',
+        scope: 'api/config',
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
-    return (voice: null, splitOn: 'punctuation', voices: voices);
+
+    final voices = await _loadServerTtsVoicesOrEmpty();
+    return (voice: voice, splitOn: splitOn, voices: voices);
+  }
+
+  Future<List<BackendTtsVoice>> _loadServerTtsVoicesOrEmpty() async {
+    try {
+      return await _loadServerTtsVoicesFromAudioEndpoint();
+    } catch (e, stackTrace) {
+      DebugLogger.error(
+        'backend-config-audio-voices',
+        scope: 'api/config',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return const [];
+    }
   }
 
   Future<List<BackendTtsVoice>> _loadServerTtsVoicesFromAudioEndpoint() async {
@@ -4854,7 +5828,20 @@ class ApiService {
       'status=${resp.statusCode}',
     );
 
-    final bodyStream = resp.data!.stream;
+    final body = resp.data;
+    if (body == null) {
+      DebugLogger.error(
+        'chat completion returned an empty body',
+        scope: 'api/chat',
+        data: {'status': resp.statusCode},
+      );
+      throw DioException(
+        requestOptions: resp.requestOptions,
+        response: resp,
+        message: 'Empty chat completion response body',
+      );
+    }
+    final bodyStream = body.stream;
 
     // ------------------------------------------------------------------
     // 1. Explicit application/json → buffer fully and classify
@@ -5187,6 +6174,15 @@ class ApiService {
     }
   }
 
+  Future<void> stopTasksByChat(String chatId) async {
+    try {
+      final encodedChatId = Uri.encodeComponent(chatId);
+      await _dio.post('/api/tasks/chat/$encodedChatId/stop');
+    } catch (e) {
+      rethrow;
+    }
+  }
+
   Future<List<String>> getTaskIdsByChat(String chatId) async {
     try {
       final resp = await _dio.get('/api/tasks/chat/$chatId');
@@ -5196,6 +6192,69 @@ class ApiService {
       }
       return const [];
     } catch (e) {
+      rethrow;
+    }
+  }
+
+  /// Set once the bulk active-chats endpoint returns 404 (older servers), so we
+  /// stop probing it for the rest of the session.
+  bool _activeChatsEndpointUnsupported = false;
+  DateTime? _activeChatsMethodRejectedRetryAfter;
+  static const _activeChatsMethodRejectedRetryDelay = Duration(minutes: 1);
+
+  /// POST `/api/v1/tasks/active/chats` `{chat_ids: [...]}` → `{active_chat_ids: [...]}`.
+  ///
+  /// Bulk query for which of [chatIds] currently have an active server task
+  /// (mirrors OpenWebUI's `checkActiveChats`). Returns an empty set when
+  /// [chatIds] is empty or the endpoint is missing on the server (cached after
+  /// the first 404 so we don't keep probing). HTTP 405 is treated as a
+  /// retryable proxy/load-balancer rejection and only pauses probing briefly.
+  Future<Set<String>> checkActiveChats(List<String> chatIds) async {
+    if (chatIds.isEmpty || _activeChatsEndpointUnsupported) {
+      return <String>{};
+    }
+    final rejectedRetryAfter = _activeChatsMethodRejectedRetryAfter;
+    if (rejectedRetryAfter != null && _now().isBefore(rejectedRetryAfter)) {
+      return <String>{};
+    }
+    try {
+      final resp = await _dio.post(
+        '/api/v1/tasks/active/chats',
+        data: {'chat_ids': chatIds},
+      );
+      _activeChatsMethodRejectedRetryAfter = null;
+      final data = resp.data;
+      if (data is Map && data['active_chat_ids'] is List) {
+        return (data['active_chat_ids'] as List)
+            .map((e) => e.toString())
+            .toSet();
+      }
+      return <String>{};
+    } on DioException catch (e) {
+      final statusCode = e.response?.statusCode;
+      if (statusCode == 404) {
+        _activeChatsEndpointUnsupported = true;
+        DebugLogger.log(
+          'active-chats endpoint unsupported; disabling bulk probe',
+          scope: 'api/tasks',
+          data: {'status': statusCode},
+        );
+        return <String>{};
+      }
+      if (statusCode == 405) {
+        _activeChatsMethodRejectedRetryAfter = _now().add(
+          _activeChatsMethodRejectedRetryDelay,
+        );
+        DebugLogger.log(
+          'active-chats endpoint rejected; pausing bulk probe',
+          scope: 'api/tasks',
+          data: {
+            'status': statusCode,
+            'retryAfterMs': _activeChatsMethodRejectedRetryDelay.inMilliseconds,
+          },
+        );
+        return <String>{};
+      }
       rethrow;
     }
   }
@@ -5222,6 +6281,7 @@ class ApiService {
     String fileName, {
     String? contentType,
     Map<String, dynamic>? metadata,
+    CancelToken? cancelToken,
   }) async {
     _traceApi('Starting file upload: $fileName from $filePath');
 
@@ -5251,6 +6311,7 @@ class ApiService {
       final response = await _dio.post(
         '/api/v1/files/',
         data: formData,
+        cancelToken: cancelToken,
         options: Options(
           sendTimeout: uploadTimeout,
           receiveTimeout: uploadTimeout,
@@ -5373,86 +6434,6 @@ class ApiService {
   // Helper method to get current weekday name
   // ==================== ADVANCED CHAT FEATURES ====================
   // Chat import/export, bulk operations, and advanced search
-
-  /// Import chat data from external sources
-  Future<List<Map<String, dynamic>>> importChats({
-    required List<Map<String, dynamic>> chatsData,
-    String? folderId,
-    bool overwriteExisting = false,
-  }) async {
-    _traceApi('Importing ${chatsData.length} chats');
-    final response = await _dio.post(
-      '/api/v1/chats/import',
-      data: {
-        'chats': chatsData,
-        'folder_id': ?folderId,
-        'overwrite_existing': overwriteExisting,
-      },
-    );
-    final data = response.data;
-    if (data is List) {
-      return data.cast<Map<String, dynamic>>();
-    }
-    return [];
-  }
-
-  /// Export chat data for backup or migration
-  Future<List<Map<String, dynamic>>> exportChats({
-    List<String>? chatIds,
-    String? folderId,
-    bool includeMessages = true,
-    String? format,
-  }) async {
-    _traceApi(
-      'Exporting chats${chatIds != null ? ' (${chatIds.length} chats)' : ''}',
-    );
-    final queryParams = <String, dynamic>{};
-    if (chatIds != null) queryParams['chat_ids'] = chatIds.join(',');
-    if (folderId != null) queryParams['folder_id'] = folderId;
-    if (!includeMessages) queryParams['include_messages'] = false;
-    if (format != null) queryParams['format'] = format;
-
-    final response = await _dio.get(
-      '/api/v1/chats/export',
-      queryParameters: queryParams,
-    );
-    final data = response.data;
-    if (data is List) {
-      return data.cast<Map<String, dynamic>>();
-    }
-    return [];
-  }
-
-  /// Archive all chats in bulk
-  Future<Map<String, dynamic>> archiveAllChats({
-    List<String>? excludeIds,
-    String? beforeDate,
-  }) async {
-    _traceApi('Archiving all chats in bulk');
-    final response = await _dio.post(
-      '/api/v1/chats/archive/all',
-      data: {'exclude_ids': ?excludeIds, 'before_date': ?beforeDate},
-    );
-    return response.data as Map<String, dynamic>;
-  }
-
-  /// Delete all chats in bulk
-  Future<Map<String, dynamic>> deleteAllChats({
-    List<String>? excludeIds,
-    String? beforeDate,
-    bool archived = false,
-  }) async {
-    _traceApi('Deleting all chats in bulk (archived: $archived)');
-    final response = await _dio.post(
-      '/api/v1/chats/delete/all',
-      data: {
-        'exclude_ids': ?excludeIds,
-        'before_date': ?beforeDate,
-        'archived_only': archived,
-      },
-    );
-    return response.data as Map<String, dynamic>;
-  }
 
   /// Get pinned chats
   Future<List<Conversation>> getPinnedChats() async {
@@ -5627,130 +6608,6 @@ class ApiService {
     );
   }
 
-  /// Get recent chats with activity
-  Future<List<Conversation>> getRecentChats({int limit = 10, int? days}) async {
-    _traceApi('Fetching recent chats (limit: $limit)');
-    final queryParams = <String, dynamic>{'limit': limit};
-    if (days != null) queryParams['days'] = days;
-
-    final response = await _dio.get(
-      '/api/v1/chats/recent',
-      queryParameters: queryParams,
-      options: Options(responseType: ResponseType.bytes),
-    );
-    return _parseConversationSummaryPayload(
-      regular: response.data,
-      debugLabel: 'parse_recent_chats',
-    );
-  }
-
-  /// Get chat history with pagination and filters
-  Future<Map<String, dynamic>> getChatHistory({
-    int? limit,
-    int? offset,
-    String? cursor,
-    String? model,
-    String? tag,
-    bool? pinned,
-    bool? archived,
-    String? sortBy,
-    String? sortOrder,
-  }) async {
-    _traceApi('Fetching chat history with filters');
-    final queryParams = <String, dynamic>{};
-    if (limit != null) queryParams['limit'] = limit;
-    if (offset != null) queryParams['offset'] = offset;
-    if (cursor != null) queryParams['cursor'] = cursor;
-    if (model != null) queryParams['model'] = model;
-    if (tag != null) queryParams['tag'] = tag;
-    if (pinned != null) queryParams['pinned'] = pinned;
-    if (archived != null) queryParams['archived'] = archived;
-    if (sortBy != null) queryParams['sort_by'] = sortBy;
-    if (sortOrder != null) queryParams['sort_order'] = sortOrder;
-
-    final response = await _dio.get(
-      '/api/v1/chats/history',
-      queryParameters: queryParams,
-    );
-    return response.data as Map<String, dynamic>;
-  }
-
-  /// Batch operations on multiple chats
-  Future<Map<String, dynamic>> batchChatOperation({
-    required List<String> chatIds,
-    required String
-    operation, // 'archive', 'delete', 'pin', 'unpin', 'move_to_folder'
-    Map<String, dynamic>? params,
-  }) async {
-    _traceApi(
-      'Performing batch operation "$operation" on ${chatIds.length} chats',
-    );
-    final response = await _dio.post(
-      '/api/v1/chats/batch',
-      data: {'chat_ids': chatIds, 'operation': operation, 'params': ?params},
-    );
-    return response.data as Map<String, dynamic>;
-  }
-
-  /// Get suggested prompts based on chat history
-  Future<List<String>> getChatSuggestions({
-    String? context,
-    int limit = 5,
-  }) async {
-    _traceApi('Fetching chat suggestions');
-    final queryParams = <String, dynamic>{'limit': limit};
-    if (context != null) queryParams['context'] = context;
-
-    final response = await _dio.get(
-      '/api/v1/chats/suggestions',
-      queryParameters: queryParams,
-    );
-    final data = response.data;
-    if (data is List) {
-      return data.cast<String>();
-    }
-    return [];
-  }
-
-  /// Get chat templates for quick starts
-  Future<List<Map<String, dynamic>>> getChatTemplates({
-    String? category,
-    String? tag,
-  }) async {
-    _traceApi('Fetching chat templates');
-    final queryParams = <String, dynamic>{};
-    if (category != null) queryParams['category'] = category;
-    if (tag != null) queryParams['tag'] = tag;
-
-    final response = await _dio.get(
-      '/api/v1/chats/templates',
-      queryParameters: queryParams,
-    );
-    final data = response.data;
-    if (data is List) {
-      return data.cast<Map<String, dynamic>>();
-    }
-    return [];
-  }
-
-  /// Create a chat from template
-  Future<Conversation> createChatFromTemplate(
-    String templateId, {
-    Map<String, dynamic>? variables,
-    String? title,
-  }) async {
-    _traceApi('Creating chat from template: $templateId');
-    final response = await _dio.post(
-      '/api/v1/chats/templates/$templateId/create',
-      data: {'variables': ?variables, 'title': ?title},
-      options: Options(responseType: ResponseType.bytes),
-    );
-    return _parseConversationPayload(
-      response.data,
-      debugLabel: 'parse_conversation_full',
-    );
-  }
-
   // ==================== END ADVANCED CHAT FEATURES ====================
 
   // ==================== NOTES ====================
@@ -5758,10 +6615,15 @@ class ApiService {
   /// Get all notes with user information.
   /// Returns a record with (notes data, feature enabled flag).
   /// When the notes feature is disabled server-side (403), returns ([], false).
-  Future<(List<Map<String, dynamic>>, bool)> getNotes() async {
+  Future<(List<Map<String, dynamic>>, bool)> getNotes({int? page}) async {
     try {
-      _traceApi('Fetching notes');
-      final response = await _dio.get('/api/v1/notes/');
+      _traceApi('Fetching notes${page == null ? '' : ', page: $page'}');
+      final queryParams = <String, dynamic>{};
+      if (page != null) queryParams['page'] = page;
+      final response = await _dio.get(
+        '/api/v1/notes/',
+        queryParameters: queryParams.isEmpty ? null : queryParams,
+      );
       DebugLogger.log(
         'fetch-status',
         scope: 'api/notes',
@@ -5910,6 +6772,122 @@ class ApiService {
     return response.data == true;
   }
 
+  // ===== Phase 5 NOTES sync write seams (CDT-RFC-001 D-11) =====
+  //
+  // Raw equivalents of the note CRUD that surface the §B5 terminal-error
+  // contract (401/403 -> SyncTerminalException, 404 -> null/false). All note
+  // timestamps in/out are server NANOSECONDS — copied verbatim (R-09).
+
+  /// GET `/api/v1/notes/{id}` — the FULL (untruncated) note map; null on 404;
+  /// malformed 2xx bodies throw; 401/403 -> [SyncTerminalException].
+  Future<Map<String, dynamic>?> getNoteRaw(String id) async {
+    try {
+      final response = await _dio.get('/api/v1/notes/$id');
+      return _requireResponseMap(response.data, 'getNoteRaw $id');
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404) return null;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'getNote $id forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// POST `/api/v1/notes/create` body `{title, data, meta?}`. Returns the
+  /// minted note map; 401/403 -> [SyncTerminalException].
+  Future<Map<String, dynamic>> createNoteRaw({
+    required String title,
+    required Map<String, dynamic> data,
+    Map<String, dynamic>? meta,
+  }) async {
+    try {
+      final response = await _dio.post(
+        '/api/v1/notes/create',
+        data: {'title': title, 'data': data, 'meta': ?meta},
+      );
+      return _requireResponseMap(response.data, 'createNoteRaw');
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'createNote forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// POST `/api/v1/notes/{id}/update` body = the patch map. Returns the updated
+  /// note map; null on 404; 401/403 -> [SyncTerminalException].
+  Future<Map<String, dynamic>?> updateNoteRaw(
+    String id,
+    Map<String, dynamic> patch,
+  ) async {
+    try {
+      final response = await _dio.post('/api/v1/notes/$id/update', data: patch);
+      return _requireResponseMap(response.data, 'updateNoteRaw $id');
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404) return null;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'updateNote $id forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// DELETE `/api/v1/notes/{id}/delete`. `true` on success; 404 -> `false`
+  /// (already gone, no throw); 401/403 -> [SyncTerminalException].
+  Future<bool> deleteNoteRaw(String id) async {
+    try {
+      final response = await _dio.delete('/api/v1/notes/$id/delete');
+      return response.data == true;
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404) return false;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'deleteNote $id forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// POST `/api/v1/notes/{id}/pin` — low-level stateless toggle primitive.
+  ///
+  /// Do not enqueue or retry this operation directly. [NoteSync.pushNotePin]
+  /// drives a desired final state by reading before the toggle and confirming
+  /// after it, so retries re-probe instead of double-flipping.
+  ///
+  /// Returns the note map after the flip; null on 404; 401/403 ->
+  /// [SyncTerminalException].
+  Future<Map<String, dynamic>?> togglePinNoteRaw(String id) async {
+    try {
+      final response = await _dio.post('/api/v1/notes/$id/pin');
+      return _requireResponseMap(response.data, 'togglePinNoteRaw $id');
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404) return null;
+      if (code == 401 || code == 403) {
+        throw SyncTerminalException(
+          statusCode: code,
+          message: 'pinNote $id forbidden',
+        );
+      }
+      rethrow;
+    }
+  }
+
   /// Generate a title for note content using AI
   Future<String?> generateNoteTitle(
     String content, {
@@ -6029,4 +7007,16 @@ List<Map<String, dynamic>> _normalizeMapListWorker(
     }
   }
   return normalized;
+}
+
+/// Top-level worker entrypoint (CDT-RFC-001 Phase 1): decodes a raw
+/// `ChatResponse` byte payload into its JSON map form WITHOUT any
+/// `Conversation` parsing, so the sync engine keeps the blob and the
+/// epoch-second ints intact. Returns null when the body is JSON `null`
+/// (the route's `response_model` allows `None`).
+Map<String, dynamic>? decodeChatResponseEnvelopeWorker(Uint8List bytes) {
+  final decoded = jsonDecode(utf8.decode(bytes));
+  if (decoded is Map<String, dynamic>) return decoded;
+  if (decoded is Map) return Map<String, dynamic>.from(decoded);
+  return null;
 }

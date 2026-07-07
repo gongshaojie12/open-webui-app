@@ -1,6 +1,13 @@
 {
   "@@locale": "sk",
   "appTitle": "Conduit",
+  "serverIncompatibleTitle": "Server nie je podporovaný",
+  "serverIncompatibleMessage": "Tento server používa Open WebUI {serverVersion}, čo je novšia verzia, než akú táto aplikácia podporuje (maximálne {maxVersion}).",
+  "serverIncompatibleResolution": "Ak chcete pokračovať, znížte verziu servera na {maxVersion} alebo staršiu, alebo počkajte na aktualizáciu aplikácie, ktorá pridá podporu.",
+  "serverIncompatibleConnectBlocked": "Tento server je novší, než akú verziu táto aplikácia podporuje (maximálne {maxVersion}).",
+  "serverIncompatibleRecheck": "Skontrolovať server znova",
+  "serverIncompatibleSwitchServer": "Použiť iný server",
+  "serverIncompatibleStillUnsupported": "Tento server je stále novší, než akú verziu táto aplikácia podporuje.",
   "@appTitle": {
     "description": "Application name displayed in the app and OS UI."
   },
@@ -613,6 +620,34 @@
   "cancel": "Zrušiť",
   "@cancel": {
     "description": "Cancel button label."
+  },
+  "chatQueuedOfflineTitle": "Zaradené offline",
+  "@chatQueuedOfflineTitle": {
+    "description": "Title shown on an assistant placeholder when a chat request is queued because the server is unreachable."
+  },
+  "chatQueuedOfflineMessage": "Táto odpoveď sa spustí, keď bude server dostupný.",
+  "@chatQueuedOfflineMessage": {
+    "description": "Body text shown for an offline queued assistant response."
+  },
+  "chatQueuedPendingTitle": "Zaradené na odoslanie",
+  "@chatQueuedPendingTitle": {
+    "description": "Title shown when a queued assistant response is waiting for sync/backoff."
+  },
+  "chatQueuedPendingMessage": "Conduit spustí túto odpoveď hneď, ako sa spustí synchronizácia.",
+  "@chatQueuedPendingMessage": {
+    "description": "Body text shown for a queued assistant response that is waiting to be sent."
+  },
+  "chatQueuedFailedTitle": "Odoslanie zlyhalo",
+  "@chatQueuedFailedTitle": {
+    "description": "Title shown when a queued assistant response has failed and needs user action."
+  },
+  "chatQueuedFailedMessage": "Skúste odpoveď vo fronte znova alebo ju zrušte.",
+  "@chatQueuedFailedMessage": {
+    "description": "Body text shown when a queued assistant response has failed and offers retry or cancel."
+  },
+  "chatQueuedSnackBar": "Správa bola zaradená do frontu. Odošle sa, keď bude server dostupný.",
+  "@chatQueuedSnackBar": {
+    "description": "Snackbar shown after sending a chat message while offline."
   },
   "ok": "OK",
   "@ok": {
@@ -1413,7 +1448,7 @@
   "@sttTranscriptionLanguage": {
     "description": "Title for the server speech-to-text language setting."
   },
-  "sttTranscriptionLanguageDescription": "Použite Automaticky pre jazyk tohto zariadenia alebo zadajte kód, napríklad pl.",
+  "sttTranscriptionLanguageDescription": "Použite Automaticky pre jazyk tohto zariadenia alebo zadajte kód, napríklad en.",
   "@sttTranscriptionLanguageDescription": {
     "description": "Description for the server speech-to-text language setting."
   },
@@ -1425,11 +1460,11 @@
   "@sttTranscriptionLanguageCustom": {
     "description": "Option label for entering an explicit speech-to-text language code."
   },
-  "sttTranscriptionLanguagePlaceholder": "Kód ISO-639-1, napr. pl",
+  "sttTranscriptionLanguagePlaceholder": "Kód ISO-639-1, napr. en",
   "@sttTranscriptionLanguagePlaceholder": {
     "description": "Placeholder for entering a two-letter speech-to-text language code."
   },
-  "sttTranscriptionLanguageInvalid": "Použite dvojpísmenový kód jazyka ako pl.",
+  "sttTranscriptionLanguageInvalid": "Použite dvojpísmenový kód jazyka ako en.",
   "@sttTranscriptionLanguageInvalid": {
     "description": "Validation message for invalid speech-to-text language codes."
   },

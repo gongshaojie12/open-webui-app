@@ -29,6 +29,56 @@
   "@connectionIssueSubtitle": {
     "description": "Subtitle explaining available actions when the server cannot be reached"
   },
+  "serverIncompatibleTitle": "Server not supported",
+  "@serverIncompatibleTitle": {
+    "description": "Title shown when the connected Open WebUI server is newer than the app supports"
+  },
+  "serverIncompatibleMessage": "This server runs Open WebUI {serverVersion}, which is newer than this app supports (up to {maxVersion}).",
+  "@serverIncompatibleMessage": {
+    "description": "Explains that the server version is too new for the current app build",
+    "placeholders": {
+      "serverVersion": {
+        "type": "String",
+        "example": "0.11.0"
+      },
+      "maxVersion": {
+        "type": "String",
+        "example": "0.10.2"
+      }
+    }
+  },
+  "serverIncompatibleResolution": "To continue, downgrade your server to {maxVersion} or earlier, or wait for an app update that adds support.",
+  "@serverIncompatibleResolution": {
+    "description": "Tells the user how to resolve an unsupported server version",
+    "placeholders": {
+      "maxVersion": {
+        "type": "String",
+        "example": "0.10.2"
+      }
+    }
+  },
+  "serverIncompatibleConnectBlocked": "This server is newer than this app supports (up to {maxVersion}).",
+  "@serverIncompatibleConnectBlocked": {
+    "description": "Inline error on the connection form when the probed server version is too new",
+    "placeholders": {
+      "maxVersion": {
+        "type": "String",
+        "example": "0.10.2"
+      }
+    }
+  },
+  "serverIncompatibleRecheck": "Recheck server",
+  "@serverIncompatibleRecheck": {
+    "description": "Button that re-fetches the server version after a downgrade"
+  },
+  "serverIncompatibleSwitchServer": "Use a different server",
+  "@serverIncompatibleSwitchServer": {
+    "description": "Button that lets the user connect to a different server from the incompatibility gate"
+  },
+  "serverIncompatibleStillUnsupported": "This server is still newer than this app supports.",
+  "@serverIncompatibleStillUnsupported": {
+    "description": "Status shown after a recheck when the server version is still too new"
+  },
   "@pleaseCheckConnection": {
     "description": "Generic connectivity hint after an error."
   },
@@ -613,6 +663,34 @@
   "cancel": "Cancel",
   "@cancel": {
     "description": "Cancel button label."
+  },
+  "chatQueuedOfflineTitle": "Queued offline",
+  "@chatQueuedOfflineTitle": {
+    "description": "Title shown on an assistant placeholder when a chat request is queued because the server is unreachable."
+  },
+  "chatQueuedOfflineMessage": "This response will start when the server is reachable.",
+  "@chatQueuedOfflineMessage": {
+    "description": "Body text shown for an offline queued assistant response."
+  },
+  "chatQueuedPendingTitle": "Queued for sending",
+  "@chatQueuedPendingTitle": {
+    "description": "Title shown when a queued assistant response is waiting for sync/backoff."
+  },
+  "chatQueuedPendingMessage": "众小智AI will start this response as soon as sync runs.",
+  "@chatQueuedPendingMessage": {
+    "description": "Body text shown for a queued assistant response that is waiting to be sent."
+  },
+  "chatQueuedFailedTitle": "Send failed",
+  "@chatQueuedFailedTitle": {
+    "description": "Title shown when a queued assistant response has failed and needs user action."
+  },
+  "chatQueuedFailedMessage": "Retry the queued response or cancel it.",
+  "@chatQueuedFailedMessage": {
+    "description": "Body text shown when a queued assistant response has failed and offers retry or cancel."
+  },
+  "chatQueuedSnackBar": "Message queued. It will send when the server is reachable.",
+  "@chatQueuedSnackBar": {
+    "description": "Snackbar shown after sending a chat message while offline."
   },
   "ok": "OK",
   "@ok": {
@@ -1401,11 +1479,11 @@
   "@sttServerUnavailableWarning": {
     "description": "Warning shown when the user selects server speech recognition but no server is available."
   },
-  "sttSilenceDuration": "Silence Duration",
+  "sttSilenceDuration": "Server STT silence duration",
   "@sttSilenceDuration": {
     "description": "Label for the silence duration setting in server speech-to-text."
   },
-  "sttSilenceDurationDescription": "Time to wait after silence before auto-stopping recording",
+  "sttSilenceDurationDescription": "Used by server transcription and legacy fallback only. Native on-device STT sends recognizer final results instead.",
   "@sttSilenceDurationDescription": {
     "description": "Description for the silence duration slider in server speech-to-text settings."
   },
@@ -1413,23 +1491,23 @@
   "@sttTranscriptionLanguage": {
     "description": "Title for the server speech-to-text language setting."
   },
-  "sttTranscriptionLanguageDescription": "Use Auto to follow this device's language, or enter a code such as pl.",
+  "sttTranscriptionLanguageDescription": "Use Auto-detect to let the server infer the spoken language, or enter a code such as en.",
   "@sttTranscriptionLanguageDescription": {
     "description": "Description for the server speech-to-text language setting."
   },
-  "sttTranscriptionLanguageAuto": "Auto",
+  "sttTranscriptionLanguageAuto": "Auto-detect",
   "@sttTranscriptionLanguageAuto": {
-    "description": "Option label for using the device language as the server speech-to-text language hint."
+    "description": "Option label for omitting the server speech-to-text language hint so the backend auto-detects the spoken language."
   },
   "sttTranscriptionLanguageCustom": "Custom language code",
   "@sttTranscriptionLanguageCustom": {
     "description": "Option label for entering an explicit speech-to-text language code."
   },
-  "sttTranscriptionLanguagePlaceholder": "ISO-639-1 code, e.g. pl",
+  "sttTranscriptionLanguagePlaceholder": "ISO-639-1 code, e.g. en",
   "@sttTranscriptionLanguagePlaceholder": {
     "description": "Placeholder for entering a two-letter speech-to-text language code."
   },
-  "sttTranscriptionLanguageInvalid": "Use a two-letter language code like pl.",
+  "sttTranscriptionLanguageInvalid": "Use a two-letter language code like en.",
   "@sttTranscriptionLanguageInvalid": {
     "description": "Validation message for invalid speech-to-text language codes."
   },
@@ -1716,6 +1794,14 @@
   "noNotesFound": "No notes found",
   "@noNotesFound": {
     "description": "Empty state title when search returns no results."
+  },
+  "noteConflictCopySuffix": " (conflict copy)",
+  "@noteConflictCopySuffix": {
+    "description": "Title suffix appended to a note created when a concurrent edit could not be merged; both copies are kept so no local edit is lost."
+  },
+  "noteConflictCopyBadge": "Conflict copy",
+  "@noteConflictCopyBadge": {
+    "description": "Badge label shown on a conflict-copy note in the list and editor so the user understands two copies of the note exist."
   },
   "createFirstNoteHint": "Tap the + button to create your first note.",
   "@createFirstNoteHint": {
@@ -2880,7 +2966,7 @@
   "@inactiveStatus": {
     "description": "Label for an inactive account status."
   },
-  "appInformation": "Conduit app",
+  "appInformation": "众小智AI app",
   "@appInformation": {
     "description": "Heading for local app information."
   },
@@ -3465,5 +3551,89 @@
   "securityCertificateError": "Security certificate error. Unable to verify the server identity.",
   "@securityCertificateError": {
     "description": "Error shown when the server TLS certificate cannot be trusted or verified."
+  },
+  "notificationsTitle": "Notifications",
+  "@notificationsTitle": {
+    "description": "Title of the notification settings page and the profile row that opens it."
+  },
+  "notificationsSubtitle": "Alerts for replies, messages, and finished responses",
+  "@notificationsSubtitle": {
+    "description": "Subtitle for the Notifications row in the profile/settings list."
+  },
+  "notificationsEnabledTitle": "Enable notifications",
+  "@notificationsEnabledTitle": {
+    "description": "Master toggle title for all notifications."
+  },
+  "notificationsEnabledDescription": "Receive alerts when the app is in the background and inside the app.",
+  "@notificationsEnabledDescription": {
+    "description": "Master toggle description."
+  },
+  "notificationSoundTitle": "Sound",
+  "@notificationSoundTitle": {
+    "description": "Toggle title for the notification sound/haptic cue."
+  },
+  "notificationSoundDescription": "Play a cue when a notification arrives.",
+  "@notificationSoundDescription": {
+    "description": "Toggle description for the notification sound."
+  },
+  "notificationSoundAlwaysTitle": "Always play sound",
+  "@notificationSoundAlwaysTitle": {
+    "description": "Toggle title mirroring Open WebUI's notificationSoundAlways setting."
+  },
+  "notificationSoundAlwaysDescription": "Play the cue even when the app is open and focused.",
+  "@notificationSoundAlwaysDescription": {
+    "description": "Toggle description for always playing the notification cue."
+  },
+  "notificationInAppBannerTitle": "In-app banners",
+  "@notificationInAppBannerTitle": {
+    "description": "Toggle title for in-app banner notifications shown while the app is open."
+  },
+  "notificationInAppBannerDescription": "Show a banner inside the app while it is open.",
+  "@notificationInAppBannerDescription": {
+    "description": "Toggle description for in-app banners."
+  },
+  "notificationSystemTitle": "System notifications",
+  "@notificationSystemTitle": {
+    "description": "Toggle title for OS-level notifications shown when the app is backgrounded."
+  },
+  "notificationSystemDescription": "Show notifications outside the app when it is in the background.",
+  "@notificationSystemDescription": {
+    "description": "Toggle description for system notifications."
+  },
+  "notificationChatTitle": "Chat responses",
+  "@notificationChatTitle": {
+    "description": "Toggle title for notifications when an assistant response finishes."
+  },
+  "notificationChatDescription": "Notify when a response finishes in a chat you are not viewing.",
+  "@notificationChatDescription": {
+    "description": "Toggle description for chat-response notifications."
+  },
+  "notificationChannelTitle": "Channel messages",
+  "@notificationChannelTitle": {
+    "description": "Toggle title for notifications when a new channel or DM message arrives."
+  },
+  "notificationChannelDescription": "Notify when someone sends a message in a channel or DM.",
+  "@notificationChannelDescription": {
+    "description": "Toggle description for channel-message notifications."
+  },
+  "notificationChannelMessagesName": "Messages",
+  "@notificationChannelMessagesName": {
+    "description": "Android notification channel name for chat and channel messages."
+  },
+  "notificationChannelMessagesDescription": "Replies, channel messages, and finished responses",
+  "@notificationChannelMessagesDescription": {
+    "description": "Android notification channel description for messages."
+  },
+  "notificationDefaultTitle": "New message",
+  "@notificationDefaultTitle": {
+    "description": "Fallback notification title when the source provides none."
+  },
+  "notificationViewAction": "View",
+  "@notificationViewAction": {
+    "description": "Action label on an in-app notification banner that opens the target."
+  },
+  "notificationsPermissionDenied": "Notifications are turned off in system settings.",
+  "@notificationsPermissionDenied": {
+    "description": "Shown when the user enables notifications but the OS permission was denied."
   }
 }

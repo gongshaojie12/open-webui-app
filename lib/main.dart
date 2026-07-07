@@ -11,15 +11,21 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'core/providers/app_providers.dart';
 import 'core/persistence/hive_bootstrap.dart';
+import 'core/persistence/hive_prefs_migrator.dart';
 import 'core/persistence/persistence_migrator.dart';
 import 'core/persistence/persistence_providers.dart';
+import 'core/persistence/preferences_store.dart';
 import 'core/router/app_router.dart';
 import 'core/services/native_sheet_bridge.dart';
 import 'core/services/native_sheet_hydration_service.dart';
 import 'core/services/performance_profiler.dart';
 import 'core/services/carplay_service.dart';
 import 'core/services/settings_service.dart';
+import 'core/sync/request_completion_runner_provider.dart';
+import 'core/utils/tts_voice_utils.dart';
+import 'core/utils/current_localizations.dart';
 import 'features/auth/providers/unified_auth_providers.dart';
+import 'features/chat/services/request_completion_runner.dart';
 import 'features/chat/providers/text_to_speech_provider.dart';
 import 'features/chat/providers/chat_providers.dart' show restoreDefaultModel;
 import 'features/tools/providers/tools_providers.dart';
@@ -30,6 +36,7 @@ import 'core/models/tool.dart';
 import 'package:conduit/l10n/app_localizations.dart';
 import 'core/services/quick_actions_service.dart';
 import 'core/providers/app_startup_providers.dart';
+import 'features/notifications/services/local_notification_service.dart';
 
 const bool _enableFlutterDriverExtension = bool.fromEnvironment(
   'ENABLE_FLUTTER_DRIVER_EXTENSION',
@@ -160,9 +167,18 @@ void main() {
       final hiveBoxes = await HiveBootstrap.instance.ensureInitialized();
       _startupTimeline?.instant('hive_ready');
 
-      // Run migration check (now fast-pathed after first run)
+      // Preload shared_preferences so synchronous preference reads (theme,
+      // locale, settings, drawer/sidebar state) are available before the first
+      // build. MUST complete before the ProviderContainer is created.
+      await PreferencesStore.ensureInitialized();
+      _startupTimeline?.instant('prefs_ready');
+
+      // Run migration checks (fast-pathed after first run).
       final migrator = PersistenceMigrator(hiveBoxes: hiveBoxes);
       await migrator.migrateIfNeeded();
+      // Copy Hive-resident preferences into shared_preferences (PR-1 of the
+      // Hive removal). Runs once; gated + crash-safe.
+      await HivePrefsMigrator(hiveBoxes: hiveBoxes).migrateIfNeeded();
       _startupTimeline?.instant('migration_complete');
 
       // Finish timeline after first frame paints
@@ -176,6 +192,12 @@ void main() {
         overrides: [
           secureStorageProvider.overrideWithValue(secureStorage),
           hiveBoxesProvider.overrideWithValue(hiveBoxes),
+          // Inversion seam (E3): the core/sync drainer reads the no-op
+          // RequestCompletionRunner stub; bind it to the chat implementation so
+          // queued completions re-enter the streaming pipeline.
+          requestCompletionRunnerProvider.overrideWith(
+            (ref) => ref.watch(chatRequestCompletionRunnerProvider),
+          ),
         ],
       );
       // CarPlay can cold-launch Conduit without a visible Flutter scene, so
@@ -268,11 +290,42 @@ class _ConduitAppState extends ConsumerState<ConduitApp> {
     } catch (error, stackTrace) {
       DebugLogger.error(
         'native-edit-profile-commit-failed',
-        scope: 'native-sheet',
+        scope: 'native/sheet',
         error: error,
         stackTrace: stackTrace,
       );
     }
+  }
+
+  /// Mirrors the three Open WebUI-aligned notification prefs to the server when
+  /// toggled from the iOS native sheet. Fire-and-forget: local persistence has
+  /// already succeeded, so a failed sync only loses cross-device parity.
+  void _syncNotificationPrefsToServer({
+    bool? enabled,
+    bool? sound,
+    bool? soundAlways,
+  }) {
+    final api = ref.read(apiServiceProvider);
+    if (api == null) return;
+    unawaited(
+      api
+          .updateUserNotificationSettings(
+            notificationEnabled: enabled,
+            notificationSound: sound,
+            notificationSoundAlways: soundAlways,
+          )
+          .then(
+            (_) {},
+            onError: (Object e, StackTrace st) {
+              DebugLogger.error(
+                'failed to sync notification prefs to server',
+                error: e,
+                stackTrace: st,
+                scope: 'notifications/settings',
+              );
+            },
+          ),
+    );
   }
 
   Future<void> _handleNativeSheetControlChanged(
@@ -282,6 +335,13 @@ class _ConduitAppState extends ConsumerState<ConduitApp> {
     try {
       if (event.id.startsWith('tts-voice-pick:')) {
         await _handleNativeTtsVoicePick(event);
+        return;
+      }
+
+      if (event.id == 'tts-voice-picker' && value is String) {
+        await _handleNativeTtsVoiceSelection(
+          value == '__default__' ? ttsSystemDefaultVoiceId : value,
+        );
         return;
       }
 
@@ -425,7 +485,7 @@ class _ConduitAppState extends ConsumerState<ConduitApp> {
             } else {
               DebugLogger.validation(
                 'Ignoring invalid native STT language code',
-                scope: 'native-sheet',
+                scope: 'native/sheet',
                 data: {'value': value},
               );
               await _refreshNativeVoiceDetail();
@@ -434,11 +494,10 @@ class _ConduitAppState extends ConsumerState<ConduitApp> {
         case 'tts-engine':
           final notifier = ref.read(appSettingsProvider.notifier);
           if (value == TtsEngine.server.name) {
-            await notifier.setTtsVoice(null);
-            await notifier.setTtsEngine(TtsEngine.server);
+            await notifier.setTtsEngineSelection(TtsEngine.server);
             await _refreshNativeVoiceDetail();
           } else if (value == TtsEngine.device.name) {
-            await notifier.setTtsEngine(TtsEngine.device);
+            await notifier.setTtsEngineSelection(TtsEngine.device);
             await _refreshNativeVoiceDetail();
           }
         case 'theme-light':
@@ -483,6 +542,57 @@ class _ConduitAppState extends ConsumerState<ConduitApp> {
                 .read(appSettingsProvider.notifier)
                 .setDisableHapticsWhileStreaming(value);
           }
+        case 'notifications-enabled':
+          if (value is bool) {
+            await ref
+                .read(appSettingsProvider.notifier)
+                .setNotificationsEnabled(value);
+            _syncNotificationPrefsToServer(enabled: value);
+            if (value) {
+              // Best-effort OS permission on opt-in; OS governs delivery.
+              await ref
+                  .read(localNotificationServiceProvider)
+                  .requestPermissions();
+            }
+          }
+        case 'notification-in-app-banner':
+          if (value is bool) {
+            await ref
+                .read(appSettingsProvider.notifier)
+                .setNotificationInAppBanner(value);
+          }
+        case 'notification-system':
+          if (value is bool) {
+            await ref
+                .read(appSettingsProvider.notifier)
+                .setNotificationSystem(value);
+          }
+        case 'notification-sound':
+          if (value is bool) {
+            await ref
+                .read(appSettingsProvider.notifier)
+                .setNotificationSound(value);
+            _syncNotificationPrefsToServer(sound: value);
+          }
+        case 'notification-sound-always':
+          if (value is bool) {
+            await ref
+                .read(appSettingsProvider.notifier)
+                .setNotificationSoundAlways(value);
+            _syncNotificationPrefsToServer(soundAlways: value);
+          }
+        case 'notification-chat':
+          if (value is bool) {
+            await ref
+                .read(appSettingsProvider.notifier)
+                .setNotificationChatEnabled(value);
+          }
+        case 'notification-channel':
+          if (value is bool) {
+            await ref
+                .read(appSettingsProvider.notifier)
+                .setNotificationChannelEnabled(value);
+          }
         case 'transport-auto':
           await ref
               .read(appSettingsProvider.notifier)
@@ -509,7 +619,7 @@ class _ConduitAppState extends ConsumerState<ConduitApp> {
     } catch (error, stackTrace) {
       DebugLogger.error(
         'native-sheet-control-failed',
-        scope: 'native-sheet',
+        scope: 'native/sheet',
         error: error,
         stackTrace: stackTrace,
       );
@@ -559,28 +669,63 @@ class _ConduitAppState extends ConsumerState<ConduitApp> {
   ) async {
     final encoded = event.id.substring('tts-voice-pick:'.length);
     final voiceKey = Uri.decodeComponent(encoded);
+    final fallbackDisplayName = event.value is String
+        ? event.value as String
+        : null;
+    await _handleNativeTtsVoiceSelection(
+      voiceKey == '__default__' ? ttsSystemDefaultVoiceId : voiceKey,
+      fallbackDisplayName: fallbackDisplayName,
+    );
+  }
+
+  Future<void> _handleNativeTtsVoiceSelection(
+    String voiceKey, {
+    String? fallbackDisplayName,
+  }) async {
     final settings = ref.read(appSettingsProvider);
     final notifier = ref.read(appSettingsProvider.notifier);
 
-    if (voiceKey == '__default__') {
+    if (voiceKey == ttsSystemDefaultVoiceId) {
       if (settings.ttsEngine == TtsEngine.server) {
-        await notifier.setTtsServerVoiceId(null);
-        await notifier.setTtsServerVoiceName(null);
+        await notifier.setTtsServerVoiceSelection(null, null);
       } else {
-        await notifier.setTtsVoice(null);
+        await notifier.setTtsDeviceVoiceSelection(null, null);
       }
+      await _refreshNativeVoiceDetail();
       return;
     }
 
-    final displayName = event.value is String
-        ? event.value as String
-        : voiceKey;
-    if (settings.ttsEngine == TtsEngine.server) {
-      await notifier.setTtsServerVoiceId(voiceKey);
-      await notifier.setTtsServerVoiceName(displayName);
-    } else {
-      await notifier.setTtsVoice(voiceKey);
+    var selectedId = voiceKey;
+    var displayName = fallbackDisplayName ?? voiceKey;
+    final l10n = currentAppLocalizations();
+    try {
+      final ttsService = ref.read(textToSpeechServiceProvider);
+      await ttsService.updateSettings(engine: settings.ttsEngine);
+      final voices = await ttsService.getAvailableVoices();
+      final selected = findTtsVoiceOption(
+        l10n,
+        settings.ttsEngine,
+        voices,
+        voiceKey,
+      );
+      if (selected != null) {
+        selectedId = selected.id;
+        displayName = selected.label;
+      }
+    } catch (error, stackTrace) {
+      DebugLogger.warning(
+        'native-tts-voice-selection-lookup-failed',
+        scope: 'native/sheet',
+        data: {'error': error, 'stackTrace': stackTrace},
+      );
     }
+
+    if (settings.ttsEngine == TtsEngine.server) {
+      await notifier.setTtsServerVoiceSelection(selectedId, displayName);
+    } else {
+      await notifier.setTtsDeviceVoiceSelection(selectedId, displayName);
+    }
+    await _refreshNativeVoiceDetail();
   }
 
   void _initializeAppState() {

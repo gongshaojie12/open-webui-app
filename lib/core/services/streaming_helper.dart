@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/models/chat_message.dart';
+import '../../core/models/conversation.dart';
 import '../../core/providers/app_providers.dart' show isTemporaryChat;
 import '../../core/services/socket_service.dart';
 import '../../core/utils/tool_calls_parser.dart';
@@ -20,8 +21,11 @@ import '../utils/debug_logger.dart';
 import '../utils/embed_utils.dart';
 import '../utils/openwebui_source_parser.dart';
 import 'openwebui_stream_parser.dart';
+import 'semantic_message_builder.dart';
 import 'streaming_response_controller.dart';
 import 'api_service.dart';
+import 'structured_output.dart';
+import 'structured_output_renderer.dart';
 import 'worker_manager.dart';
 
 // Keep local verbosity toggle for socket logs
@@ -149,31 +153,19 @@ List<ChatSourceReference> _mergeSourceReferences({
   return List<ChatSourceReference>.unmodifiable(merged);
 }
 
-const HtmlEscape _htmlContentEscape = HtmlEscape();
-
 String _buildStreamingReasoningDetails(
   String reasoningContent, {
   required bool done,
   int duration = 0,
 }) {
-  final normalizedReasoning = reasoningContent.trim();
-  final escapedDisplay = normalizedReasoning.isEmpty
-      ? ''
-      : _htmlContentEscape.convert(
-          LineSplitter.split(
-            normalizedReasoning,
-          ).map((line) => line.startsWith('>') ? line : '> $line').join('\n'),
-        );
-  if (done) {
-    return '<details type="reasoning" done="true" duration="$duration">\n'
-        '<summary>Thought for $duration seconds</summary>\n'
-        '$escapedDisplay\n'
-        '</details>\n';
-  }
-  return '<details type="reasoning" done="false">\n'
-      '<summary>Thinking…</summary>\n'
-      '$escapedDisplay\n'
-      '</details>\n';
+  final rendered = renderSemanticMessageBlocks([
+    SemanticDetailsBlock.reasoning(
+      text: reasoningContent,
+      done: done,
+      duration: '$duration',
+    ),
+  ]);
+  return rendered.isEmpty ? '' : '$rendered\n';
 }
 
 String _prependReasoningDetails(String prefix, String reasoningDetails) {
@@ -425,6 +417,10 @@ ActiveChatStream attachUnifiedChunkedStreaming({
   /// Called when a `chat:active` event is received, indicating a background
   /// task has started (active=true) or completed (active=false).
   void Function(String? chatId, bool active)? onChatActiveChanged,
+  // Fired when a foreign server-assigned message_id is bound to the local
+  // assistant (notably during socket resume). Lets the caller's poll fallback
+  // resolve server messages by the bound id if the socket later dies.
+  void Function(String remoteMessageId)? onRemoteMessageBound,
   required void Function() completeStreamingUi,
   required void Function() finishStreaming,
   required List<ChatMessage> Function() getMessages,
@@ -441,15 +437,26 @@ ActiveChatStream attachUnifiedChunkedStreaming({
 
   /// Whether tools are enabled (needs longer watchdog window).
   bool toolsEnabled = false,
+
+  /// Pull-through snapshot fetch (CDT-RFC-001 Phase 1): persists the chat via
+  /// `upsertServerChat` under the chat lock and returns the assembled
+  /// conversation. When null or when it yields null (engine inert), the
+  /// legacy direct `api.getConversation` fetch is used instead.
+  Future<Conversation?> Function(String chatId)? pullChatSnapshot,
 }) {
   // Track if streaming has been finished to avoid duplicate cleanup
   bool hasFinished = false;
   bool hasCompletedStreamingUi = false;
   bool completionDoneHandled = false;
   bool delayedDoneRecoveryScheduled = false;
+  bool postCompletionSnapshotRefreshScheduled = false;
   bool isObsoleteStream = false;
   bool backgroundExecutionStopped = false;
   Timer? terminalCompletionRecoveryTimer;
+  bool terminalRecoveryAllowContentOnlyTerminal = false;
+  bool terminalRecoveryAllowStableNonTerminalLocalFallback = false;
+  bool terminalRecoveryInferDoneFromMissingStreaming = false;
+  Future<void>? chatCompletedSyncFuture;
   int stableNonTerminalTerminalRecoveryCount = 0;
   String? stableNonTerminalTerminalRecoverySignature;
   var currentStreamSessionId = sessionId;
@@ -534,6 +541,7 @@ ActiveChatStream attachUnifiedChunkedStreaming({
       return;
     }
     boundRemoteMessageId = candidateId;
+    onRemoteMessageBound?.call(candidateId);
     DebugLogger.log(
       'Binding $source server message $candidateId '
       'to local assistant $assistantMessageId',
@@ -580,6 +588,33 @@ ActiveChatStream attachUnifiedChunkedStreaming({
 
     return candidate;
   }
+
+  /// Extracts an id that [SocketService] may deliver at the envelope level OR
+  /// nested under `data` / `data.data`. Mirrors the session-id walk above so
+  /// chat/message scoping cannot be bypassed by a nested-id event.
+  String? extractNestedEventId(
+    Map<String, dynamic> event,
+    String snakeKey,
+    String camelKey,
+  ) {
+    String? candidate =
+        event[snakeKey]?.toString() ?? event[camelKey]?.toString();
+    final data = event['data'];
+    if (candidate == null && data is Map) {
+      candidate = data[snakeKey]?.toString() ?? data[camelKey]?.toString();
+      final inner = data['data'];
+      if (candidate == null && inner is Map) {
+        candidate = inner[snakeKey]?.toString() ?? inner[camelKey]?.toString();
+      }
+    }
+    return candidate;
+  }
+
+  String? extractEventMessageId(Map<String, dynamic> event) =>
+      extractNestedEventId(event, 'message_id', 'messageId');
+
+  String? extractEventChatId(Map<String, dynamic> event) =>
+      extractNestedEventId(event, 'chat_id', 'chatId');
 
   bool streamHasBeenSuperseded() {
     final currentTargetId = currentAssistantTargetId();
@@ -633,6 +668,7 @@ ActiveChatStream attachUnifiedChunkedStreaming({
 
     if (boundRemoteMessageId == null) {
       boundRemoteMessageId = incomingMessageId;
+      onRemoteMessageBound?.call(incomingMessageId);
       DebugLogger.log(
         'Binding $eventType server message $incomingMessageId '
         'to local assistant $assistantMessageId',
@@ -674,6 +710,16 @@ ActiveChatStream attachUnifiedChunkedStreaming({
   void Function() syncImages = () {};
   void Function() updateImagesFromCurrentContent = () {};
 
+  String initialPlainStreamingContent(String content) {
+    if (!content.contains('<details')) {
+      return content;
+    }
+    final semanticDetailsPattern = RegExp(
+      r'''<details\b(?=[^>]*\btype\s*=\s*["'](?:reasoning|tool_calls|code_interpreter|openai_builtin_tool)["'])[\s\S]*?</details>\s*''',
+    );
+    return content.replaceAll(semanticDetailsPattern, '').trim();
+  }
+
   var renderedStreamingContent = (() {
     final visibleContent = getVisibleStreamingContent();
     if (visibleContent != null) {
@@ -685,6 +731,11 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     }
     return messages.last.content;
   })();
+  var plainStreamingContent = initialPlainStreamingContent(
+    renderedStreamingContent,
+  );
+  var renderedFromStructuredOutput = false;
+  final seenStreamingToolCallKeys = <String>{};
   var inReasoningBlock = false;
   var reasoningPrefix = '';
   var reasoningContent = '';
@@ -702,26 +753,141 @@ ActiveChatStream attachUnifiedChunkedStreaming({
         (renderedStreamingContent.isEmpty ||
             visibleContent.length >= renderedStreamingContent.length)) {
       renderedStreamingContent = visibleContent;
+      if (!renderedFromStructuredOutput) {
+        plainStreamingContent = visibleContent;
+      }
       return;
     }
     final messages = getMessages();
     if (messages.isEmpty || messages.last.role != 'assistant') {
       renderedStreamingContent = '';
+      plainStreamingContent = '';
       return;
     }
     renderedStreamingContent = messages.last.content;
+    if (!renderedFromStructuredOutput) {
+      plainStreamingContent = messages.last.content;
+    }
   }
 
   void replaceVisibleAssistantContent(
     String content, {
     bool updateImages = true,
+    bool fromStructuredOutput = false,
+    String? plainContent,
   }) {
     resetStreamingReasoning();
     renderedStreamingContent = content;
+    renderedFromStructuredOutput = fromStructuredOutput;
+    if (plainContent != null) {
+      plainStreamingContent = plainContent;
+    } else if (!fromStructuredOutput) {
+      plainStreamingContent = content;
+      seenStreamingToolCallKeys.clear();
+    } else if (content.isEmpty) {
+      plainStreamingContent = '';
+    }
     replaceLastMessageContent(content);
     if (updateImages) {
       updateImagesFromCurrentContent();
     }
+  }
+
+  bool containsRenderedSemanticDetails(String content) {
+    if (!content.contains('<details')) {
+      return false;
+    }
+    return RegExp(
+      r'''<details\b(?=[^>]*\btype\s*=\s*["'](?:reasoning|tool_calls|code_interpreter|openai_builtin_tool)["'])''',
+    ).hasMatch(content);
+  }
+
+  String stripRenderedSemanticDetails(String content) {
+    if (!content.contains('<details')) {
+      return content;
+    }
+    final semanticDetailsPattern = RegExp(
+      r'''<details\b(?=[^>]*\btype\s*=\s*["'](?:reasoning|tool_calls|code_interpreter|openai_builtin_tool)["'])[\s\S]*?</details>\s*''',
+    );
+    return content.replaceAll(semanticDetailsPattern, '').trim();
+  }
+
+  void replaceVisibleAssistantStructuredOutput(
+    List<StructuredOutputBlock> blocks,
+  ) {
+    if (blocks.isEmpty) return;
+
+    final hasDetails = structuredOutputBlocksContainDetails(blocks);
+    final renderedSnapshot = renderStructuredOutputBlocks(blocks);
+    final snapshotPlainText = structuredOutputBlocksPlainText(blocks);
+    final hasPlainContent = plainStreamingContent.trim().isNotEmpty;
+    final replacementPlainText =
+        snapshotPlainText.trim().isNotEmpty &&
+            snapshotPlainText.length > plainStreamingContent.length
+        ? snapshotPlainText
+        : plainStreamingContent;
+    final fullSnapshotPlainText = snapshotPlainText.trim().isNotEmpty
+        ? snapshotPlainText
+        : replacementPlainText;
+    final shouldRenderFullSnapshot =
+        renderedStreamingContent.trim().isEmpty ||
+        renderedFromStructuredOutput ||
+        !hasPlainContent;
+    final visibleHasStaleDetails =
+        !hasDetails &&
+        renderedStreamingContent != renderedSnapshot &&
+        containsRenderedSemanticDetails(renderedStreamingContent);
+    final strippedVisibleContent = visibleHasStaleDetails
+        ? stripRenderedSemanticDetails(renderedStreamingContent)
+        : '';
+    final strippedVisibleContentMatchesSnapshot =
+        strippedVisibleContent.isNotEmpty &&
+        (renderedSnapshot.trim().isEmpty ||
+            strippedVisibleContent.contains(renderedSnapshot));
+    final outputContent = hasDetails
+        ? shouldRenderFullSnapshot
+              ? renderedSnapshot
+              : renderStructuredOutputBlocksWithContent(
+                  blocks,
+                  replacementPlainText,
+                )
+        : visibleHasStaleDetails
+        ? strippedVisibleContentMatchesSnapshot
+              ? strippedVisibleContent
+              : renderedSnapshot
+        : renderedSnapshot != plainStreamingContent
+        ? renderedSnapshot
+        : '';
+    if (outputContent.isEmpty) return;
+    final renderedToolCallKeys = blocks
+        .whereType<StructuredOutputToolCallBlock>()
+        .map((block) {
+          final id = block.id.trim();
+          if (id.isNotEmpty) {
+            return 'id:$id';
+          }
+          final name = block.name.trim();
+          return name.isEmpty ? null : 'name:$name';
+        })
+        .nonNulls
+        .toSet();
+    if (renderedToolCallKeys.isEmpty) {
+      seenStreamingToolCallKeys.clear();
+    } else {
+      seenStreamingToolCallKeys
+        ..clear()
+        ..addAll(renderedToolCallKeys);
+    }
+
+    replaceVisibleAssistantContent(
+      outputContent,
+      fromStructuredOutput: shouldRenderFullSnapshot,
+      plainContent: hasDetails
+          ? shouldRenderFullSnapshot
+                ? fullSnapshotPlainText
+                : replacementPlainText
+          : snapshotPlainText,
+    );
   }
 
   void finalizeStreamingReasoning({
@@ -779,7 +945,12 @@ ActiveChatStream attachUnifiedChunkedStreaming({
   // HTTP subscription is tracked separately and cleaned up in disposeSocketSubscriptions.
   final socketSubscriptions = <VoidCallback>[];
   final hasSocketSignals = socketService != null;
-  late final void Function({required String source})
+  late final void Function({
+    required String source,
+    bool allowContentOnlyTerminal,
+    bool allowStableNonTerminalLocalFallback,
+    bool inferDoneFromMissingStreaming,
+  })
   scheduleTerminalCompletionRecovery;
 
   void resetTerminalCompletionRecoveryStability() {
@@ -787,8 +958,15 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     stableNonTerminalTerminalRecoverySignature = null;
   }
 
-  void appendVisibleAssistantChunk(String chunk, {bool updateImages = true}) {
+  void appendVisibleAssistantChunk(
+    String chunk, {
+    bool updateImages = true,
+    bool includeInPlainContent = true,
+  }) {
     if (chunk.isEmpty) return;
+    if (includeInPlainContent) {
+      renderedFromStructuredOutput = false;
+    }
 
     if (inReasoningBlock) {
       renderedStreamingContent =
@@ -797,10 +975,16 @@ ActiveChatStream attachUnifiedChunkedStreaming({
             _buildStreamingReasoningDetails(reasoningContent, done: true),
           ) +
           chunk;
+      if (includeInPlainContent) {
+        plainStreamingContent += chunk;
+      }
       replaceLastMessageContent(renderedStreamingContent);
       resetStreamingReasoning();
     } else {
       renderedStreamingContent += chunk;
+      if (includeInPlainContent) {
+        plainStreamingContent += chunk;
+      }
       appendToLastMessage(chunk);
     }
 
@@ -839,12 +1023,42 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     }
   }
 
-  void handleToolCallStatus(String name) {
+  String? toolCallNameFromPayload(Map<dynamic, dynamic> call) {
+    final function = call['function'];
+    final rawName = function is Map ? function['name'] : call['name'];
+    final name = rawName?.toString().trim();
+    return name == null || name.isEmpty ? null : name;
+  }
+
+  String? toolCallKeyFromPayload(Map<dynamic, dynamic> call) {
+    final rawId = call['id'] ?? call['call_id'] ?? call['tool_call_id'];
+    final id = rawId?.toString().trim();
+    if (id != null && id.isNotEmpty) {
+      return 'id:$id';
+    }
+    final name = toolCallNameFromPayload(call);
+    return name == null ? null : 'name:$name';
+  }
+
+  void handleToolCallStatus(String name, {String? key}) {
     if (name.isEmpty) return;
-    final status =
-        '\n<details type="tool_calls" done="false" '
-        'name="$name"><summary>Executing...</summary>\n</details>\n';
-    appendVisibleAssistantChunk(status, updateImages: false);
+    final toolCallKey = key?.trim().isNotEmpty == true ? key! : 'name:$name';
+    if (!seenStreamingToolCallKeys.add(toolCallKey)) {
+      return;
+    }
+    final status = renderSemanticMessageBlocks([
+      SemanticDetailsBlock.toolCall(
+        id: '',
+        name: name,
+        arguments: null,
+        done: false,
+      ),
+    ]);
+    appendVisibleAssistantChunk(
+      '\n$status\n',
+      updateImages: false,
+      includeInPlainContent: false,
+    );
   }
 
   void handleStreamingToolCallStatuses(dynamic rawToolCalls) {
@@ -853,18 +1067,12 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     }
 
     for (final call in rawToolCalls) {
-      if (call is! Map<String, dynamic>) {
+      if (call is! Map) {
         continue;
       }
-      final fn = call['function'];
-      final name = (fn is Map && fn['name'] is String)
-          ? fn['name'] as String
-          : null;
-      if (name is String && name.isNotEmpty) {
-        final exists = renderedStreamingContent.contains('name="$name"');
-        if (!exists) {
-          handleToolCallStatus(name);
-        }
+      final name = toolCallNameFromPayload(call);
+      if (name != null) {
+        handleToolCallStatus(name, key: toolCallKeyFromPayload(call));
       }
     }
   }
@@ -901,13 +1109,14 @@ ActiveChatStream attachUnifiedChunkedStreaming({
       case OpenWebUIReasoningDelta(:final content):
         applyStreamingReasoningDelta(content);
 
-      case OpenWebUIOutputUpdate(:final output):
+      case OpenWebUIOutputUpdate(:final output, :final blocks):
         final normalizedOutput = _normalizeJsonMapList(output);
         if (normalizedOutput.isNotEmpty) {
           applyAssistantServerPatch(
             targetId: assistantMessageId,
             buildPatch: (_) => _AssistantServerPatch(output: normalizedOutput),
           );
+          replaceVisibleAssistantStructuredOutput(blocks);
         }
 
       case OpenWebUIUsageUpdate(:final usage):
@@ -1246,6 +1455,7 @@ ActiveChatStream attachUnifiedChunkedStreaming({
   Future<_ServerMessageSnapshot?> pollServerForMessage({
     int attempt = 0,
     int maxAttempts = 3,
+    bool inferDoneFromMissingStreaming = true,
   }) async {
     if (isObsoleteStream) {
       return null;
@@ -1298,7 +1508,9 @@ ActiveChatStream attachUnifiedChunkedStreaming({
       final isDone =
           serverMsg['done'] == true ||
           errorContent != null ||
-          (serverMsg['isStreaming'] != true && content.isNotEmpty);
+          (inferDoneFromMissingStreaming &&
+              serverMsg['isStreaming'] != true &&
+              content.isNotEmpty);
 
       return (
         content: content,
@@ -1322,6 +1534,7 @@ ActiveChatStream attachUnifiedChunkedStreaming({
         return pollServerForMessage(
           attempt: attempt + 1,
           maxAttempts: maxAttempts,
+          inferDoneFromMissingStreaming: inferDoneFromMissingStreaming,
         );
       }
 
@@ -1502,7 +1715,18 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     }
     refreshingSnapshot = true;
     try {
-      final conversation = await api.getConversation(chatId);
+      // The server save already happened via POST /api/chat/completed; the
+      // pull persists the resulting blob locally (under the chat lock) and
+      // returns it for the followUps/sources/usage patch below.
+      Conversation? pulled;
+      if (pullChatSnapshot != null) {
+        try {
+          pulled = await pullChatSnapshot(chatId);
+        } catch (_) {
+          pulled = null;
+        }
+      }
+      final conversation = pulled ?? await api.getConversation(chatId);
       if (isObsoleteStream) {
         return;
       }
@@ -1550,7 +1774,9 @@ ActiveChatStream attachUnifiedChunkedStreaming({
           // Preserve existing usage if server doesn't have it yet (issue #274)
           // Usage is captured from streaming but may not be persisted on server
           final effectiveUsage = assistant.usage ?? current.usage;
-          final nextFollowUps = List<String>.from(assistant.followUps);
+          final nextFollowUps = assistant.followUps.isNotEmpty
+              ? List<String>.from(assistant.followUps)
+              : current.followUps;
           final nextStatusHistory = assistant.statusHistory.isNotEmpty
               ? assistant.statusHistory
               : current.isStreaming
@@ -1583,7 +1809,10 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     }
   }
 
-  bool finishFromLocalState({required bool allowContentOnlyTerminal}) {
+  bool finishFromLocalState({
+    required bool allowContentOnlyTerminal,
+    bool allowAlreadyNonStreamingTerminal = true,
+  }) {
     if (isObsoleteStream) {
       return false;
     }
@@ -1595,7 +1824,7 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     final comparisonSnapshot = readLocalMessageComparisonSnapshot(msgs.last);
     final last = comparisonSnapshot.message;
     if (!last.isStreaming) {
-      return true;
+      return allowAlreadyNonStreamingTerminal;
     }
 
     final hasNonTextTerminalArtifacts =
@@ -1622,6 +1851,8 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     bool allowContentOnlyTerminal = false,
     bool allowLocalContentFallbackAfterPollFailedOrMissing = false,
     bool allowLocalContentFallbackAfterNonTerminalSnapshot = false,
+    bool allowStableNonTerminalLocalFallback = true,
+    bool inferDoneFromMissingStreaming = true,
     bool retryWhenSnapshotStillStreaming = false,
   }) async {
     if (isObsoleteStream) {
@@ -1629,9 +1860,11 @@ ActiveChatStream attachUnifiedChunkedStreaming({
     }
     bool pollFailedOrMissing = true;
     bool snapshotIndicatedDone = false;
-    bool allowStableNonTerminalLocalFallback = false;
+    bool allowStableNonTerminalLocalFinish = false;
     try {
-      final result = await pollServerForMessage();
+      final result = await pollServerForMessage(
+        inferDoneFromMissingStreaming: inferDoneFromMissingStreaming,
+      );
       if (hasFinished || isObsoleteStream) {
         return;
       }
@@ -1687,9 +1920,10 @@ ActiveChatStream attachUnifiedChunkedStreaming({
             stableNonTerminalTerminalRecoverySignature = stabilitySignature;
             stableNonTerminalTerminalRecoveryCount = 1;
           }
-          allowStableNonTerminalLocalFallback =
+          allowStableNonTerminalLocalFinish =
+              allowStableNonTerminalLocalFallback &&
               stableNonTerminalTerminalRecoveryCount >=
-              debugTaskSocketStableNonTerminalRecoveryLimit;
+                  debugTaskSocketStableNonTerminalRecoveryLimit;
         } else {
           resetTerminalCompletionRecoveryStability();
         }
@@ -1727,9 +1961,10 @@ ActiveChatStream attachUnifiedChunkedStreaming({
         stableNonTerminalTerminalRecoverySignature = stabilitySignature;
         stableNonTerminalTerminalRecoveryCount = 1;
       }
-      allowStableNonTerminalLocalFallback =
+      allowStableNonTerminalLocalFinish =
+          allowStableNonTerminalLocalFallback &&
           stableNonTerminalTerminalRecoveryCount >=
-          debugTaskSocketStableNonTerminalRecoveryLimit;
+              debugTaskSocketStableNonTerminalRecoveryLimit;
     } else if (pollFailedOrMissing) {
       resetTerminalCompletionRecoveryStability();
     }
@@ -1739,9 +1974,11 @@ ActiveChatStream attachUnifiedChunkedStreaming({
         (allowLocalContentFallbackAfterPollFailedOrMissing ||
             snapshotIndicatedDone ||
             allowLocalContentFallbackAfterNonTerminalSnapshot ||
-            allowStableNonTerminalLocalFallback);
+            allowStableNonTerminalLocalFinish);
     if (finishFromLocalState(
       allowContentOnlyTerminal: shouldAllowLocalContentFallback,
+      allowAlreadyNonStreamingTerminal:
+          snapshotIndicatedDone || shouldAllowLocalContentFallback,
     )) {
       Future.microtask(refreshConversationSnapshot);
       return;
@@ -1752,42 +1989,72 @@ ActiveChatStream attachUnifiedChunkedStreaming({
         retryWhenSnapshotStillStreaming &&
         !snapshotIndicatedDone &&
         !shouldAllowLocalContentFallback) {
-      scheduleTerminalCompletionRecovery(source: source);
+      scheduleTerminalCompletionRecovery(
+        source: source,
+        allowContentOnlyTerminal: allowContentOnlyTerminal,
+        allowStableNonTerminalLocalFallback:
+            allowStableNonTerminalLocalFallback,
+        inferDoneFromMissingStreaming: inferDoneFromMissingStreaming,
+      );
     }
   }
 
-  scheduleTerminalCompletionRecovery = ({required String source}) {
-    if (hasFinished || isObsoleteStream) {
-      return;
-    }
-    if (terminalCompletionRecoveryTimer != null) {
-      return;
-    }
-
-    terminalCompletionRecoveryTimer = Timer(
-      debugTaskSocketTerminalRecoveryDelay,
-      () {
-        terminalCompletionRecoveryTimer = null;
+  scheduleTerminalCompletionRecovery =
+      ({
+        required String source,
+        bool allowContentOnlyTerminal = true,
+        bool allowStableNonTerminalLocalFallback = true,
+        bool inferDoneFromMissingStreaming = true,
+      }) {
         if (hasFinished || isObsoleteStream) {
           return;
         }
-        if (currentAssistantTargetId() != assistantMessageId) {
+        terminalRecoveryAllowContentOnlyTerminal = allowContentOnlyTerminal;
+        terminalRecoveryAllowStableNonTerminalLocalFallback =
+            allowStableNonTerminalLocalFallback;
+        terminalRecoveryInferDoneFromMissingStreaming =
+            inferDoneFromMissingStreaming;
+        if (terminalCompletionRecoveryTimer != null) {
           return;
         }
-        DebugLogger.log(
-          '$source: recovering after missed done/inactive',
-          scope: 'streaming/helper',
+
+        terminalCompletionRecoveryTimer = Timer(
+          debugTaskSocketTerminalRecoveryDelay,
+          () {
+            terminalCompletionRecoveryTimer = null;
+            if (hasFinished || isObsoleteStream) {
+              return;
+            }
+            if (currentAssistantTargetId() != assistantMessageId) {
+              return;
+            }
+            final recoveryAllowContentOnlyTerminal =
+                terminalRecoveryAllowContentOnlyTerminal;
+            final recoveryAllowStableNonTerminalLocalFallback =
+                terminalRecoveryAllowStableNonTerminalLocalFallback;
+            final recoveryInferDoneFromMissingStreaming =
+                terminalRecoveryInferDoneFromMissingStreaming;
+            terminalRecoveryAllowContentOnlyTerminal = false;
+            terminalRecoveryAllowStableNonTerminalLocalFallback = false;
+            terminalRecoveryInferDoneFromMissingStreaming = false;
+            DebugLogger.log(
+              '$source: recovering after missed done/inactive',
+              scope: 'streaming/helper',
+            );
+            unawaited(
+              recoverTaskSocketTerminalState(
+                source: source,
+                allowContentOnlyTerminal: recoveryAllowContentOnlyTerminal,
+                allowStableNonTerminalLocalFallback:
+                    recoveryAllowStableNonTerminalLocalFallback,
+                inferDoneFromMissingStreaming:
+                    recoveryInferDoneFromMissingStreaming,
+                retryWhenSnapshotStillStreaming: true,
+              ),
+            );
+          },
         );
-        unawaited(
-          recoverTaskSocketTerminalState(
-            source: source,
-            allowContentOnlyTerminal: true,
-            retryWhenSnapshotStillStreaming: true,
-          ),
-        );
-      },
-    );
-  };
+      };
 
   if (hasSocketSignals) {
     // Handle socket reconnection - update session IDs and check for missed events
@@ -2028,69 +2295,96 @@ ActiveChatStream attachUnifiedChunkedStreaming({
   /// OpenWebUI 0.9.1+ already persists outlet changes server-side, and
   /// pushing the local buffer back can truncate chats when the client only
   /// has a partial history snapshot in memory.
-  void sendChatCompletedAndSync() {
-    unawaited(
-      Future(() async {
-        if (isObsoleteStream) {
-          return;
+  Future<void> sendChatCompletedAndSync() async {
+    if (isObsoleteStream) {
+      return;
+    }
+    try {
+      // Build message list for the completed notification
+      final currentMessages = getMessages();
+      final messagesForCompleted = currentMessages.map((m) {
+        final msgMap = <String, dynamic>{
+          'id': m.id,
+          'role': m.role,
+          'content': m.content,
+          'timestamp': m.timestamp.millisecondsSinceEpoch ~/ 1000,
+        };
+        if (m.role == 'assistant' && m.usage != null) {
+          msgMap['usage'] = m.usage;
         }
-        try {
-          // Build message list for the completed notification
-          final currentMessages = getMessages();
-          final messagesForCompleted = currentMessages.map((m) {
-            final msgMap = <String, dynamic>{
-              'id': m.id,
-              'role': m.role,
-              'content': m.content,
-              'timestamp': m.timestamp.millisecondsSinceEpoch ~/ 1000,
+        if (m.sources.isNotEmpty) {
+          msgMap['sources'] = m.sources.map((s) => s.toJson()).toList();
+        }
+        return msgMap;
+      }).toList();
+
+      // 1. Send chatCompleted and AWAIT the response (outlet filters may
+      //    modify messages). OpenWebUI awaits this before saving.
+      final completedResp = await api.sendChatCompleted(
+        chatId: activeConversationId ?? '',
+        messageId: assistantMessageId,
+        messages: messagesForCompleted,
+        model: modelId,
+        modelItem: modelItem,
+        sessionId: currentStreamSessionId,
+        filterIds: filterIds,
+      );
+      if (isObsoleteStream) {
+        return;
+      }
+
+      // 2. Apply outlet filter modifications if any.
+      // OpenWebUI does a full object spread; we merge all returned fields.
+      final modifiedMsgs = completedResp?['messages'];
+      if (modifiedMsgs is List) {
+        for (final msg in modifiedMsgs) {
+          if (msg is! Map) continue;
+          final id = msg['id']?.toString();
+          if (id == null) continue;
+          updateMessageById(id, (current) {
+            final newContent = msg['content']?.toString();
+            if (newContent == null) return current;
+            if (current.content == newContent) return current;
+            // Preserve original content before filter modification
+            final meta = <String, dynamic>{
+              ...?current.metadata,
+              'originalContent': current.content,
             };
-            if (m.role == 'assistant' && m.usage != null) {
-              msgMap['usage'] = m.usage;
-            }
-            if (m.sources.isNotEmpty) {
-              msgMap['sources'] = m.sources.map((s) => s.toJson()).toList();
-            }
-            return msgMap;
-          }).toList();
+            return current.copyWith(content: newContent, metadata: meta);
+          });
+        }
+      }
+    } catch (e, st) {
+      DebugLogger.error(
+        'chat completion sync failed',
+        error: e,
+        stackTrace: st,
+        scope: 'chat/streaming',
+      );
+    }
+  }
 
-          // 1. Send chatCompleted and AWAIT the response (outlet filters may
-          //    modify messages). OpenWebUI awaits this before saving.
-          final completedResp = await api.sendChatCompleted(
-            chatId: activeConversationId ?? '',
-            messageId: assistantMessageId,
-            messages: messagesForCompleted,
-            model: modelId,
-            modelItem: modelItem,
-            sessionId: currentStreamSessionId,
-            filterIds: filterIds,
-          );
-          if (isObsoleteStream) {
-            return;
-          }
+  Future<void> ensureChatCompletedSynced() {
+    return chatCompletedSyncFuture ??= sendChatCompletedAndSync();
+  }
 
-          // 2. Apply outlet filter modifications if any.
-          // OpenWebUI does a full object spread; we merge all returned fields.
-          final modifiedMsgs = completedResp?['messages'];
-          if (modifiedMsgs is List) {
-            for (final msg in modifiedMsgs) {
-              if (msg is! Map) continue;
-              final id = msg['id']?.toString();
-              if (id == null) continue;
-              updateMessageById(id, (current) {
-                final newContent = msg['content']?.toString();
-                if (newContent == null) return current;
-                if (current.content == newContent) return current;
-                // Preserve original content before filter modification
-                final meta = <String, dynamic>{
-                  ...?current.metadata,
-                  'originalContent': current.content,
-                };
-                return current.copyWith(content: newContent, metadata: meta);
-              });
-            }
-          }
-        } catch (_) {}
-      }),
+  void schedulePostCompletionSnapshotRefresh() {
+    if (postCompletionSnapshotRefreshScheduled ||
+        isTemporaryChat(activeConversationId)) {
+      return;
+    }
+    postCompletionSnapshotRefreshScheduled = true;
+    unawaited(
+      ensureChatCompletedSynced()
+          .then((_) => refreshConversationSnapshot())
+          .catchError((Object error, StackTrace stackTrace) {
+            DebugLogger.error(
+              'post-completion-refresh-failed',
+              error: error,
+              stackTrace: stackTrace,
+              scope: 'chat/streaming',
+            );
+          }),
     );
   }
 
@@ -2234,6 +2528,14 @@ ActiveChatStream attachUnifiedChunkedStreaming({
         if (finishAfterRecovery &&
             !isObsoleteStream &&
             currentAssistantTargetId() == assistantMessageId) {
+          // Paired sidebar-spinner removal, mirroring the synchronous done
+          // path: this branch finalizes via wrappedFinishStreaming() after the
+          // early return at the top of handleCompletionDone, so without this
+          // the `generating` indicator would strand on the delayed-recovery
+          // path.
+          if (activeConversationId != null && activeConversationId.isNotEmpty) {
+            onChatActiveChanged?.call(activeConversationId, false);
+          }
           wrappedFinishStreaming();
         }
       }
@@ -2245,8 +2547,15 @@ ActiveChatStream attachUnifiedChunkedStreaming({
   void handleCompletionDone({
     String? doneTitle,
     bool allowEmptyContentRecovery = false,
+    bool refreshSnapshotAfterCompleted = false,
   }) {
-    if (hasFinished || completionDoneHandled) {
+    if (hasFinished) {
+      return;
+    }
+    if (completionDoneHandled) {
+      if (refreshSnapshotAfterCompleted) {
+        schedulePostCompletionSnapshotRefresh();
+      }
       return;
     }
     completionDoneHandled = true;
@@ -2257,11 +2566,12 @@ ActiveChatStream attachUnifiedChunkedStreaming({
 
     try {
       if (!isTemporaryChat(activeConversationId)) {
-        sendChatCompletedAndSync();
-        Future.delayed(
-          const Duration(milliseconds: 500),
-          refreshConversationSnapshot,
-        );
+        final completed = ensureChatCompletedSynced();
+        if (refreshSnapshotAfterCompleted) {
+          schedulePostCompletionSnapshotRefresh();
+        } else {
+          unawaited(completed);
+        }
       }
     } catch (_) {
       // Non-critical - continue if sync fails
@@ -2286,13 +2596,13 @@ ActiveChatStream attachUnifiedChunkedStreaming({
         scope: 'streaming/helper',
       );
       if (allowEmptyContentRecovery &&
-          lastContent.isEmpty &&
+          (lastContent.isEmpty || renderedFromStructuredOutput) &&
           last.error == null) {
         // Non-text artifacts can arrive before the final persisted answer text.
         // Only keep the UI open when the reply is otherwise blank; when files,
         // citations, or structured output are already present, finish now and
         // backfill any late text/error in the background.
-        final waitingForRecovery = !hasNonTextArtifacts;
+        final waitingForRecovery = lastContent.isEmpty && !hasNonTextArtifacts;
         if (scheduleDelayedDoneRecovery(
           finishAfterRecovery: waitingForRecovery,
         )) {
@@ -2301,6 +2611,15 @@ ActiveChatStream attachUnifiedChunkedStreaming({
           }
         }
       }
+    }
+
+    // Paired removal so the sidebar `generating` spinner clears on a normal
+    // success finalize even if the backend's `chat:active{false}` is dropped or
+    // late (it only fires when the LAST task for the chat finishes). Keeps the
+    // success path symmetric with the cancel + error branches and mirrors the
+    // optimistic START at the completion-POST dispatch site.
+    if (activeConversationId != null && activeConversationId.isNotEmpty) {
+      onChatActiveChanged?.call(activeConversationId, false);
     }
 
     wrappedFinishStreaming();
@@ -2316,7 +2635,7 @@ ActiveChatStream attachUnifiedChunkedStreaming({
       }
       finalizeStreamingReasoning();
       if (!isTemporaryChat(activeConversationId)) {
-        sendChatCompletedAndSync();
+        unawaited(ensureChatCompletedSynced());
       }
       wrappedFinishStreaming();
     }
@@ -2407,8 +2726,24 @@ ActiveChatStream attachUnifiedChunkedStreaming({
       final type = data['type'];
 
       final payload = data['data'];
-      final messageId = ev['message_id']?.toString();
+      // Read ids the same way SocketService delivers them — envelope level OR
+      // nested under data / data.data — so a nested message_id still binds and
+      // a nested chat_id can't bypass the chat-scope guard below.
+      final messageId = extractEventMessageId(ev);
       final incomingSessionId = extractEventSessionId(ev);
+
+      // Chat-scope guard: on the shared user socket, an event for a different
+      // chat must never bind to or write this stream's message (critical for
+      // resume, where session matching is permissive and a foreign message_id
+      // may bind). Events with no chat_id fall through to message-level checks.
+      final eventChatId = extractEventChatId(ev);
+      if (eventChatId != null &&
+          eventChatId.isNotEmpty &&
+          activeConversationId != null &&
+          activeConversationId.isNotEmpty &&
+          eventChatId != activeConversationId) {
+        return;
+      }
 
       if (isObsoleteStream) {
         return;
@@ -2484,25 +2819,7 @@ ActiveChatStream attachUnifiedChunkedStreaming({
           }
           if (payload.containsKey('tool_calls')) {
             if (completionTargetId != null) {
-              final tc = payload['tool_calls'];
-              if (tc is List) {
-                for (final call in tc) {
-                  if (call is Map<String, dynamic>) {
-                    final fn = call['function'];
-                    final name = (fn is Map && fn['name'] is String)
-                        ? fn['name'] as String
-                        : null;
-                    if (name is String && name.isNotEmpty) {
-                      final exists = renderedStreamingContent.contains(
-                        'name="$name"',
-                      );
-                      if (!exists) {
-                        handleToolCallStatus(name);
-                      }
-                    }
-                  }
-                }
-              }
+              handleStreamingToolCallStatuses(payload['tool_calls']);
             }
           }
           if (completionTargetId != null && payload.containsKey('choices')) {
@@ -2518,25 +2835,7 @@ ActiveChatStream attachUnifiedChunkedStreaming({
               }
               if (delta is Map) {
                 if (delta.containsKey('tool_calls')) {
-                  final tc = delta['tool_calls'];
-                  if (tc is List) {
-                    for (final call in tc) {
-                      if (call is Map<String, dynamic>) {
-                        final fn = call['function'];
-                        final name = (fn is Map && fn['name'] is String)
-                            ? fn['name'] as String
-                            : null;
-                        if (name is String && name.isNotEmpty) {
-                          final exists = renderedStreamingContent.contains(
-                            'name="$name"',
-                          );
-                          if (!exists) {
-                            handleToolCallStatus(name);
-                          }
-                        }
-                      }
-                    }
-                  }
+                  handleStreamingToolCallStatuses(delta['tool_calls']);
                 }
                 handleStreamingChoiceDelta(delta);
               }
@@ -2547,6 +2846,12 @@ ActiveChatStream attachUnifiedChunkedStreaming({
             if (raw.isNotEmpty) {
               replaceVisibleAssistantContent(raw);
             }
+          }
+          if (completionTargetId != null && normalizedOutputItems.isNotEmpty) {
+            final outputBlocks = parseOpenWebUIStructuredOutput(
+              normalizedOutputItems,
+            );
+            replaceVisibleAssistantStructuredOutput(outputBlocks);
           }
           if (terminalFinishReason != null && !hasFinished) {
             flushStreamingBuffer();
@@ -2618,6 +2923,13 @@ ActiveChatStream attachUnifiedChunkedStreaming({
             isStreaming: false,
           ),
         );
+        // Paired removal so the sidebar `generating` spinner clears on a
+        // stop/cancel even if the backend's `chat:active{false}` is dropped
+        // (it only fires when the LAST task for the chat finishes). Mirrors the
+        // optimistic START at the completion-POST dispatch site.
+        if (activeConversationId != null && activeConversationId.isNotEmpty) {
+          onChatActiveChanged?.call(activeConversationId, false);
+        }
         disposeSocketSubscriptions();
         wrappedFinishStreaming();
       } else if (type == 'chat:message:follow_ups' && payload != null) {
@@ -2830,6 +3142,12 @@ ActiveChatStream attachUnifiedChunkedStreaming({
             );
           });
         } catch (_) {}
+        // Paired removal: a terminal error means no `chat:active{false}` may
+        // arrive for this chat, so clear the sidebar spinner directly instead
+        // of stranding it (mirrors the cancel branch + the optimistic START).
+        if (activeConversationId != null && activeConversationId.isNotEmpty) {
+          onChatActiveChanged?.call(activeConversationId, false);
+        }
         // Ensure UI exits streaming state
         wrappedFinishStreaming();
       } else if ((type == 'chat:message:delta' || type == 'message') &&
@@ -3185,7 +3503,10 @@ ActiveChatStream attachUnifiedChunkedStreaming({
               update,
               onDone: () {
                 receivedDone = true;
-                handleCompletionDone(allowEmptyContentRecovery: true);
+                handleCompletionDone(
+                  allowEmptyContentRecovery: true,
+                  refreshSnapshotAfterCompleted: true,
+                );
               },
               onStructuredDoneEvent: () {
                 receivedDone = true;
@@ -3354,11 +3675,12 @@ ActiveChatStream attachUnifiedChunkedStreaming({
               '- waiting for socket done signal',
               scope: 'streaming/helper',
             );
-            if (hasCompletedStreamingUi) {
-              scheduleTerminalCompletionRecovery(
-                source: 'taskSocket HTTP completion recovery',
-              );
-            }
+            scheduleTerminalCompletionRecovery(
+              source: 'taskSocket HTTP completion recovery',
+              allowContentOnlyTerminal: false,
+              allowStableNonTerminalLocalFallback: false,
+              inferDoneFromMissingStreaming: false,
+            );
           }
         },
         onError: (error, stackTrace) async {
@@ -3452,6 +3774,12 @@ ActiveChatStream attachUnifiedChunkedStreaming({
           final normalizedOutputItems = _normalizeJsonMapList(
             payload['output'],
           );
+          if (normalizedOutputItems.isNotEmpty) {
+            final outputBlocks = parseOpenWebUIStructuredOutput(
+              normalizedOutputItems,
+            );
+            replaceVisibleAssistantStructuredOutput(outputBlocks);
+          }
           final selectedModelId = payload['selected_model_id']?.toString();
           final metadataPatch =
               selectedModelId != null && selectedModelId.isNotEmpty

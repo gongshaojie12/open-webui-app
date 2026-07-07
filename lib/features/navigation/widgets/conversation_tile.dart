@@ -51,6 +51,7 @@ class ConversationDragFeedback extends StatelessWidget {
         title: title,
         pinned: pinned,
         selected: false,
+        unread: false,
         isLoading: false,
         shrinkWrap: true,
       ),
@@ -69,8 +70,14 @@ class ConversationTileContent extends StatelessWidget {
   /// Whether this tile is currently selected.
   final bool selected;
 
+  /// Whether this conversation has unread updates.
+  final bool unread;
+
   /// Whether the conversation is loading.
   final bool isLoading;
+
+  /// Whether the conversation has an active generation running on the server.
+  final bool isGenerating;
 
   /// Whether the row should size itself to its contents instead of filling width.
   final bool shrinkWrap;
@@ -81,7 +88,9 @@ class ConversationTileContent extends StatelessWidget {
     required this.title,
     required this.pinned,
     required this.selected,
+    this.unread = false,
     required this.isLoading,
+    this.isGenerating = false,
     this.shrinkWrap = false,
   });
 
@@ -91,8 +100,8 @@ class ConversationTileContent extends StatelessWidget {
 
     // Enhanced typography with better visual hierarchy
     final textStyle = AppTypography.sidebarTitleStyle.copyWith(
-      color: selected ? theme.textPrimary : theme.textSecondary,
-      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+      color: (selected || unread) ? theme.textPrimary : theme.textSecondary,
+      fontWeight: (selected || unread) ? FontWeight.w600 : FontWeight.w400,
       height: 1.4,
     );
 
@@ -116,10 +125,16 @@ class ConversationTileContent extends StatelessWidget {
       ]);
     }
 
-    if (isLoading) {
+    // A server-side generation in progress shows the same spinner as a tile
+    // that's loading on tap (the tap-load state takes precedence so we never
+    // show two spinners).
+    if (isLoading || isGenerating) {
       trailingWidgets.addAll([
         const SizedBox(width: Spacing.sm),
         SizedBox(
+          key: isGenerating && !isLoading
+              ? const ValueKey<String>('conversation-generating-indicator')
+              : null,
           width: IconSize.sm,
           height: IconSize.sm,
           child: CircularProgressIndicator(
@@ -141,6 +156,18 @@ class ConversationTileContent extends StatelessWidget {
     return Row(
       mainAxisSize: shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
       children: [
+        if (unread) ...[
+          Container(
+            key: const ValueKey<String>('conversation-unread-indicator'),
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: theme.buttonPrimary,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: Spacing.sm),
+        ],
         if (shrinkWrap)
           Flexible(fit: FlexFit.loose, child: titleWidget)
         else
@@ -162,8 +189,14 @@ class ConversationTile extends StatelessWidget {
   /// Whether this tile is currently selected.
   final bool selected;
 
+  /// Whether this conversation has unread updates.
+  final bool unread;
+
   /// Whether the conversation is loading.
   final bool isLoading;
+
+  /// Whether the conversation has an active generation running on the server.
+  final bool isGenerating;
 
   /// Callback when the tile is tapped.
   final VoidCallback? onTap;
@@ -174,7 +207,9 @@ class ConversationTile extends StatelessWidget {
     required this.title,
     required this.pinned,
     required this.selected,
+    this.unread = false,
     required this.isLoading,
+    this.isGenerating = false,
     required this.onTap,
   });
 
@@ -222,7 +257,9 @@ class ConversationTile extends StatelessWidget {
                 title: title,
                 pinned: pinned,
                 selected: selected,
+                unread: unread,
                 isLoading: isLoading,
+                isGenerating: isGenerating,
               ),
             ),
           ),

@@ -4,7 +4,6 @@ import 'dart:io' show Platform;
 import 'package:adaptive_platform_ui/adaptive_platform_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/theme/theme_extensions.dart';
 import '../../../shared/widgets/markdown/streaming_markdown_widget.dart';
@@ -12,6 +11,7 @@ import '../../../shared/widgets/markdown/renderer/markdown_style.dart';
 import '../../../core/models/chat_message.dart';
 import '../../../shared/widgets/markdown/markdown_preprocessor.dart';
 import '../providers/text_to_speech_provider.dart';
+import '../providers/queued_completion_provider.dart';
 import 'enhanced_image_attachment.dart';
 import 'package:conduit/l10n/app_localizations.dart';
 import 'enhanced_attachment.dart';
@@ -20,17 +20,16 @@ import '../../../shared/widgets/model_avatar.dart';
 import '../../../shared/widgets/conduit_components.dart';
 import '../../../shared/widgets/middle_ellipsis_text.dart';
 import '../../../shared/widgets/web_content_embed.dart';
-import 'package:url_launcher/url_launcher_string.dart';
 import '../providers/chat_providers.dart'
     show
         chatComposerTextInsertionTargetId,
         isChatStreamingProvider,
         sendMessageWithContainer,
         streamingContentProvider;
+import '../../../shared/utils/external_link_launcher.dart';
 import '../../../core/utils/debug_logger.dart';
 import '../../../core/services/platform_service.dart';
 import '../../../core/services/settings_service.dart';
-import '../../../core/utils/citation_parser.dart';
 import '../../../core/utils/embed_utils.dart';
 import 'sources/openwebui_sources.dart';
 import '../providers/assistant_response_builder_provider.dart';
@@ -40,6 +39,7 @@ import '../utils/file_utils.dart';
 import 'code_execution_display.dart';
 import 'follow_up_suggestions.dart';
 import 'usage_stats_modal.dart';
+import 'five_rotating_dots.dart';
 
 // Wrap only standalone base64 image lines so <details> attributes stay intact.
 final _standaloneBase64ImagePattern = RegExp(
@@ -50,53 +50,6 @@ final _ttsDetailsPattern = RegExp(
   r'<details[^>]*>[\s\S]*?<\/details>',
   caseSensitive: false,
 );
-const int _cheapStreamingTextThreshold = 900;
-const int _cheapStreamingTextLineThreshold = 12;
-final _markdownBlockSyntaxPattern = RegExp(
-  r'(^|\n)[ \t]{0,3}(?:#{1,6}\s|>\s|[-*+]\s|\d+[.)]\s|```|~~~)',
-  multiLine: true,
-);
-final _markdownLinkOrImagePattern = RegExp(
-  r'!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)',
-);
-final _markdownReferenceLinkPattern = RegExp(
-  r'!\[[^\]]*]\[[^\]]*]|'
-  r'\[[^\]]+]\[[^\]]*]',
-);
-final _markdownInlineSyntaxPattern = RegExp(
-  r'`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~',
-);
-final _markdownSingleEmphasisPattern = RegExp(
-  r'(?:^|[\s(])\*[^*\s][^*\n]*?[^*\s]\*(?=$|[\s).,!?:;])|'
-  r'(?:^|[\s(])_[^_\s][^_\n]*?[^_\s]_(?=$|[\s).,!?:;])',
-);
-final _markdownTablePattern = RegExp(
-  r'^\s*\|?.+\|.+\s*$\n^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$',
-  multiLine: true,
-);
-final _markdownHorizontalRulePattern = RegExp(
-  r'(^|\n)[ \t]{0,3}(?:-{3,}|\*{3,}|_{3,})(?:\n|$)',
-  multiLine: true,
-);
-final _markdownHtmlPattern = RegExp(
-  r'<(?:a|img|br|details|summary|table|tr|td|th|blockquote|pre|code)\b',
-  caseSensitive: false,
-);
-final _markdownAutolinkPattern = RegExp(r'<[A-Za-z][A-Za-z0-9+.\-]*:[^<>\s]+>');
-final _markdownBareAutolinkPattern = RegExp(
-  r'(?:(?:https?|ftp):\/\/|www\.)[^\s<]+|'
-  r"(?:^|[\s(])[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+(?=$|[\s).,!?:;])",
-  caseSensitive: false,
-);
-final _markdownIndentedCodeBlockPattern = RegExp(
-  r'(^|\n)(?: {4}|\t)\S',
-  multiLine: true,
-);
-final _markdownBlockLatexPattern = RegExp(
-  r'(^|\n)[ \t]{0,3}\$\$[\s\S]+?\$\$[ \t]*(?=\n|$)',
-  multiLine: true,
-);
-final _markdownInlineLatexPattern = RegExp(r'\$[^$\n]+\$');
 // Handle both URL formats: /api/v1/files/{id} and /api/v1/files/{id}/content
 final _fileIdPattern = RegExp(r'/api/v1/files/([^/]+)(?:/content)?$');
 
@@ -109,6 +62,7 @@ class AssistantMessageWidget extends ConsumerStatefulWidget {
   final String? modelIconUrl;
   final List<String?> versionModelNames;
   final List<String?> versionModelIconUrls;
+  final bool suppressStreamingHaptics;
   final VoidCallback? onCopy;
   final VoidCallback? onRegenerate;
   final VoidCallback onDelete;
@@ -125,6 +79,7 @@ class AssistantMessageWidget extends ConsumerStatefulWidget {
     this.modelIconUrl,
     this.versionModelNames = const <String?>[],
     this.versionModelIconUrls = const <String?>[],
+    this.suppressStreamingHaptics = false,
     this.onCopy,
     this.onRegenerate,
     required this.onDelete,
@@ -140,13 +95,22 @@ class AssistantMessageWidget extends ConsumerStatefulWidget {
 class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _fadeController;
-  late AnimationController _slideController;
+  late AnimationController _streamingContentFadeController;
+  late CurvedAnimation _streamingContentFade;
   String _displayedContent = '';
   Widget? _cachedAvatar;
   String? _cachedAvatarModelName;
   String? _cachedAvatarIconUrl;
   bool _allowTypingIndicator = false;
   Timer? _typingGateTimer;
+  // Hysteresis for the action row: a message that has streamed in this widget's
+  // lifetime must reach a settled completion before the action row replaces the
+  // typing indicator, so a transient in-progress state can never flash the row
+  // mid-stream. Settled on `responseDone` or on the streaming-end transition.
+  // History messages never set `_hasStreamedThisMessage` and show their action
+  // row immediately.
+  bool _hasStreamedThisMessage = false;
+  bool _actionRowSettled = false;
   String _ttsPlainText = '';
   String? _lastAppliedTtsPlainTextSource;
   int _ttsPlainTextRequestId = 0;
@@ -160,6 +124,8 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
   bool _hasAnimated = false;
   bool _isAppForeground = true;
   bool _isRouteVisible = true;
+  String? _visibleFollowUpScopeId;
+  List<String> _visibleFollowUps = const <String>[];
 
   /// Guards the triple-haptic so it fires only once per streaming session.
   bool _hasTriggeredContentHaptic = false;
@@ -184,7 +150,7 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
 
   Future<void> _handleFollowUpTap(String suggestion) async {
     final trimmed = suggestion.trim();
-    if (trimmed.isEmpty || widget.isStreaming || !_responseCompleted) {
+    if (trimmed.isEmpty || _uiTreatsAsStreaming || !_responseCompleted) {
       return;
     }
     try {
@@ -217,14 +183,20 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
       vsync: this,
       value: shouldAnimateOnMount ? 0.0 : 1.0,
     );
-    _slideController = AnimationController(
-      duration: const Duration(milliseconds: 300),
+    _streamingContentFadeController = AnimationController(
+      duration: const Duration(milliseconds: 260),
       vsync: this,
-      value: shouldAnimateOnMount ? 0.0 : 1.0,
+      value: 1.0,
+    );
+    _streamingContentFade = CurvedAnimation(
+      parent: _streamingContentFadeController,
+      curve: Curves.easeOutCubic,
     );
     _hasAnimated = !shouldAnimateOnMount;
     _displayedContent = _resolvedMessageContent();
+    _primeInitialStreamingContentFade();
     _updateTypingIndicatorGate();
+    _updateActionRowSettle();
     _syncStreamingContentSubscription();
   }
 
@@ -236,8 +208,10 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
     _updateRouteVisibility();
     if (!_shouldAnimateOnMount && !_hasAnimated) {
       _fadeController.value = 1.0;
-      _slideController.value = 1.0;
       _hasAnimated = true;
+    }
+    if (_disableAnimations && !_streamingContentFadeController.isCompleted) {
+      _streamingContentFadeController.value = 1.0;
     }
     // Build cached avatar when theme context is available
     _buildCachedAvatar();
@@ -256,11 +230,16 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
       _cachedAvatar = null;
       _cachedAvatarModelName = null;
       _cachedAvatarIconUrl = null;
+      _clearVisibleFollowUps();
       _resetTtsPlainTextState();
       _hasAnimated = !_shouldAnimateOnMount;
       _hasTriggeredContentHaptic = false;
       _fadeController.value = _shouldAnimateOnMount ? 0.0 : 1.0;
-      _slideController.value = _shouldAnimateOnMount ? 0.0 : 1.0;
+      _streamingContentFadeController.value = 1.0;
+    }
+
+    if (!oldWidget.isStreaming && widget.isStreaming) {
+      _clearVisibleFollowUps();
     }
 
     // Re-sync subscription when streaming state changes
@@ -275,6 +254,9 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
       _hasTriggeredContentHaptic = false;
       // Haptic: streaming finished
       _streamingHaptic(HapticType.medium);
+      // Genuine streaming end: allow the action row to replace the indicator.
+      _hasStreamedThisMessage = true;
+      _actionRowSettled = true;
     }
 
     // Refresh rendered content when the active message changes.
@@ -287,6 +269,7 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
         oldWidget.message.metadata?['responseDone'] !=
             widget.message.metadata?['responseDone']) {
       _updateTypingIndicatorGate();
+      _updateActionRowSettle();
     }
 
     // Rebuild cached avatar if model name or icon changes
@@ -353,16 +336,23 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
   }
 
   void _applyDisplayedContent(String raw) {
+    final shouldFadeStreamingContent = _shouldFadeInStreamingContent(raw);
     final previousLength = _displayedContent.length;
     final contentChanged = raw != _displayedContent;
 
     if (contentChanged) {
+      if (shouldFadeStreamingContent) {
+        _streamingContentFadeController.value = 0.0;
+      }
       if (mounted) {
         setState(() {
           _displayedContent = raw;
         });
       } else {
         _displayedContent = raw;
+      }
+      if (shouldFadeStreamingContent) {
+        _streamingContentFadeController.forward();
       }
       if (widget.isStreaming) {
         _onStreamingChunk(previousLength, raw.length);
@@ -375,6 +365,31 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
       _resetTtsPlainTextState();
     }
     _updateTypingIndicatorGate();
+  }
+
+  void _primeInitialStreamingContentFade() {
+    if (!_canFadeStreamingContent(_displayedContent)) {
+      return;
+    }
+    _streamingContentFadeController.value = 0.0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _disableAnimations || !_uiTreatsAsStreaming) {
+        return;
+      }
+      _streamingContentFadeController.forward();
+    });
+  }
+
+  bool _shouldFadeInStreamingContent(String nextRaw) {
+    return _canFadeStreamingContent(nextRaw) &&
+        _displayedContent.trim().isEmpty;
+  }
+
+  bool _canFadeStreamingContent(String nextRaw) {
+    if (_disableAnimations || !_uiTreatsAsStreaming) {
+      return false;
+    }
+    return nextRaw.trim().isNotEmpty;
   }
 
   void _setActiveVersionIndex(int nextIndex) {
@@ -390,12 +405,12 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
 
   void _updateTypingIndicatorGate() {
     _typingGateTimer?.cancel();
-    if (_shouldShowTypingIndicator) {
+    if (_shouldShowStreamingIndicator) {
       if (_allowTypingIndicator) {
         return;
       }
       _typingGateTimer = Timer(const Duration(milliseconds: 150), () {
-        if (!mounted || !_shouldShowTypingIndicator) {
+        if (!mounted || !_shouldShowStreamingIndicator) {
           return;
         }
         setState(() {
@@ -413,6 +428,43 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
         _allowTypingIndicator = false;
       }
     }
+  }
+
+  /// Drives the action-row hysteresis. While the UI still treats the message as
+  /// streaming, the row stays suppressed and `_actionRowSettled` is reset so a
+  /// later resume can't show a stale row. `responseDone` is a settled UI state:
+  /// it can show the final action row even before the transport flag flips.
+  void _updateActionRowSettle() {
+    if (_uiTreatsAsStreaming) {
+      _hasStreamedThisMessage = true;
+      _actionRowSettled = false;
+      return;
+    }
+    if (widget.message.metadata?['responseDone'] == true) {
+      _hasStreamedThisMessage = true;
+      _actionRowSettled = true;
+      return;
+    }
+    if (!_hasStreamedThisMessage) {
+      // History message: action row shows immediately, no settle needed.
+      return;
+    }
+  }
+
+  /// Whether the streaming/typing indicator should currently occupy the footer
+  /// slot. Gated by the 150ms anti-flash window.
+  bool get _showStreamingIndicatorNow =>
+      _allowTypingIndicator && _shouldShowStreamingIndicator;
+
+  /// Whether the action row may replace the streaming indicator in the footer.
+  bool get _showActionRowNow {
+    if (_uiTreatsAsStreaming || !_responseCompleted) {
+      return false;
+    }
+    if (!_hasStreamedThisMessage) {
+      return true;
+    }
+    return _actionRowSettled;
   }
 
   String get _messageId {
@@ -556,6 +608,24 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
     );
   }
 
+  Widget _buildStreamingContentBody() {
+    final body = _buildMessageContent();
+    // Always wrap in a FadeTransition with a stable key/type so the widget at
+    // this slot does not change runtimeType when streaming starts/completes.
+    // Toggling between FadeTransition and the bare body would defeat element
+    // reconciliation and tear down the markdown subtree at the streaming
+    // boundary. When not actively fading we feed a fully-opaque constant
+    // animation, which is visually identical to returning the bare body.
+    final fade = _canFadeStreamingContent(_displayedContent)
+        ? _streamingContentFade
+        : const AlwaysStoppedAnimation<double>(1.0);
+    return FadeTransition(
+      key: const ValueKey('assistant-streaming-content-fade'),
+      opacity: fade,
+      child: body,
+    );
+  }
+
   Widget _buildKaraokeBar(TextToSpeechState ttsState) {
     final theme = context.conduitTheme;
     final idx = ttsState.activeSentenceIndex;
@@ -607,8 +677,17 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
     );
   }
 
-  bool get _shouldShowTypingIndicator =>
-      _uiTreatsAsStreaming && _isAssistantResponseEmpty;
+  bool get _hasPendingVisibleStatus => widget.message.statusHistory
+      .where((status) => status.hidden != true)
+      .any((status) => status.done != true);
+
+  /// The streaming indicator lives in the footer slot and persists for the
+  /// whole generation (text/tool-calls/status stream in above it), then is
+  /// swapped for the action row once streaming completes. A pending visible
+  /// status already renders its own shimmer, so suppress the indicator then
+  /// (matches the behaviour the widget test asserts).
+  bool get _shouldShowStreamingIndicator =>
+      _uiTreatsAsStreaming && !_hasPendingVisibleStatus;
 
   bool get _isAssistantResponseEmpty {
     final content = _displayedContent.trim();
@@ -721,6 +800,14 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
 
     if (_activeVersionIndex >= 0 &&
         _activeVersionIndex < widget.message.versions.length) {
+      final rawVersionModelName = widget
+          .message
+          .versions[_activeVersionIndex]
+          .modelName
+          ?.trim();
+      if (rawVersionModelName != null && rawVersionModelName.isNotEmpty) {
+        return rawVersionModelName;
+      }
       final rawVersionModel = widget.message.versions[_activeVersionIndex].model
           ?.trim();
       if (rawVersionModel != null && rawVersionModel.isNotEmpty) {
@@ -773,7 +860,7 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
 
   /// Fires a single haptic impulse if streaming haptics are enabled.
   void _streamingHaptic(HapticType type) {
-    final enabled = ref.read(streamingHapticsEnabledProvider);
+    final enabled = _streamingHapticsAllowed;
     PlatformService.hapticFeedbackWithSettings(
       type: type,
       hapticEnabled: enabled,
@@ -785,18 +872,21 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
   /// Each tap is spaced 150ms apart so the user perceives three
   /// separate impulses rather than a single buzz.
   void _tripleHaptic() {
-    final enabled = ref.read(streamingHapticsEnabledProvider);
-    if (!enabled) return;
+    if (!_streamingHapticsAllowed) return;
     PlatformService.hapticFeedback(type: HapticType.medium);
     Future.delayed(const Duration(milliseconds: 150), () {
-      if (!mounted) return;
+      if (!mounted || !_streamingHapticsAllowed) return;
       PlatformService.hapticFeedback(type: HapticType.medium);
     });
     Future.delayed(const Duration(milliseconds: 300), () {
-      if (!mounted) return;
+      if (!mounted || !_streamingHapticsAllowed) return;
       PlatformService.hapticFeedback(type: HapticType.medium);
     });
   }
+
+  bool get _streamingHapticsAllowed =>
+      ref.read(streamingHapticsEnabledProvider) &&
+      !widget.suppressStreamingHaptics;
 
   /// Subscribes to [streamingContentProvider] only while this message is
   /// actively streaming. Uses [ref.listenManual] for explicit lifecycle
@@ -825,7 +915,8 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
     _typingGateTimer?.cancel();
     _resetTtsPlainTextState();
     _fadeController.dispose();
-    _slideController.dispose();
+    _streamingContentFade.dispose();
+    _streamingContentFadeController.dispose();
     super.dispose();
   }
 
@@ -898,6 +989,11 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
 
   int _collectionLength(Iterable<dynamic>? values) => values?.length ?? 0;
 
+  void _clearVisibleFollowUps() {
+    _visibleFollowUpScopeId = null;
+    _visibleFollowUps = const <String>[];
+  }
+
   bool _didVersionMetadataChange(AssistantMessageWidget oldWidget) {
     final oldVersions = oldWidget.message.versions;
     final newVersions = widget.message.versions;
@@ -906,7 +1002,8 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
     }
     for (var index = 0; index < oldVersions.length; index += 1) {
       if (oldVersions[index].id != newVersions[index].id ||
-          oldVersions[index].model != newVersions[index].model) {
+          oldVersions[index].model != newVersions[index].model ||
+          oldVersions[index].modelName != newVersions[index].modelName) {
         return true;
       }
     }
@@ -926,18 +1023,45 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
     final hasStatusTimeline = displayStatusHistory.isNotEmpty;
     final activeCodeExecutions = _resolveActiveCodeExecutions();
     final hasCodeExecutions = activeCodeExecutions.isNotEmpty;
-    final activeFollowUps = _resolveActiveFollowUps();
-    final hasFollowUps =
-        widget.showFollowUps &&
-        activeFollowUps.isNotEmpty &&
-        _responseCompleted;
     final bool showingVersion = _activeVersionIndex >= 0;
     final activeFiles = showingVersion
         ? widget.message.versions[_activeVersionIndex].files
         : widget.message.files;
     final activeEmbeds = _resolveActiveEmbeds();
-    final activeSources = _resolveActiveSources();
-    final footer = _buildFooterBar(activeSources: activeSources);
+    final queuedCompletionAsync = ref.watch(
+      queuedCompletionInfoForMessageProvider(_messageId),
+    );
+    final queuedCompletion = queuedCompletionAsync.hasValue
+        ? queuedCompletionAsync.value
+        : null;
+    final hasQueuedCompletion = queuedCompletion != null;
+    final footerSwitchDuration =
+        (_showStreamingIndicatorNow || _showActionRowNow)
+        ? const Duration(milliseconds: 180)
+        : Duration.zero;
+    final showQueuedAsEmptyState =
+        queuedCompletion != null &&
+        _isAssistantResponseEmpty &&
+        !queuedCompletion.isFailed;
+    final suppressEmptyQueuedContent =
+        queuedCompletion != null && _isAssistantResponseEmpty;
+    final showQueuedRecoveryBanner =
+        queuedCompletion != null && !showQueuedAsEmptyState;
+    final shouldBuildActionFooter = _showActionRowNow && !hasQueuedCompletion;
+    final activeFollowUps = shouldBuildActionFooter
+        ? _resolveVisibleFollowUps()
+        : const <String>[];
+    final hasFollowUps =
+        shouldBuildActionFooter &&
+        widget.showFollowUps &&
+        activeFollowUps.isNotEmpty &&
+        _responseCompleted;
+    final activeSources = shouldBuildActionFooter
+        ? _resolveActiveSources()
+        : const <ChatSourceReference>[];
+    final footer = shouldBuildActionFooter
+        ? _buildFooterBar(activeSources: activeSources)
+        : null;
 
     final content = Container(
       width: double.infinity,
@@ -974,31 +1098,38 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
                   const SizedBox(height: Spacing.xs),
                 ],
 
-                // Smoothly crossfade between typing indicator and content
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 220),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  transitionBuilder: (child, anim) {
-                    return FadeTransition(
-                      opacity: CurvedAnimation(
-                        parent: anim,
-                        curve: Curves.easeOutCubic,
-                        reverseCurve: Curves.easeInCubic,
-                      ),
-                      child: child,
-                    );
-                  },
-                  child: (_allowTypingIndicator && _shouldShowTypingIndicator)
-                      ? KeyedSubtree(
-                          key: const ValueKey('typing'),
-                          child: _buildTypingIndicator(),
-                        )
-                      : KeyedSubtree(
-                          key: const ValueKey('content'),
-                          child: _buildMessageContent(),
+                if (showQueuedAsEmptyState)
+                  _buildQueuedCompletionBanner(queuedCompletion)
+                else if (suppressEmptyQueuedContent)
+                  const SizedBox.shrink()
+                else
+                  // Content streams in here; the typing indicator now lives in
+                  // the footer slot below (and persists while text streams in
+                  // above it). Empty content renders as SizedBox.shrink.
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, anim) {
+                      return FadeTransition(
+                        opacity: CurvedAnimation(
+                          parent: anim,
+                          curve: Curves.easeOutCubic,
+                          reverseCurve: Curves.easeInCubic,
                         ),
-                ),
+                        child: child,
+                      );
+                    },
+                    child: KeyedSubtree(
+                      key: const ValueKey('content'),
+                      child: _buildStreamingContentBody(),
+                    ),
+                  ),
+
+                if (showQueuedRecoveryBanner) ...[
+                  const SizedBox(height: Spacing.sm),
+                  _buildQueuedCompletionBanner(queuedCompletion),
+                ],
 
                 // Embeds（PPT 进度条 / 查看器）渲染在正文之后，与 Web 端一致：
                 // 大纲在上、进度条/查看器在下。
@@ -1023,20 +1154,44 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
             ),
           ),
 
-          // Action buttons below the message content (only after streaming completes)
-          if (_responseCompleted) ...[
-            if (footer != null)
-              Padding(
-                padding: EdgeInsets.only(
-                  top: ConduitMarkdownStyle.fromTheme(context).paragraphSpacing,
-                ),
-                child: footer,
+          // Footer slot: the typing indicator occupies the action-row position
+          // while streaming (content streams above it) and crossfades to the
+          // action row exactly once, when generation completes.
+          if (!hasQueuedCompletion)
+            AnimatedSwitcher(
+              duration: footerSwitchDuration,
+              reverseDuration: footerSwitchDuration,
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              layoutBuilder: (currentChild, previousChildren) {
+                final children = <Widget>[
+                  if (!_uiTreatsAsStreaming) ...previousChildren,
+                  ?currentChild,
+                ];
+                if (children.isEmpty) {
+                  return const SizedBox.shrink();
+                }
+                return Stack(
+                  alignment: AlignmentDirectional.topStart,
+                  children: children,
+                );
+              },
+              transitionBuilder: (child, anim) {
+                return FadeTransition(
+                  opacity: CurvedAnimation(
+                    parent: anim,
+                    curve: Curves.easeOutCubic,
+                    reverseCurve: Curves.easeInCubic,
+                  ),
+                  child: child,
+                );
+              },
+              child: _buildFooterSlot(
+                footer: footer,
+                hasFollowUps: hasFollowUps,
+                activeFollowUps: activeFollowUps,
               ),
-            if (hasFollowUps) ...[
-              const SizedBox(height: Spacing.md),
-              _buildFollowUpSuggestions(activeFollowUps),
-            ],
-          ],
+            ),
         ],
       ),
     );
@@ -1045,21 +1200,201 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
     if (!_hasAnimated) {
       _hasAnimated = true;
       _fadeController.forward();
-      _slideController.forward();
     }
 
-    return FadeTransition(
-      opacity: _fadeController,
-      child: SlideTransition(
-        position: Tween<Offset>(begin: const Offset(0, 0.1), end: Offset.zero)
-            .animate(
-              CurvedAnimation(
-                parent: _slideController,
-                curve: Curves.easeOutCubic,
-              ),
+    return FadeTransition(opacity: _fadeController, child: content);
+  }
+
+  /// Builds the keyed child for the footer [AnimatedSwitcher]: the typing
+  /// indicator while streaming, the action row + follow-ups once completed,
+  /// or an empty slot during the gate / transient window.
+  Widget _buildFooterSlot({
+    required Widget? footer,
+    required bool hasFollowUps,
+    required List<String> activeFollowUps,
+  }) {
+    if (_showStreamingIndicatorNow) {
+      return KeyedSubtree(
+        key: const ValueKey('typing'),
+        child: Padding(
+          padding: EdgeInsets.only(
+            top: ConduitMarkdownStyle.fromTheme(context).paragraphSpacing,
+          ),
+          child: _buildTypingIndicator(),
+        ),
+      );
+    }
+
+    if (_showActionRowNow) {
+      final children = <Widget>[];
+      if (footer != null) {
+        children.add(
+          Padding(
+            padding: EdgeInsets.only(
+              top: ConduitMarkdownStyle.fromTheme(context).paragraphSpacing,
             ),
-        child: content,
+            child: footer,
+          ),
+        );
+      }
+      if (hasFollowUps) {
+        children.add(const SizedBox(height: Spacing.md));
+        children.add(_buildFollowUpSuggestions(activeFollowUps));
+      }
+      if (children.isNotEmpty) {
+        return KeyedSubtree(
+          key: const ValueKey('actions'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: children,
+          ),
+        );
+      }
+    }
+
+    return const SizedBox.shrink(key: ValueKey('footer-empty'));
+  }
+
+  Widget _buildQueuedCompletionBanner(QueuedCompletionInfo info) {
+    final l10n = AppLocalizations.of(context)!;
+    final conduitTheme = context.conduitTheme;
+    final errorColor = Theme.of(context).colorScheme.error;
+    final accentColor = info.isFailed ? errorColor : conduitTheme.buttonPrimary;
+    final title = info.isFailed
+        ? l10n.chatQueuedFailedTitle
+        : info.isOffline
+        ? l10n.chatQueuedOfflineTitle
+        : l10n.chatQueuedPendingTitle;
+    final message = info.isFailed
+        ? l10n.chatQueuedFailedMessage
+        : info.isOffline
+        ? l10n.chatQueuedOfflineMessage
+        : l10n.chatQueuedPendingMessage;
+    final icon = info.isFailed
+        ? (Platform.isIOS
+              ? CupertinoIcons.exclamationmark_triangle
+              : Icons.error_outline)
+        : info.isOffline
+        ? (Platform.isIOS ? CupertinoIcons.wifi_slash : Icons.wifi_off)
+        : (Platform.isIOS ? CupertinoIcons.clock : Icons.schedule);
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 560),
+      padding: const EdgeInsets.all(Spacing.md),
+      decoration: BoxDecoration(
+        color: accentColor.withValues(alpha: 0.08),
+        border: Border.all(color: accentColor.withValues(alpha: 0.22)),
+        borderRadius: BorderRadius.circular(8),
       ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, size: 20, color: accentColor),
+              const SizedBox(width: Spacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: conduitTheme.textPrimary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      message,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: conduitTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: Spacing.sm),
+          Wrap(
+            spacing: Spacing.xs,
+            runSpacing: Spacing.xs,
+            children: [
+              TextButton.icon(
+                onPressed: () => _retryQueuedCompletion(info),
+                icon: Icon(
+                  Platform.isIOS ? CupertinoIcons.refresh : Icons.refresh,
+                  size: 16,
+                ),
+                label: Text(l10n.retry),
+                style: TextButton.styleFrom(
+                  foregroundColor: accentColor,
+                  minimumSize: const Size(0, 34),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Spacing.sm,
+                    vertical: 6,
+                  ),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => _cancelQueuedCompletion(info),
+                icon: Icon(
+                  Platform.isIOS ? CupertinoIcons.xmark : Icons.close,
+                  size: 16,
+                ),
+                label: Text(l10n.cancel),
+                style: TextButton.styleFrom(
+                  foregroundColor: conduitTheme.textSecondary,
+                  minimumSize: const Size(0, 34),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Spacing.sm,
+                    vertical: 6,
+                  ),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _retryQueuedCompletion(QueuedCompletionInfo info) {
+    unawaited(() async {
+      try {
+        await ref.read(queuedCompletionActionsProvider).retry(info);
+      } catch (error, stackTrace) {
+        _handleQueuedCompletionActionError(error, stackTrace);
+      }
+    }());
+  }
+
+  void _cancelQueuedCompletion(QueuedCompletionInfo info) {
+    unawaited(() async {
+      try {
+        await ref.read(queuedCompletionActionsProvider).cancel(info);
+      } catch (error, stackTrace) {
+        _handleQueuedCompletionActionError(error, stackTrace);
+      }
+    }());
+  }
+
+  void _handleQueuedCompletionActionError(Object error, StackTrace stackTrace) {
+    DebugLogger.error(
+      'queued-completion-action-failed',
+      scope: 'chat/assistant',
+      error: error,
+      stackTrace: stackTrace,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(AppLocalizations.of(context)!.errorMessage)),
     );
   }
 
@@ -1124,19 +1459,13 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
     final bodyTreatsAsStreaming = _uiTreatsAsStreaming;
 
     Widget buildDefault(BuildContext context) {
-      final cheapStreamingTextContent = _cheapStreamingTextContent(
-        processedContent,
-      );
-      if (_shouldUseCheapStreamingText(cheapStreamingTextContent)) {
-        return _buildCheapStreamingText(cheapStreamingTextContent);
-      }
-
       return StreamingMarkdownWidget(
         content: processedContent,
         isStreaming: bodyTreatsAsStreaming,
+        enableStreamingTextFade: bodyTreatsAsStreaming && !_disableAnimations,
         askConduitComposerTargetId: chatComposerTextInsertionTargetId,
         stateScopeId: _markdownStateScopeId(),
-        onTapLink: (url, _) => _launchUri(url),
+        onTapLink: (url, _) => launchExternalLink(url, scope: 'chat/assistant'),
         sources: activeSources,
         imageBuilderOverride: (uri, title, alt) {
           // Route markdown images through the enhanced image widget so they
@@ -1165,73 +1494,6 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
     }
 
     return buildDefault(context);
-  }
-
-  String _cheapStreamingTextContent(String content) {
-    if (!_uiTreatsAsStreaming || !content.contains(']:')) {
-      return content;
-    }
-    return ConduitMarkdownPreprocessor.stripLinkReferenceDefinitions(content);
-  }
-
-  bool _shouldUseCheapStreamingText(String content) {
-    if (!_uiTreatsAsStreaming) {
-      return false;
-    }
-
-    final trimmedContent = content.trim();
-    if (trimmedContent.isEmpty) {
-      return false;
-    }
-
-    final newlineCount = '\n'.allMatches(trimmedContent).length;
-    final isLongPlainCandidate =
-        trimmedContent.length >= _cheapStreamingTextThreshold ||
-        newlineCount >= _cheapStreamingTextLineThreshold;
-    if (!isLongPlainCandidate) {
-      return false;
-    }
-
-    return !_contentHasClearMarkdown(trimmedContent);
-  }
-
-  bool _contentHasClearMarkdown(String content) {
-    if (content.isEmpty) {
-      return false;
-    }
-
-    if (content.contains('```') ||
-        content.contains('~~~') ||
-        content.contains('data:image/') ||
-        content.contains(r'\(') ||
-        content.contains(r'\[')) {
-      return true;
-    }
-
-    return _markdownBlockSyntaxPattern.hasMatch(content) ||
-        _markdownLinkOrImagePattern.hasMatch(content) ||
-        _markdownReferenceLinkPattern.hasMatch(content) ||
-        _markdownAutolinkPattern.hasMatch(content) ||
-        _markdownBareAutolinkPattern.hasMatch(content) ||
-        _markdownIndentedCodeBlockPattern.hasMatch(content) ||
-        _markdownInlineSyntaxPattern.hasMatch(content) ||
-        _markdownSingleEmphasisPattern.hasMatch(content) ||
-        _markdownTablePattern.hasMatch(content) ||
-        _markdownHorizontalRulePattern.hasMatch(content) ||
-        _markdownHtmlPattern.hasMatch(content) ||
-        _markdownBlockLatexPattern.hasMatch(content) ||
-        _markdownInlineLatexPattern.hasMatch(content) ||
-        CitationParser.hasCitations(content);
-  }
-
-  Widget _buildCheapStreamingText(String content) {
-    final style = ConduitMarkdownStyle.fromTheme(context);
-    return Text(
-      content,
-      key: const ValueKey('assistant-streaming-plain-text'),
-      style: style.body,
-      softWrap: true,
-    );
   }
 
   String _markdownStateScopeId() {
@@ -1281,6 +1543,26 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
       return widget.message.versions[_activeVersionIndex].followUps;
     }
     return widget.message.followUps;
+  }
+
+  List<String> _resolveVisibleFollowUps() {
+    final rawFollowUps = _resolveActiveFollowUps();
+    if (!widget.showFollowUps || _uiTreatsAsStreaming || !_responseCompleted) {
+      return rawFollowUps;
+    }
+
+    final scopeId = _followUpStateScopeId();
+    if (rawFollowUps.isNotEmpty) {
+      _visibleFollowUpScopeId = scopeId;
+      _visibleFollowUps = List<String>.unmodifiable(rawFollowUps);
+      return rawFollowUps;
+    }
+
+    if (_visibleFollowUpScopeId == scopeId && _visibleFollowUps.isNotEmpty) {
+      return _visibleFollowUps;
+    }
+
+    return rawFollowUps;
   }
 
   List<ChatCodeExecution> _resolveActiveCodeExecutions() {
@@ -1569,74 +1851,14 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
     final theme = context.conduitTheme;
     final dotColor = theme.textSecondary.withValues(alpha: 0.75);
 
-    const double dotSize = 8.0;
-    const double dotSpacing = 6.0;
-    const int numberOfDots = 3;
-    Widget buildDot() {
-      return Container(
-        width: dotSize,
-        height: dotSize,
-        decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-      );
-    }
-
-    if (_disableAnimations) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(width: dotSize * 0.2),
-            for (int i = 0; i < numberOfDots; i++) ...[
-              buildDot(),
-              if (i < numberOfDots - 1) const SizedBox(width: dotSpacing),
-            ],
-            const SizedBox(width: dotSize * 0.2),
-          ],
-        ),
-      );
-    }
-
-    // Create three dots with staggered animations
-    final dots = List.generate(numberOfDots, (index) {
-      final delay = Duration(milliseconds: 150 * index);
-
-      return buildDot()
-          .animate(onPlay: (controller) => controller.repeat())
-          .then(delay: delay)
-          .fadeIn(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          )
-          .scale(
-            duration: const Duration(milliseconds: 600),
-            curve: Curves.easeInOut,
-            begin: const Offset(0.4, 0.4),
-            end: const Offset(1, 1),
-          )
-          .then()
-          .scale(
-            duration: const Duration(milliseconds: 600),
-            curve: Curves.easeInOut,
-            begin: const Offset(1.2, 1.2),
-            end: const Offset(0.5, 0.5),
-          );
-    });
-
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Add left padding to prevent clipping when dots scale up
-          const SizedBox(width: dotSize * 0.2),
-          for (int i = 0; i < numberOfDots; i++) ...[
-            dots[i],
-            if (i < numberOfDots - 1) const SizedBox(width: dotSpacing),
-          ],
-          // Add right padding to prevent clipping when dots scale up
-          const SizedBox(width: dotSize * 0.2),
-        ],
+      padding: const EdgeInsets.symmetric(vertical: Spacing.xs),
+      child: RepaintBoundary(
+        child: FiveRotatingDots(
+          size: 28,
+          color: dotColor,
+          animate: !_disableAnimations,
+        ),
       ),
     );
   }
@@ -1714,8 +1936,8 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
 
   List<_AssistantFooterAction> _buildFooterActions() {
     final l10n = AppLocalizations.of(context)!;
-    final ttsState = ref.watch(textToSpeechControllerProvider);
-    final isChatStreaming = ref.watch(isChatStreamingProvider);
+    final ttsState = ref.read(textToSpeechControllerProvider);
+    final isChatStreaming = ref.read(isChatStreamingProvider);
     final activeUsage = _resolveActiveUsage();
     final messageId = _messageId;
     final activeError = _getActiveError();
@@ -1737,7 +1959,7 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
         (ttsState.status == TtsPlaybackStatus.loading ||
             ttsState.status == TtsPlaybackStatus.initializing);
     final bool contentActionsBlockedByStreaming =
-        widget.isStreaming && !isActiveMessage;
+        _uiTreatsAsStreaming && !isActiveMessage;
     final bool ttsAvailable = !ttsState.initialized || ttsState.available;
     final bool showStopState =
         isActiveMessage && (isSpeaking || isPaused || isBusy);
@@ -1752,7 +1974,11 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
         !contentActionsBlockedByStreaming &&
         ttsAvailable &&
         !showPreparingTtsState;
-    final bool canRegenerate = widget.onRegenerate != null && !isChatStreaming;
+    final bool currentStreamingMessageCompleted =
+        widget.isStreaming && _responseCompleted;
+    final bool canRegenerate =
+        widget.onRegenerate != null &&
+        (!isChatStreaming || currentStreamingMessageCompleted);
     final bool hasVersions = widget.message.versions.isNotEmpty;
     final bool canGoToPreviousVersion =
         hasVersions && (_activeVersionIndex < 0 || _activeVersionIndex > 0);
@@ -1782,7 +2008,7 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
             ? CupertinoIcons.doc_on_clipboard
             : Icons.content_copy,
         label: l10n.copy,
-        onTap: widget.isStreaming ? null : widget.onCopy,
+        onTap: _responseCompleted ? widget.onCopy : null,
         sfSymbol: 'doc.on.clipboard',
       ),
       if (shouldShowTtsButton)
@@ -1959,7 +2185,7 @@ class _AssistantMessageWidgetState extends ConsumerState<AssistantMessageWidget>
               child: FollowUpSuggestionBar(
                 suggestions: suggestions,
                 onSelected: _handleFollowUpTap,
-                isBusy: widget.isStreaming,
+                isBusy: _uiTreatsAsStreaming,
               ),
             )
           : const SizedBox.shrink(key: ValueKey('follow-ups-empty')),
@@ -1996,13 +2222,4 @@ String _buildTtsPlainTextFromRaw(String raw) {
   final sanitized = ConduitMarkdownPreprocessor.sanitize(raw);
   final withoutDetails = sanitized.replaceAll(_ttsDetailsPattern, '');
   return ConduitMarkdownPreprocessor.cleanText(withoutDetails).trim();
-}
-
-Future<void> _launchUri(String url) async {
-  if (url.isEmpty) return;
-  try {
-    await launchUrlString(url, mode: LaunchMode.externalApplication);
-  } catch (err) {
-    DebugLogger.log('Unable to open url $url: $err', scope: 'chat/assistant');
-  }
 }

@@ -26,6 +26,7 @@ final class PreferenceKeys {
   static const String localeCode = 'locale_code_v1';
   static const String reviewerMode = 'reviewer_mode_v1';
   static const String ttsVoice = 'tts_voice';
+  static const String ttsVoiceName = 'tts_voice_name';
   static const String ttsSpeechRate = 'tts_speech_rate';
   static const String ttsPitch = 'tts_pitch';
   static const String ttsVolume = 'tts_volume';
@@ -36,6 +37,17 @@ final class PreferenceKeys {
   static const String androidAssistantTrigger = 'android_assistant_trigger';
   static const String temporaryChatByDefault = 'temporary_chat_by_default';
   static const String pinnedModels = 'pinned_models';
+
+  // Notifications. The first three mirror Open WebUI's user-settings fields and
+  // are synced to the server; the rest are Conduit-only client preferences.
+  static const String notificationsEnabled = 'notifications_enabled';
+  static const String notificationSound = 'notification_sound';
+  static const String notificationSoundAlways = 'notification_sound_always';
+  static const String notificationInAppBanner = 'notification_in_app_banner';
+  static const String notificationSystem = 'notification_system';
+  static const String notificationChatEnabled = 'notification_chat_enabled';
+  static const String notificationChannelEnabled =
+      'notification_channel_enabled';
 
   // Drawer section collapsed states
   static const String drawerShowPinned = 'drawer_show_pinned';
@@ -48,6 +60,17 @@ final class PreferenceKeys {
   static const String notesListShowRecent = 'notes_list_show_recent';
 
   static const String sidebarActiveTab = 'sidebar_active_tab';
+  static const String serverFeatureAvailability =
+      'server_feature_availability_v1';
+
+  /// One-time gate for the Hive `preferences_v1` → shared_preferences migration
+  /// (PR-1 of the Hive removal). Set last, after every key is copied.
+  static const String hiveToPrefsMigrationV1 = 'hive_to_prefs_migration_v1';
+
+  /// Prefix for the per-server transport-options cache moved out of the Hive
+  /// `caches` box (it needs a synchronous read). Combined with a safe-encoded
+  /// server id: `transport_options:<safeServerId>`.
+  static const String transportOptionsPrefix = 'transport_options';
 }
 
 final class LegacyPreferenceKeys {

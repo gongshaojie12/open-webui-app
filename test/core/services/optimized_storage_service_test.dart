@@ -1,16 +1,17 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:conduit/core/models/conversation.dart';
 import 'package:conduit/core/models/server_config.dart';
 import 'package:conduit/core/models/socket_transport_availability.dart';
 import 'package:conduit/core/persistence/hive_boxes.dart';
+import 'package:conduit/core/persistence/preferences_store.dart';
 import 'package:conduit/core/services/optimized_storage_service.dart';
 import 'package:conduit/core/services/worker_manager.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -37,12 +38,6 @@ void main() {
 
   Future<void> seedLegacyJsonCache(String key, Object payload) {
     return caches.put(key, jsonEncode(payload));
-  }
-
-  void expectScopedStructuredCache(String key, {required String? serverId}) {
-    final migrated = caches.get(key) as Map;
-    expect(migrated['serverId'], serverId);
-    expect(migrated['data'], isA<List>());
   }
 
   setUp(() async {
@@ -90,6 +85,9 @@ void main() {
     secureStorageValues.clear();
     secureStorageReadCounts.clear();
     secureStorageReadErrors.clear();
+    SharedPreferences.setMockInitialValues({});
+    PreferencesStore.debugReset();
+    PreferencesStore.debugOverride(await SharedPreferences.getInstance());
     tempDir = await Directory.systemTemp.createTemp(
       'optimized-storage-service-test',
     );
@@ -115,141 +113,12 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(secureStorageChannel, null);
     workerManager.dispose();
+    PreferencesStore.debugReset();
     await Hive.close();
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
   });
-
-  test(
-    'legacy conversation cache stays readable and migrates to the active server scope',
-    () async {
-      await saveServerConfigs(['server-a', 'server-b']);
-      await storage.setActiveServerId('server-a');
-      await seedLegacyJsonCache(HiveStoreKeys.localConversations, [
-        _conversationJson('legacy-chat'),
-      ]);
-
-      final conversations = await storage.getLocalConversations();
-      expect(conversations.map((conversation) => conversation.id), [
-        'legacy-chat',
-      ]);
-
-      expectScopedStructuredCache(
-        HiveStoreKeys.localConversations,
-        serverId: 'server-a',
-      );
-
-      await storage.setActiveServerId('server-b');
-      expect(await storage.getLocalConversations(), isEmpty);
-    },
-  );
-
-  test(
-    'legacy conversation cache read without an active server is quarantined from later server scopes',
-    () async {
-      await saveServerConfigs(['server-a']);
-      await seedLegacyJsonCache(HiveStoreKeys.localConversations, [
-        _conversationJson('legacy-chat'),
-      ]);
-
-      final conversations = await storage.getLocalConversations();
-      expect(conversations.map((conversation) => conversation.id), [
-        'legacy-chat',
-      ]);
-
-      expectScopedStructuredCache(
-        HiveStoreKeys.localConversations,
-        serverId: null,
-      );
-
-      await storage.setActiveServerId('server-a');
-      expect(await storage.getLocalConversations(), isEmpty);
-    },
-  );
-
-  test(
-    'legacy conversation cache with a stale active server id is quarantined instead of rebound',
-    () async {
-      await saveServerConfigs(['server-a']);
-      await storage.setActiveServerId('removed-server');
-      await seedLegacyJsonCache(HiveStoreKeys.localConversations, [
-        _conversationJson('legacy-chat'),
-      ]);
-
-      final conversations = await storage.getLocalConversations();
-      expect(conversations.map((conversation) => conversation.id), [
-        'legacy-chat',
-      ]);
-
-      expectScopedStructuredCache(
-        HiveStoreKeys.localConversations,
-        serverId: null,
-      );
-
-      await storage.setActiveServerId('server-a');
-      expect(await storage.getLocalConversations(), isEmpty);
-    },
-  );
-
-  test(
-    'legacy folder cache stays readable and migrates to the active server scope',
-    () async {
-      await saveServerConfigs(['server-a', 'server-b']);
-      await storage.setActiveServerId('server-a');
-      await seedLegacyJsonCache(HiveStoreKeys.localFolders, [
-        {'id': 'legacy-folder', 'name': 'Legacy Folder'},
-      ]);
-
-      final folders = await storage.getLocalFolders();
-      expect(folders.map((folder) => folder.id), ['legacy-folder']);
-
-      expectScopedStructuredCache(
-        HiveStoreKeys.localFolders,
-        serverId: 'server-a',
-      );
-
-      await storage.setActiveServerId('server-b');
-      expect(await storage.getLocalFolders(), isEmpty);
-    },
-  );
-
-  test(
-    'legacy folder cache read without an active server is quarantined from later server scopes',
-    () async {
-      await saveServerConfigs(['server-a']);
-      await seedLegacyJsonCache(HiveStoreKeys.localFolders, [
-        {'id': 'legacy-folder', 'name': 'Legacy Folder'},
-      ]);
-
-      final folders = await storage.getLocalFolders();
-      expect(folders.map((folder) => folder.id), ['legacy-folder']);
-
-      expectScopedStructuredCache(HiveStoreKeys.localFolders, serverId: null);
-
-      await storage.setActiveServerId('server-a');
-      expect(await storage.getLocalFolders(), isEmpty);
-    },
-  );
-
-  test(
-    'legacy folder cache with a stale active server id is quarantined instead of rebound',
-    () async {
-      await saveServerConfigs(['server-a']);
-      await storage.setActiveServerId('removed-server');
-      await seedLegacyJsonCache(HiveStoreKeys.localFolders, [
-        {'id': 'legacy-folder', 'name': 'Legacy Folder'},
-      ]);
-
-      final folders = await storage.getLocalFolders();
-      expect(folders.map((folder) => folder.id), ['legacy-folder']);
-
-      expectScopedStructuredCache(HiveStoreKeys.localFolders, serverId: null);
-
-      await storage.setActiveServerId('server-a');
-      expect(await storage.getLocalFolders(), isEmpty);
-    },
-  );
 
   test(
     'validated active server id reuses cached server configs across repeated lookups',
@@ -312,43 +181,30 @@ void main() {
   );
 
   test(
-    'fresh scoped cache writes with a stale active server id are quarantined',
+    'transport options round-trip through shared_preferences (sync read)',
     () async {
       await saveServerConfigs(['server-a']);
-      await storage.setActiveServerId('removed-server');
-
-      await storage.saveLocalConversations([
-        Conversation.fromJson(_conversationJson('fresh-chat')),
-      ]);
-
-      final stored = caches.get(HiveStoreKeys.localConversations) as Map;
-      expect(stored['serverId'], isNull);
-      expect(stored['data'], isA<List>());
-
       await storage.setActiveServerId('server-a');
-      expect(await storage.getLocalConversations(), isEmpty);
+
+      await storage.saveLocalTransportOptions(
+        const SocketTransportAvailability(
+          allowPolling: false,
+          allowWebsocketOnly: true,
+        ),
+      );
+
+      // Stored in shared_preferences (not the Hive caches box).
+      expect(caches.containsKey(HiveStoreKeys.localTransportOptions), isFalse);
+
+      final options = storage.getLocalTransportOptionsSync();
+      expect(options?.allowPolling, isFalse);
+      expect(options?.allowWebsocketOnly, isTrue);
+
+      final asyncOptions = await storage.getLocalTransportOptions();
+      expect(asyncOptions?.allowPolling, isFalse);
+      expect(asyncOptions?.allowWebsocketOnly, isTrue);
     },
   );
-
-  test('transport options are stored as structured scoped objects', () async {
-    await saveServerConfigs(['server-a']);
-    await storage.setActiveServerId('server-a');
-
-    await storage.saveLocalTransportOptions(
-      const SocketTransportAvailability(
-        allowPolling: false,
-        allowWebsocketOnly: true,
-      ),
-    );
-
-    final stored = caches.get(HiveStoreKeys.localTransportOptions) as Map;
-    expect(stored['serverId'], 'server-a');
-    expect(stored['data'], {'allowPolling': false, 'allowWebsocketOnly': true});
-
-    final options = storage.getLocalTransportOptionsSync();
-    expect(options?.allowPolling, isFalse);
-    expect(options?.allowWebsocketOnly, isTrue);
-  });
 
   test(
     'user-scoped auth cleanup preserves token and saved credentials',
@@ -361,30 +217,70 @@ void main() {
         username: 'user@example.com',
         password: 'password',
       );
-      await storage.saveLocalConversations([
-        Conversation.fromJson(_conversationJson('cached-chat')),
+      await seedLegacyJsonCache(HiveStoreKeys.localConversations, [
+        _conversationJson('cached-chat'),
       ]);
 
       await storage.clearUserScopedAuthData();
 
       expect(await storage.getAuthToken(), 'token-a');
       expect(await storage.getSavedCredentials(), isNotNull);
-      expect(await storage.getLocalConversations(), isEmpty);
+      expect(caches.containsKey(HiveStoreKeys.localConversations), isFalse);
     },
   );
 
-  test('sync transport cache ignores stale active server ids', () async {
-    await saveServerConfigs(['server-a']);
-    await storage.setActiveServerId('removed-server');
-    await caches.put(HiveStoreKeys.localTransportOptions, {
-      'data': jsonEncode({'allowPolling': false, 'allowWebsocketOnly': true}),
-      'serverId': 'removed-server',
-    });
+  test(
+    'deleteLegacyConversationCaches removes exactly the legacy keys '
+    '(CDT-RFC-001 §9.3) and is idempotent',
+    () async {
+      await seedLegacyJsonCache(HiveStoreKeys.localConversations, [
+        _conversationJson('legacy-chat'),
+      ]);
+      await seedLegacyJsonCache(HiveStoreKeys.localFolders, [
+        {'id': 'legacy-folder', 'name': 'Legacy Folder'},
+      ]);
+      await seedLegacyJsonCache(HiveStoreKeys.localTools, [
+        {'id': 'tool-1'},
+      ]);
 
-    final options = storage.getLocalTransportOptionsSync();
+      await storage.deleteLegacyConversationCaches();
 
-    expect(options, isNull);
-  });
+      expect(caches.containsKey(HiveStoreKeys.localConversations), isFalse);
+      expect(caches.containsKey(HiveStoreKeys.localFolders), isFalse);
+      // Unrelated cache entries stay untouched.
+      expect(caches.containsKey(HiveStoreKeys.localTools), isTrue);
+
+      // Idempotent: a second pass is a no-op.
+      await storage.deleteLegacyConversationCaches();
+      expect(caches.containsKey(HiveStoreKeys.localConversations), isFalse);
+      expect(caches.containsKey(HiveStoreKeys.localFolders), isFalse);
+    },
+  );
+
+  test(
+    'transport options are per-server: another server is not read back',
+    () async {
+      await saveServerConfigs(['server-a', 'server-b']);
+      await storage.setActiveServerId('server-a');
+      await storage.saveLocalTransportOptions(
+        const SocketTransportAvailability(
+          allowPolling: false,
+          allowWebsocketOnly: true,
+        ),
+      );
+
+      // Switching to a server with no cached transport options reads nothing
+      // (the per-server prefs key isolates each server).
+      await storage.setActiveServerId('server-b');
+      expect(storage.getLocalTransportOptionsSync(), isNull);
+
+      // Switching back returns the original options.
+      await storage.setActiveServerId('server-a');
+      final restored = storage.getLocalTransportOptionsSync();
+      expect(restored?.allowPolling, isFalse);
+      expect(restored?.allowWebsocketOnly, isTrue);
+    },
+  );
 }
 
 Map<String, dynamic> _conversationJson(String id) {

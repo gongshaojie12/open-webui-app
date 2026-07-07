@@ -360,7 +360,7 @@ class ConduitMarkdown {
   ) {
     // Read headers and optional self-signed cache manager from Riverpod
     final container = ProviderScope.containerOf(context, listen: false);
-    final headers = buildImageHeadersFromContainer(container);
+    final headers = buildImageHeadersForUrlFromContainer(container, url);
     final cacheManager = container.read(selfSignedImageCacheManagerProvider);
 
     return CachedNetworkImage(
@@ -1355,7 +1355,9 @@ class _ChartJsDiagramState extends State<ChartJsDiagram> {
         baseUrl: baseUrl,
         historyUrl: baseUrl,
       );
-      if (!mounted || controller != _controller || requestId != _loadRequestId) {
+      if (!mounted ||
+          controller != _controller ||
+          requestId != _loadRequestId) {
         return;
       }
       await _scheduleHeightUpdates(requestId);
@@ -1526,8 +1528,12 @@ $fallbackShim
   } catch (e) {
     console.error('Error creating chart:', e);
     const container = document.getElementById('chart-container') || document.body;
-    container.innerHTML =
-      '<p style="color: red; padding: 16px;">Error rendering chart: ' + e.message + '</p>';
+    container.textContent = '';
+    const p = document.createElement('p');
+    p.style.color = 'red';
+    p.style.padding = '16px';
+    p.textContent = 'Error rendering chart: ' + (e && e.message ? e.message : 'unknown error');
+    container.appendChild(p);
   }
 })();
 </script>
@@ -1820,7 +1826,9 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
         baseUrl: baseUrl,
         historyUrl: baseUrl,
       );
-      if (!mounted || controller != _controller || requestId != _loadRequestId) {
+      if (!mounted ||
+          controller != _controller ||
+          requestId != _loadRequestId) {
         return;
       }
       await _scheduleHeightUpdates(requestId);
@@ -1948,7 +1956,7 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
   mermaid.initialize({
     startOnLoad: false,
     theme: '$theme',
-    securityLevel: 'loose'
+    securityLevel: 'strict'
   });
 
   var diagramCode = ${jsonEncode(code)};
@@ -1973,8 +1981,13 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
     document.getElementById('mermaid-diagram').innerHTML = result.svg;
   }).catch(function(err) {
     var message = err.message || String(err);
-    document.getElementById('mermaid-diagram').innerHTML =
-      '<pre style="color:red;padding:16px;">' + message + '</pre>';
+    var container = document.getElementById('mermaid-diagram');
+    container.textContent = '';
+    var pre = document.createElement('pre');
+    pre.style.color = 'red';
+    pre.style.padding = '16px';
+    pre.textContent = message;
+    container.appendChild(pre);
   });
 </script>
 </body>

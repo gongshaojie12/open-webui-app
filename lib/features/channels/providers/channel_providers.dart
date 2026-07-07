@@ -3,6 +3,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../../core/models/channel.dart';
 import '../../../core/models/channel_message.dart';
 import '../../../core/providers/app_providers.dart';
+import '../../auth/providers/unified_auth_providers.dart';
 
 part 'channel_providers.g.dart';
 
@@ -12,8 +13,14 @@ class ChannelsList extends _$ChannelsList {
   @override
   Future<List<Channel>> build() async {
     final api = ref.watch(apiServiceProvider);
+    final token = ref.watch(authTokenProvider3);
     if (api == null) return [];
     final (rawChannels, featureEnabled) = await api.getChannels();
+    if (!ref.mounted ||
+        !identical(ref.read(apiServiceProvider), api) ||
+        ref.read(authTokenProvider3) != token) {
+      return state.value ?? const <Channel>[];
+    }
     ref
         .read(channelsFeatureEnabledProvider.notifier)
         .setEnabled(featureEnabled);
@@ -43,6 +50,24 @@ class ChannelsList extends _$ChannelsList {
     state = AsyncValue.data(
       current.map((c) => c.id == updated.id ? updated : c).toList(),
     );
+  }
+
+  /// Clears the unread badge for [channelId] when the user opens it
+  /// (reset-on-visit), pairing with the server-side `emitLastReadAt`. No-ops if
+  /// the channel is unknown or already read so it never triggers a rebuild
+  /// without a real change.
+  void markRead(String channelId) {
+    final current = state.value;
+    if (current == null) return;
+    var changed = false;
+    final updated = current.map((c) {
+      if (c.id == channelId && c.unreadCount != 0) {
+        changed = true;
+        return c.copyWith(unreadCount: 0);
+      }
+      return c;
+    }).toList();
+    if (changed) state = AsyncValue.data(updated);
   }
 }
 

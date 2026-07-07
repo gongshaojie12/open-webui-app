@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import '../utils/server_version_compat.dart';
+
 /// Represents the available OAuth providers configured on the server.
 @immutable
 class OAuthProviders {
@@ -116,6 +118,8 @@ class BackendTtsVoice {
 @immutable
 class BackendConfig {
   const BackendConfig({
+    this.version,
+    this.serverId,
     this.enableWebsocket,
     this.enableWebSearch,
     this.enableAudioInput,
@@ -133,6 +137,17 @@ class BackendConfig {
     this.enableLdap = false,
     this.enableLoginForm = true,
   });
+
+  /// The Open WebUI server version string reported by `/api/config`
+  /// (e.g. `0.10.1`). `null` when the server omitted it or it was not parsed.
+  final String? version;
+
+  /// Id of the [ServerConfig] this config was fetched from. The cached config
+  /// is global (single key), so consumers that care about *which* server a
+  /// version belongs to (e.g. the compatibility gate) compare this against the
+  /// active server id and ignore the config when it doesn't match. `null` for
+  /// configs fetched before this was tracked or never tagged.
+  final String? serverId;
 
   /// Mirrors `features.enable_websocket` from OpenWebUI.
   final bool? enableWebsocket;
@@ -164,8 +179,15 @@ class BackendConfig {
   /// Whether SSO (OAuth) login is available.
   bool get hasSsoEnabled => oauthProviders.hasAnyProvider;
 
+  /// Whether the reported [version] is within the range this app supports.
+  ///
+  /// See [ServerVersionCompat]. Fails open for unknown/unparseable versions.
+  bool get isVersionSupported => ServerVersionCompat.isSupported(version);
+
   /// Returns a copy with updated fields.
   BackendConfig copyWith({
+    String? version,
+    String? serverId,
     bool? enableWebsocket,
     bool? enableWebSearch,
     bool? enableAudioInput,
@@ -184,6 +206,8 @@ class BackendConfig {
     bool? enableLoginForm,
   }) {
     return BackendConfig(
+      version: version ?? this.version,
+      serverId: serverId ?? this.serverId,
       enableWebsocket: enableWebsocket ?? this.enableWebsocket,
       enableWebSearch: enableWebSearch ?? this.enableWebSearch,
       enableAudioInput: enableAudioInput ?? this.enableAudioInput,
@@ -224,6 +248,8 @@ class BackendConfig {
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
+      'version': version,
+      'server_id': serverId,
       'enable_websocket': enableWebsocket,
       'enable_web_search': enableWebSearch,
       'enable_audio_input': enableAudioInput,
@@ -244,6 +270,8 @@ class BackendConfig {
   }
 
   static BackendConfig fromJson(Map<String, dynamic> json) {
+    String? version;
+    String? serverId;
     bool? enableWebsocket;
     bool? enableWebSearch;
     bool? enableAudioInput;
@@ -260,6 +288,16 @@ class BackendConfig {
     OAuthProviders oauthProviders = const OAuthProviders();
     bool enableLdap = false;
     bool enableLoginForm = true;
+
+    final versionValue = json['version'];
+    if (versionValue is String && versionValue.trim().isNotEmpty) {
+      version = versionValue.trim();
+    }
+
+    final serverIdValue = json['server_id'];
+    if (serverIdValue is String && serverIdValue.isNotEmpty) {
+      serverId = serverIdValue;
+    }
 
     // Try canonical format first
     final value = json['enable_websocket'];
@@ -306,11 +344,23 @@ class BackendConfig {
     final vad = json['vad_enabled'];
     if (vad is bool) vadEnabled = vad;
 
+    final audio = _coerceJsonMap(json['audio']);
+    final audioTts = _coerceJsonMap(audio?['tts']);
+    final audioStt = _coerceJsonMap(audio?['stt']);
+    final nestedTtsEngine = _normalizeString(audioTts?['engine']);
+    final nestedTtsVoice = _normalizeString(audioTts?['voice']);
+    final nestedTtsSplitOn = _normalizeString(audioTts?['split_on']);
+    final nestedSttEngine = _normalizeString(audioStt?['engine']);
+    ttsProvider ??= nestedTtsEngine;
+    ttsVoice ??= nestedTtsVoice;
+    ttsSplitOn ??= nestedTtsSplitOn;
+    sttProvider ??= nestedSttEngine;
+
     // Parse OAuth providers from top-level oauth.providers
-    final oauth = json['oauth'];
-    if (oauth is Map<String, dynamic>) {
-      final providers = oauth['providers'];
-      if (providers is Map<String, dynamic>) {
+    final oauth = _coerceJsonMap(json['oauth']);
+    if (oauth != null) {
+      final providers = _coerceJsonMap(oauth['providers']);
+      if (providers != null) {
         oauthProviders = OAuthProviders.fromJson(providers);
       }
     }
@@ -390,7 +440,16 @@ class BackendConfig {
       if (nestedLoginForm is bool) enableLoginForm = nestedLoginForm;
     }
 
+    if (nestedTtsEngine != null) {
+      enableAudioOutput ??= true;
+    }
+    if (nestedSttEngine != null) {
+      enableAudioInput ??= true;
+    }
+
     return BackendConfig(
+      version: version,
+      serverId: serverId,
       enableWebsocket: enableWebsocket,
       enableWebSearch: enableWebSearch,
       enableAudioInput: enableAudioInput,
@@ -409,4 +468,22 @@ class BackendConfig {
       enableLoginForm: enableLoginForm,
     );
   }
+}
+
+Map<String, dynamic>? _coerceJsonMap(dynamic value) {
+  if (value is Map<String, dynamic>) {
+    return value;
+  }
+  if (value is Map) {
+    return value.map((key, entryValue) => MapEntry(key.toString(), entryValue));
+  }
+  return null;
+}
+
+String? _normalizeString(dynamic value) {
+  if (value is! String) {
+    return null;
+  }
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
 }

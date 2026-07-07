@@ -123,6 +123,7 @@ class Routes {
   static const String login = '/login';
   static const String serverConnection = '/server-connection';
   static const String connectionIssue = '/connection-issue';
+  static const String serverIncompatible = '/server-incompatible';
   static const String authentication = '/authentication';
   static const String ssoAuth = '/sso-auth';
   static const String proxyAuth = '/proxy-auth';
@@ -130,6 +131,7 @@ class Routes {
   static const String personalization = '/profile/personalization';
   static const String audioSettings = '/profile/audio';
   static const String accountSettings = '/profile/account';
+  static const String notificationSettings = '/profile/notifications';
   static const String appCustomization = '/profile/customization';
   static const String about = '/profile/about';
   static const String notes = '/notes';
@@ -147,6 +149,7 @@ class RouteNames {
   static const String login = 'login';
   static const String serverConnection = 'server-connection';
   static const String connectionIssue = 'connection-issue';
+  static const String serverIncompatible = 'server-incompatible';
   static const String authentication = 'authentication';
   static const String ssoAuth = 'sso-auth';
   static const String proxyAuth = 'proxy-auth';
@@ -154,6 +157,7 @@ class RouteNames {
   static const String personalization = 'personalization';
   static const String audioSettings = 'audio-settings';
   static const String accountSettings = 'account-settings';
+  static const String notificationSettings = 'notification-settings';
   static const String appCustomization = 'app-customization';
   static const String about = 'about';
   static const String notes = 'notes';

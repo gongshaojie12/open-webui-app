@@ -125,8 +125,18 @@ class _FakeApiService extends ApiService {
 
   set conversation(Conversation value) => _conversation = value;
 
+  List<String> taskIds = const <String>[];
+
+  int getConversationCalls = 0;
+
   @override
-  Future<Conversation> getConversation(String id) async => _conversation;
+  Future<Conversation> getConversation(String id) async {
+    getConversationCalls++;
+    return _conversation;
+  }
+
+  @override
+  Future<List<String>> getTaskIdsByChat(String chatId) async => taskIds;
 }
 
 ChatMessage _userMessage(String id, String content, DateTime timestamp) =>
@@ -420,6 +430,316 @@ void main() {
         ).deepEquals(refreshedMessages);
         container.read(chatMessagesProvider.notifier).clearMessages();
         container.read(activeConversationProvider.notifier).clear();
+      },
+    );
+
+    test(
+      'reopening a chat that is still generating re-engages streaming',
+      () async {
+        final timestamp = DateTime.now();
+        final messages = [
+          _userMessage('user-1', 'Hi', timestamp),
+          _assistantMessage('assistant-1', 'Partial', timestamp),
+        ];
+        final api = _FakeApiService(_conversation('chat-1', messages, timestamp))
+          ..taskIds = ['task-1'];
+
+        final container = ProviderContainer(
+          overrides: [
+            activeConversationProvider.overrideWith(
+              () => _TestActiveConversationNotifier(),
+            ),
+            socketServiceProvider.overrideWithValue(null),
+            apiServiceProvider.overrideWithValue(api),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        // Build the notifier with no active conversation, then open chat-1 so
+        // the conversation-change listener runs the active-on-open probe.
+        check(container.read(chatMessagesProvider)).isEmpty();
+        container
+            .read(activeConversationProvider.notifier)
+            .set(_conversation('chat-1', messages, timestamp));
+
+        check(container.read(chatMessagesProvider).last.isStreaming).isFalse();
+
+        await pumpMicrotasks();
+        await pumpMicrotasks();
+
+        check(container.read(chatMessagesProvider).last.isStreaming).isTrue();
+      },
+    );
+
+    test('reopening a settled chat does not re-engage streaming', () async {
+      final timestamp = DateTime.now();
+      final messages = [
+        _userMessage('user-1', 'Hi', timestamp),
+        _assistantMessage('assistant-1', 'Done', timestamp),
+      ];
+      final api = _FakeApiService(_conversation('chat-1', messages, timestamp))
+        ..taskIds = const <String>[];
+
+      final container = ProviderContainer(
+        overrides: [
+          activeConversationProvider.overrideWith(
+            () => _TestActiveConversationNotifier(),
+          ),
+          socketServiceProvider.overrideWithValue(null),
+          apiServiceProvider.overrideWithValue(api),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      check(container.read(chatMessagesProvider)).isEmpty();
+      container
+          .read(activeConversationProvider.notifier)
+          .set(_conversation('chat-1', messages, timestamp));
+
+      await pumpMicrotasks();
+      await pumpMicrotasks();
+
+      check(container.read(chatMessagesProvider).last.isStreaming).isFalse();
+    });
+
+    test('progressively adopts growing server content while resuming', () async {
+      final timestamp = DateTime.now();
+      final opened = [
+        _userMessage('user-1', 'Hi', timestamp),
+        _assistantMessage('assistant-1', 'Partial', timestamp),
+      ];
+      // The server has more content for the same streaming message.
+      final grown = [
+        _userMessage('user-1', 'Hi', timestamp),
+        _assistantMessage('assistant-1', 'Partial answer that grew', timestamp),
+      ];
+      final api = _FakeApiService(_conversation('chat-1', grown, timestamp))
+        ..taskIds = ['task-1'];
+
+      final container = ProviderContainer(
+        overrides: [
+          activeConversationProvider.overrideWith(
+            () => _TestActiveConversationNotifier(),
+          ),
+          socketServiceProvider.overrideWithValue(null),
+          apiServiceProvider.overrideWithValue(api),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      check(container.read(chatMessagesProvider)).isEmpty();
+      container
+          .read(activeConversationProvider.notifier)
+          .set(_conversation('chat-1', opened, timestamp));
+
+      // Let the active-on-open probe + the monitor's first progressive poll run.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await pumpMicrotasks();
+
+      final last = container.read(chatMessagesProvider).last;
+      check(last.content).equals('Partial answer that grew');
+      check(last.isStreaming).isTrue();
+    });
+
+    test(
+      'resume poll adopts server content matched by the bound foreign '
+      'message id (socket bound a server id then died)',
+      () async {
+        final timestamp = DateTime.now();
+        final opened = [
+          _userMessage('user-1', 'Hi', timestamp),
+          _assistantMessage('assistant-local', 'Partial', timestamp),
+        ];
+        // The server persists the message under its OWN (foreign) id, not the
+        // local placeholder id.
+        final grown = [
+          _userMessage('user-1', 'Hi', timestamp),
+          _assistantMessage('server-foreign', 'Partial answer that grew', timestamp),
+        ];
+        final api = _FakeApiService(_conversation('chat-1', grown, timestamp))
+          ..taskIds = ['task-1'];
+
+        final container = ProviderContainer(
+          overrides: [
+            activeConversationProvider.overrideWith(
+              () => _TestActiveConversationNotifier(),
+            ),
+            socketServiceProvider.overrideWithValue(null),
+            apiServiceProvider.overrideWithValue(api),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        // Construct the notifier (so its conversation-change listener is live)
+        // before setting the conversation, so active-on-open fires.
+        check(container.read(chatMessagesProvider)).isEmpty();
+        final notifier = container.read(chatMessagesProvider.notifier);
+        container
+            .read(activeConversationProvider.notifier)
+            .set(_conversation('chat-1', opened, timestamp));
+
+        // Active-on-open re-engages streaming and arms the monitor. The first
+        // poll cannot match yet (server id differs, no bound id), so content
+        // stays 'Partial'.
+        await pumpMicrotasks();
+        await pumpMicrotasks();
+        check(container.read(chatMessagesProvider).last.isStreaming).isTrue();
+        check(container.read(chatMessagesProvider).last.content).equals('Partial');
+
+        notifier.debugCancelRemoteTaskMonitorTimer();
+        while (notifier.debugTaskStatusCheckInFlight) {
+          await pumpMicrotasks();
+        }
+
+        // The streaming helper binds the foreign server id to the local tail.
+        notifier.recordResumeBoundRemoteMessageId(
+          'assistant-local',
+          'server-foreign',
+        );
+
+        // Next poll resolves the server message by the bound foreign id and
+        // adopts its grown content (instead of leaving the chat stuck).
+        await notifier.debugSyncRemoteTaskStatus();
+        await pumpMicrotasks();
+
+        check(
+          container.read(chatMessagesProvider).last.content,
+        ).equals('Partial answer that grew');
+      },
+    );
+
+    test('temporary chats are never probed for active tasks', () async {
+      final timestamp = DateTime.now();
+      final messages = [
+        _userMessage('user-1', 'Hi', timestamp),
+        _assistantMessage('assistant-1', 'Partial', timestamp),
+      ];
+      final api = _FakeApiService(_conversation('local:tmp', messages, timestamp))
+        ..taskIds = ['task-1'];
+
+      final container = ProviderContainer(
+        overrides: [
+          activeConversationProvider.overrideWith(
+            () => _TestActiveConversationNotifier(),
+          ),
+          socketServiceProvider.overrideWithValue(null),
+          apiServiceProvider.overrideWithValue(api),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      check(container.read(chatMessagesProvider)).isEmpty();
+      container
+          .read(activeConversationProvider.notifier)
+          .set(_conversation('local:tmp', messages, timestamp));
+
+      await pumpMicrotasks();
+      await pumpMicrotasks();
+
+      // Even though the (would-be) task probe reports active, a temporary chat
+      // is skipped, so the message stays settled.
+      check(container.read(chatMessagesProvider).last.isStreaming).isFalse();
+    });
+
+    test(
+      'tasksDone poll defers force-adoption while a socket resume stream '
+      'still owns the chat, then finalizes once the grace window elapses',
+      () async {
+        // Feature C double-finalize race guard: when a socket resume stream
+        // protects this chat, the poll must let the socket's own `done` win for
+        // `_tasksDoneSocketGracePolls` iterations (no getConversation
+        // force-adopt). Once the window elapses, the poll resumes as the
+        // authoritative recovery finalizer and may force-adopt.
+        final timestamp = DateTime.now();
+        final messages = [
+          _userMessage('user-1', 'Hi', timestamp),
+          // Settled last message so the active-on-open probe runs (instead of
+          // immediately arming the monitor on an already-streaming message).
+          _assistantMessage('assistant-1', 'Partial', timestamp),
+        ];
+        // Server reports the finished answer (what the poll would force-adopt).
+        final finished = [
+          _userMessage('user-1', 'Hi', timestamp),
+          _assistantMessage('assistant-1', 'Final answer', timestamp),
+        ];
+        final api =
+            _FakeApiService(_conversation('chat-1', finished, timestamp))
+              // Start with an active task so the open probe observes it.
+              ..taskIds = ['task-1'];
+
+        final container = ProviderContainer(
+          overrides: [
+            activeConversationProvider.overrideWith(
+              () => _TestActiveConversationNotifier(),
+            ),
+            socketServiceProvider.overrideWithValue(null),
+            apiServiceProvider.overrideWithValue(api),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        check(container.read(chatMessagesProvider)).isEmpty();
+        container
+            .read(activeConversationProvider.notifier)
+            .set(_conversation('chat-1', messages, timestamp));
+
+        final notifier = container.read(chatMessagesProvider.notifier);
+
+        // Let the active-on-open probe re-engage streaming + observe the task
+        // and arm the 1s monitor. getConversation is not used by that path.
+        await pumpMicrotasks();
+        await pumpMicrotasks();
+        check(container.read(chatMessagesProvider).last.isStreaming).isTrue();
+
+        // Cancel the periodic timer so only our manual poll iterations drive the
+        // grace logic (no background poll racing the deterministic assertions),
+        // then drain any in-flight background poll so the re-entry guard cannot
+        // short-circuit our first manual poll.
+        notifier.debugCancelRemoteTaskMonitorTimer();
+        while (notifier.debugTaskStatusCheckInFlight) {
+          await pumpMicrotasks();
+        }
+
+        // Establish a socket resume stream protecting the last message so
+        // _shouldProtectLocalStreamingState holds (Feature C resume state).
+        notifier.setSocketSubscriptions('assistant-1', [() {}]);
+        check(notifier.debugShouldProtectLocalStreamingState).isTrue();
+
+        // Reset the call counter so it cleanly measures only the force-adoption
+        // getConversation calls from the manual poll iterations below (the
+        // open-probe's progressive-resume fetch is unrelated to this guard).
+        api.getConversationCalls = 0;
+
+        // A baseline poll while the task is still active keeps protection +
+        // observed-task state intact without finalizing (tasksDone is false).
+        await notifier.debugSyncRemoteTaskStatus();
+        check(notifier.debugShouldProtectLocalStreamingState).isTrue();
+        check(notifier.debugTasksDoneGracePolls).equals(0);
+        check(api.getConversationCalls).equals(0);
+
+        // Task disappears: every subsequent poll now sees tasksDone. The grace
+        // window must suppress force-adoption for _tasksDoneSocketGracePolls (2).
+        api.taskIds = const <String>[];
+        check(notifier.debugShouldProtectLocalStreamingState).isTrue();
+
+        await notifier.debugSyncRemoteTaskStatus();
+        check(notifier.debugTasksDoneGracePolls).equals(1);
+        check(api.getConversationCalls).equals(0);
+
+        await notifier.debugSyncRemoteTaskStatus();
+        check(notifier.debugTasksDoneGracePolls).equals(2);
+        check(api.getConversationCalls).equals(0);
+
+        // Window elapsed (counter would advance past _tasksDoneSocketGracePolls):
+        // the poll resumes as the authoritative finalizer and force-adopts the
+        // server state. The finalize tears down the monitor, which resets the
+        // grace counter, so the observable post-finalize signal is the single
+        // getConversation force-adopt + the settled, adopted message.
+        await notifier.debugSyncRemoteTaskStatus();
+        check(api.getConversationCalls).equals(1);
+        check(container.read(chatMessagesProvider).last.content)
+            .equals('Final answer');
+        check(container.read(chatMessagesProvider).last.isStreaming).isFalse();
       },
     );
 
