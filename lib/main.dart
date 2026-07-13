@@ -18,6 +18,7 @@ import 'core/persistence/preferences_store.dart';
 import 'core/router/app_router.dart';
 import 'core/services/native_sheet_bridge.dart';
 import 'core/services/native_sheet_hydration_service.dart';
+import 'core/services/navigation_service.dart';
 import 'core/services/performance_profiler.dart';
 import 'core/services/carplay_service.dart';
 import 'core/services/settings_service.dart';
@@ -235,6 +236,7 @@ class _ConduitAppState extends ConsumerState<ConduitApp> {
   Brightness? _lastAppliedOverlayBrightness;
   StreamSubscription<NativeSheetEvent>? _nativeSheetSubscription;
   final Map<String, String> _nativeSheetDraftValues = {};
+  Future<void> _nativeSheetControlQueue = Future<void>.value();
 
   @override
   void initState() {
@@ -258,7 +260,9 @@ class _ConduitAppState extends ConsumerState<ConduitApp> {
         _nativeSheetDraftValues.clear();
         break;
       case NativeSheetControlChanged():
-        unawaited(_handleNativeSheetControlChanged(event));
+        _nativeSheetControlQueue = _nativeSheetControlQueue.then(
+          (_) => _handleNativeSheetControlChanged(event),
+        );
       case NativeSheetDetailAppeared(:final detailId):
         unawaited(
           ref.read(nativeSheetHydrationServiceProvider).hydrateDetail(detailId),
@@ -333,6 +337,19 @@ class _ConduitAppState extends ConsumerState<ConduitApp> {
   ) async {
     final value = event.value;
     try {
+      // Hermes-only: "Connect to Open WebUI" row. Dismiss the native
+      // sheet and route into the OWUI connect flow (the router allows the
+      // serverConnection route for Hermes-only users).
+      if (event.id == 'add-owui-server') {
+        unawaited(
+          NavigationService.router.pushNamed<void>(
+            RouteNames.serverConnection,
+            extra: const NativeSheetNavigationOrigin(),
+          ),
+        );
+        return;
+      }
+
       if (event.id.startsWith('tts-voice-pick:')) {
         await _handleNativeTtsVoicePick(event);
         return;
@@ -402,6 +419,20 @@ class _ConduitAppState extends ConsumerState<ConduitApp> {
       }
 
       switch (event.id) {
+        case NativeSheetRoutes.hermes:
+          unawaited(
+            NavigationService.router.pushNamed<void>(
+              RouteNames.hermesSettings,
+              extra: const NativeSheetNavigationOrigin(),
+            ),
+          );
+        case NativeSheetRoutes.workspace:
+          unawaited(
+            NavigationService.router.pushNamed<void>(
+              RouteNames.workspace,
+              extra: const NativeSheetNavigationOrigin(),
+            ),
+          );
         case 'default-model':
           if (value is String) {
             final modelId = value == 'auto-select' ? null : value;

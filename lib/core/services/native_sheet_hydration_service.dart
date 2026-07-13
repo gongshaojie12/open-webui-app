@@ -8,6 +8,8 @@ import '../../shared/theme/tweakcn_themes.dart';
 import '../models/model.dart';
 import '../network/image_header_utils.dart';
 import '../providers/app_providers.dart';
+import '../../features/hermes/models/hermes_model.dart';
+import '../../features/hermes/providers/hermes_providers.dart';
 import '../utils/debug_logger.dart';
 import '../utils/model_icon_utils.dart';
 import '../utils/model_sort_utils.dart';
@@ -61,9 +63,11 @@ class NativeSheetHydrationService {
     final pinnedModelIds = allowsPinning
         ? _ref.read(effectivePinnedModelIdsProvider)
         : const <String>[];
+    // The Hermes agent has its own dedicated tab; never list it in the picker.
+    final pickerModels = models.where((m) => !isHermesModel(m)).toList();
     final orderedModels = allowsPinning
-        ? sortModelsWithPinnedOrder(models, pinnedModelIds)
-        : List<Model>.of(models, growable: false);
+        ? sortModelsWithPinnedOrder(pickerModels, pinnedModelIds)
+        : List<Model>.of(pickerModels, growable: false);
     final canTogglePinnedModels =
         allowsPinning && _ref.read(canTogglePinnedModelsProvider);
 
@@ -175,10 +179,13 @@ class NativeSheetHydrationService {
     String detailId = NativeSheetRoutes.about,
   }) async {
     try {
-      final packageInfoFuture = _ref.read(packageInfoProvider.future);
-      final aboutFuture = _ref.read(serverAboutInfoProvider.future);
-      final packageInfo = await packageInfoFuture;
-      final about = await aboutFuture;
+      // Hermes-only has no Open WebUI server, so skip the server lookup and omit
+      // the server name/version rows entirely.
+      final hermesOnly = _ref.read(hermesOnlyModeProvider);
+      final packageInfo = await _ref.read(packageInfoProvider.future);
+      final about = hermesOnly
+          ? null
+          : await _ref.read(serverAboutInfoProvider.future);
       if (!context.mounted) return;
 
       final appVersionLabel = packageInfo.buildNumber.isEmpty
@@ -205,20 +212,22 @@ class NativeSheetHydrationService {
               sfSymbol: 'app.badge',
               kind: NativeSheetItemKind.info,
             ),
-            NativeSheetItemConfig(
-              id: 'server-name',
-              title: l10n.serverNameLabel,
-              subtitle: serverName,
-              sfSymbol: 'server.rack',
-              kind: NativeSheetItemKind.info,
-            ),
-            NativeSheetItemConfig(
-              id: 'server-version',
-              title: l10n.serverVersionLabel,
-              subtitle: serverVersion,
-              sfSymbol: 'number',
-              kind: NativeSheetItemKind.info,
-            ),
+            if (!hermesOnly)
+              NativeSheetItemConfig(
+                id: 'server-name',
+                title: l10n.serverNameLabel,
+                subtitle: serverName,
+                sfSymbol: 'server.rack',
+                kind: NativeSheetItemKind.info,
+              ),
+            if (!hermesOnly)
+              NativeSheetItemConfig(
+                id: 'server-version',
+                title: l10n.serverVersionLabel,
+                subtitle: serverVersion,
+                sfSymbol: 'number',
+                kind: NativeSheetItemKind.info,
+              ),
             NativeSheetItemConfig(
               id: 'github',
               title: l10n.githubRepository,

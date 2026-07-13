@@ -36,9 +36,11 @@ class NativeSheetRoutes {
   static const voice = 'voice';
   static const aiMemory = 'ai-memory';
   static const dataConnection = 'data-connection';
+  static const hermes = 'hermes';
   static const helpAbout = 'help-about';
   static const about = 'about';
   static const notificationSettings = 'notification-settings';
+  static const workspace = 'workspace-entry';
 }
 
 class NativeSheetBridge implements NativeSheetFlutterApi {
@@ -669,7 +671,11 @@ class NativeSheetItemConfig {
     required this.title,
     this.subtitle,
     this.sfSymbol = 'circle',
+    this.iconAsset,
     this.destructive = false,
+    this.dismissOnSelect = false,
+    this.actionId,
+    this.actionValue,
     this.url,
     this.kind = NativeSheetItemKind.navigation,
     this.value,
@@ -692,7 +698,11 @@ class NativeSheetItemConfig {
   final String title;
   final String? subtitle;
   final String sfSymbol;
+  final String? iconAsset;
   final bool destructive;
+  final bool dismissOnSelect;
+  final String? actionId;
+  final Object? actionValue;
   final String? url;
   final NativeSheetItemKind kind;
   final Object? value;
@@ -720,7 +730,11 @@ class NativeSheetItemConfig {
       'title': title,
       'subtitle': subtitle,
       'sfSymbol': sfSymbol,
+      if (iconAsset != null) 'iconAsset': iconAsset,
       'destructive': destructive,
+      'dismissOnSelect': dismissOnSelect,
+      if (actionId != null) 'actionId': actionId,
+      if (actionValue != null) 'actionValue': actionValue,
       'url': url,
       'kind': kind.name,
       'value': value,
@@ -1029,7 +1043,11 @@ extension on NativeSheetItemConfig {
       title: title,
       subtitle: subtitle,
       sfSymbol: sfSymbol,
+      iconAsset: iconAsset,
       destructive: destructive,
+      dismissOnSelect: dismissOnSelect,
+      actionId: actionId,
+      actionValue: actionValue,
       url: url,
       kind: kind.toPlatform(),
       value: value,

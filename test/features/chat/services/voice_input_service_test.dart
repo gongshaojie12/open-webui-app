@@ -1,10 +1,83 @@
+import 'dart:async';
+
 import 'package:checks/checks.dart';
+import 'package:conduit/features/chat/services/native_stt_service.dart';
 import 'package:conduit/features/chat/services/voice_input_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:permission_handler_platform_interface/permission_handler_platform_interface.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:vad/vad.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  // Regression guard for issue #557: on a fresh install iOS reports the mic
+  // permission as "denied" (not-determined). checkPermissions() must actively
+  // REQUEST the permission so the system dialog appears, rather than only
+  // reading the current status and silently failing the voice flow.
+  group('VoiceInputService.checkPermissions', () {
+    late _MockPermissionHandlerPlatform mockPermissions;
+    late PermissionHandlerPlatform originalPlatform;
+
+    setUpAll(() {
+      registerFallbackValue(<Permission>[Permission.microphone]);
+    });
+
+    setUp(() {
+      originalPlatform = PermissionHandlerPlatform.instance;
+      mockPermissions = _MockPermissionHandlerPlatform();
+      PermissionHandlerPlatform.instance = mockPermissions;
+    });
+
+    tearDown(() {
+      PermissionHandlerPlatform.instance = originalPlatform;
+    });
+
+    test('requests the microphone dialog when status is not granted', () async {
+      when(
+        () => mockPermissions.checkPermissionStatus(Permission.microphone),
+      ).thenAnswer((_) async => PermissionStatus.denied);
+      when(() => mockPermissions.requestPermissions(any())).thenAnswer(
+        (_) async => {Permission.microphone: PermissionStatus.granted},
+      );
+
+      final granted = await VoiceInputService().checkPermissions();
+
+      check(granted).isTrue();
+      // The core of the bug: it must call requestPermissions, not just read.
+      verify(() => mockPermissions.requestPermissions(any())).called(1);
+    });
+
+    test('does not re-prompt when permission is already granted', () async {
+      when(
+        () => mockPermissions.checkPermissionStatus(Permission.microphone),
+      ).thenAnswer((_) async => PermissionStatus.granted);
+
+      final granted = await VoiceInputService().checkPermissions();
+
+      check(granted).isTrue();
+      verifyNever(() => mockPermissions.requestPermissions(any()));
+    });
+
+    test(
+      'returns false without granting when the user denies the request',
+      () async {
+        when(
+          () => mockPermissions.checkPermissionStatus(Permission.microphone),
+        ).thenAnswer((_) async => PermissionStatus.denied);
+        when(() => mockPermissions.requestPermissions(any())).thenAnswer(
+          (_) async => {Permission.microphone: PermissionStatus.denied},
+        );
+
+        final granted = await VoiceInputService().checkPermissions();
+
+        check(granted).isFalse();
+        verify(() => mockPermissions.requestPermissions(any())).called(1);
+      },
+    );
+  });
   group('VoiceInputService.silenceDurationToVadFrames', () {
     test('does not shorten the requested pause window', () {
       check(VoiceInputService.silenceDurationToVadFrames(2000)).equals(63);
@@ -40,6 +113,97 @@ void main() {
       );
 
       check(language).isNull();
+    });
+  });
+
+  group('VoiceInputService automatic on-device language', () {
+    test('leaves the native locale unset for automatic recognition', () async {
+      final nativeStt = _FakeNativeSttService();
+      final service = _SupportedVoiceInputService(nativeStt: nativeStt);
+
+      await service.initialize(forceLocalStt: true);
+
+      check(nativeStt.availabilityLocaleId).isNull();
+      check(service.selectedLocaleId).isNull();
+    });
+
+    test(
+      'uses a supported system-language variant when auto is unavailable',
+      () async {
+        final nativeStt = _FakeNativeSttService(systemLocaleId: 'en-IN');
+        final service = _SupportedVoiceInputService(
+          nativeStt: nativeStt,
+          usesAutomaticNativeLanguage: false,
+        );
+
+        await service.initialize(forceLocalStt: true);
+
+        check(nativeStt.availabilityLocaleId).equals('en-US');
+        check(service.selectedLocaleId).equals('en-US');
+      },
+    );
+  });
+
+  test('forwards native failures to transcript-event listeners', () async {
+    final nativeStt = _FakeNativeSttService();
+    final service = _SupportedVoiceInputService(nativeStt: nativeStt);
+    await service.initialize(forceLocalStt: true);
+    await service.startListening();
+
+    final errorCompleter = Completer<Object>();
+    final subscription = service.transcriptEvents.listen(
+      (_) {},
+      onError: (Object error, StackTrace _) {
+        if (!errorCompleter.isCompleted) {
+          errorCompleter.complete(error);
+        }
+      },
+    );
+
+    nativeStt.emit(
+      const NativeSttEvent(
+        type: 'error',
+        code: 'TEST_FAILURE',
+        message: 'recognition failed',
+      ),
+    );
+
+    final error = await errorCompleter.future.timeout(
+      const Duration(seconds: 1),
+    );
+    check(error.toString()).contains('recognition failed');
+
+    await subscription.cancel();
+    await service.stopListening();
+    await nativeStt.dispose();
+  });
+
+  group('VoiceInputService server STT consumers', () {
+    test('processes samples for a live-mode event-only consumer', () {
+      check(
+        VoiceInputService.shouldProcessServerSamplesForTesting(
+          hasTextConsumer: false,
+          hasTranscriptEventConsumer: true,
+        ),
+      ).isTrue();
+    });
+
+    test('processes samples for the normal text consumer', () {
+      check(
+        VoiceInputService.shouldProcessServerSamplesForTesting(
+          hasTextConsumer: true,
+          hasTranscriptEventConsumer: false,
+        ),
+      ).isTrue();
+    });
+
+    test('skips samples when every consumer has detached', () {
+      check(
+        VoiceInputService.shouldProcessServerSamplesForTesting(
+          hasTextConsumer: false,
+          hasTranscriptEventConsumer: false,
+        ),
+      ).isFalse();
     });
   });
 
@@ -144,4 +308,74 @@ class _FakeVoiceInputService extends VoiceInputService {
 
   @override
   Future<void> dispose() async {}
+}
+
+class _MockPermissionHandlerPlatform extends Mock
+    with MockPlatformInterfaceMixin
+    implements PermissionHandlerPlatform {}
+
+class _SupportedVoiceInputService extends VoiceInputService {
+  _SupportedVoiceInputService({
+    required super.nativeStt,
+    this.usesAutomaticNativeLanguage = true,
+  });
+
+  @override
+  final bool usesAutomaticNativeLanguage;
+
+  @override
+  bool get isSupportedPlatform => true;
+}
+
+class _FakeNativeSttService extends NativeSttService {
+  _FakeNativeSttService({this.systemLocaleId = 'en-US'});
+
+  final String systemLocaleId;
+  final StreamController<NativeSttEvent> _events =
+      StreamController<NativeSttEvent>.broadcast();
+  String? availabilityLocaleId;
+
+  void emit(NativeSttEvent event) => _events.add(event);
+
+  Future<void> dispose() => _events.close();
+
+  @override
+  bool get isSupportedPlatform => true;
+
+  @override
+  Future<NativeSttLocales> getLocales({String? deviceLocaleId}) async {
+    return NativeSttLocales(
+      systemLocaleId: systemLocaleId,
+      locales: const [
+        NativeSttLocale(localeId: 'en-US', name: 'English'),
+        NativeSttLocale(localeId: 'pl-PL', name: 'Polish'),
+      ],
+    );
+  }
+
+  @override
+  Future<NativeSttAvailability> checkAvailability({
+    String? localeId,
+    bool allowOnlineFallback = true,
+  }) async {
+    availabilityLocaleId = localeId;
+    return const NativeSttAvailability(
+      available: true,
+      engine: 'automatic-test',
+    );
+  }
+
+  @override
+  Future<Stream<NativeSttEvent>> startListening({
+    String? localeId,
+    bool preserveAudioSession = false,
+    bool emitPartialResults = true,
+    bool accumulateResults = true,
+    bool allowOnlineFallback = true,
+  }) async {
+    return _events.stream;
+  }
+
+  @override
+  Future<void> stopListening() async {}
 }

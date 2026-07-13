@@ -91,12 +91,7 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
 
     final imageCount = widget.message.attachmentIds!.length;
 
-    // iMessage-style image layout with AnimatedSwitcher for smooth transitions
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 300),
-      switchInCurve: Curves.easeInOut,
-      child: _buildImageLayout(imageCount),
-    );
+    return _buildImageLayout(imageCount);
   }
 
   Widget _buildUserFileImages(_UserFilePartitions partitions) {
@@ -108,13 +103,7 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
 
     // Add images first
     if (imageFiles.isNotEmpty) {
-      widgets.add(
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 300),
-          switchInCurve: Curves.easeInOut,
-          child: _buildFileImageLayout(imageFiles, imageFiles.length),
-        ),
-      );
+      widgets.add(_buildFileImageLayout(imageFiles, imageFiles.length));
     }
 
     // Add non-image files
@@ -332,10 +321,17 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
   }
 
   Widget _buildImageLayout(int imageCount) {
+    // [message] is dynamic for legacy hydration compatibility. Normalize the
+    // ids before iterating so collection transforms produce List<Widget>
+    // instead of a runtime List<dynamic>.
+    final attachmentIds = List<String>.from(
+      widget.message.attachmentIds as Iterable,
+    );
+
     if (imageCount == 1) {
       // Single image - larger display
       return Row(
-        key: ValueKey('user_single_${widget.message.attachmentIds![0]}'),
+        key: ValueKey('user_single_${attachmentIds[0]}'),
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
           Container(
@@ -349,7 +345,7 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
                 AppBorderRadius.messageBubble,
               ),
               child: EnhancedAttachment(
-                attachmentId: widget.message.attachmentIds![0],
+                attachmentId: attachmentIds[0],
                 isUserMessage: true,
                 constraints: const BoxConstraints(
                   maxWidth: 280,
@@ -364,16 +360,14 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
     } else if (imageCount == 2) {
       // Two images side by side
       return Row(
-        key: ValueKey('user_double_${widget.message.attachmentIds!.join('_')}'),
+        key: ValueKey('user_double_${attachmentIds.join('_')}'),
         mainAxisAlignment: MainAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
           Flexible(
             child: Row(
               mainAxisSize: MainAxisSize.min,
-              children: widget.message.attachmentIds!.asMap().entries.map((
-                entry,
-              ) {
+              children: attachmentIds.asMap().entries.map<Widget>((entry) {
                 final index = entry.key;
                 final attachmentId = entry.value;
                 return Padding(
@@ -409,7 +403,7 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
     } else {
       // Grid layout for 3+ images
       return Row(
-        key: ValueKey('user_grid_${widget.message.attachmentIds!.join('_')}'),
+        key: ValueKey('user_grid_${attachmentIds.join('_')}'),
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
           Flexible(
@@ -419,7 +413,7 @@ class _UserMessageBubbleState extends ConsumerState<UserMessageBubble> {
                 alignment: WrapAlignment.end,
                 spacing: Spacing.xs,
                 runSpacing: Spacing.xs,
-                children: widget.message.attachmentIds!.map((attachmentId) {
+                children: attachmentIds.map<Widget>((attachmentId) {
                   return Container(
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(AppBorderRadius.md),
