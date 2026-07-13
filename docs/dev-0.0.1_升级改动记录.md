@@ -1000,6 +1000,64 @@ dart run build_runner build --delete-conflicting-outputs
 
 ---
 
+## 22. 2026-07-13 合并上游 3.4.3（12 个提交）
+
+### 背景
+
+从上游 `cogwheel0/conduit:main` 合并了 **12 个提交**（v3.4.2 → v3.4.3）。上游本次
+两大新功能：**Hermes Agent 后端 + Hermes-only 模式**（`#521`）、**原生 Workspace +
+统一设置导航**（`#566`）；另有多附件崩溃修复、STT 回归修复、phase-aware 流式渲染
+优化，以及把「新版 Open WebUI 服务器**阻塞**」改为**非阻塞告警**（`#564`）。
+共 255 个文件变更（含大量 Hermes/Workspace 测试）。
+
+### 合并方式
+
+先 `git merge-tree` 预演定位冲突 → 打回退 tag `pre-merge-3.4.3` → 执行合并 →
+逐个解决冲突 → `build_runner` 重新生成 → `flutter analyze lib` 验证。
+
+### 冲突文件（4 个）及处理
+
+| 文件 | 冲突性质 | 处理 |
+|------|---------|------|
+| `lib/core/router/app_router.dart` | dev 跳过 onboarding + 上游用非阻塞告警替换旧版本门禁 | 保留 dev `return Routes.authentication`；**移除**旧 `serverIncompatible` 阻塞门禁块（跟随上游，改用 `ServerVersionWarningShell`），连带删掉唯一调用点的 `_isConnectFlowToDifferentServer`（上游已删其定义）|
+| `lib/core/providers/app_providers.dart` | import 相邻行（上游新增 `attachment_upload_queue` 与 dev 的 `app_config` 重叠）| 去掉重复 import，保留 `app_config.dart`；自动配置逻辑（第4章 A+B）完整存活 |
+| `lib/features/profile/views/profile_page.dart` | **架构冲突**：上游重构为分类设置布局（`#566`）| 采纳上游 `_buildSettingsCategory` 新结构，保留 dev 移除赞助入口（不调用 `_buildDonationSection`，删除其三个方法）|
+| `lib/features/navigation/widgets/sidebar_user_pill.dart` | **架构冲突**：上游重构 native sheet 菜单 | 采纳上游新菜单（voice/notifications/aiMemory/hermes/workspace 项）；赞助入口经上游新 `supportItems` 参数**复活**，按第14章删除 `supportTitle`/`supportSubtitle`/`supportItems` 三个参数 |
+
+> ⚠️ **重点重复项**：第14章「赞助入口易被带回」再次应验——这次上游把赞助搬到了
+> `NativeSheetConfig` 的 `supportItems` 参数（不再是 `NativeSheetSectionConfig`）。
+> 下次合并若赞助又出现，检查 `sidebar_user_pill.dart` 是否又传了 `supportItems:`。
+
+### 22.1 旧版本门禁 `serverIncompatible` 跟随上游移除（非 dev 定制）
+
+`serverIncompatibleProvider` / `Routes.serverIncompatible` 是 **3.4.2 从上游继承**
+的代码（非 dev 定制）。上游 `#564` "Warn instead of blocking newer Open WebUI
+servers" 把**阻塞式门禁**（跳转独立 `serverIncompatible` 页）重构为**非阻塞告警**
+（`ServerVersionWarningShell` 包裹式横幅）。合并时：
+
+- app_router.dart 中的**阻塞跳转逻辑**跟随上游移除；
+- `serverIncompatibleProvider` 本身**保留**（上游新 `server_version_warning_shell.dart`
+  仍在用它判断"服务器比 App 新"）。
+
+### 22.2 品牌漏网补改
+
+上游新增 onboarding 欢迎语 `backendChooserWelcome: "Welcome to Conduit"`（13 语言），
+已改为 `"Welcome to 众小智AI"`。dev 虽跳过 backendChooser 页，仍统一品牌。
+
+### 22.3 定制存活核验（全部通过）
+
+`flutter pub get` + `dart run build_runner build --delete-conflicting-outputs`
+（1141 outputs）+ `flutter analyze lib` → **No issues found!**
+
+grep 逐项确认：第3章 AppConfig、第4章自动配置、第5章竹云认证、第6章 SSO SSL
+（现为 `_onReceivedServerTrustAuthRequest`）、第7章路由、第8章 FocusMedia OAuth、
+第16/20章 PPT embed（`useFixedViewport`/`useSandbox`/注入脚本）、第18章 STT
+平台默认、第19章 API 超时 + CallKit 品牌 —— **全部存活**。
+
+> 回退点：`git reset --hard pre-merge-3.4.3` 可回到合并前的 dev-0.0.1。
+
+---
+
 ## 21. 升级操作检查清单
 
 从上游合并新版本后，按以下清单逐项检查：
