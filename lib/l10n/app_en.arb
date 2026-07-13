@@ -4350,7 +4350,7 @@
   "@connectOpenWebUISubtitle": {
     "description": "Subtitle for the Hermes-only profile option that adds an Open WebUI server."
   },
-  "backendChooserWelcome": "Welcome to Conduit",
+  "backendChooserWelcome": "Welcome to 众小智AI",
   "@backendChooserWelcome": {
     "description": "Welcome heading on the first-run backend chooser."
   },
