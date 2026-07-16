@@ -157,6 +157,60 @@ class ConduitMarkdownPreprocessor {
     return output;
   }
 
+  /// Repairs semantic `<details>` blocks whose tags were HTML-escaped
+  /// (`&lt;details type="reasoning"...&gt;` … `&lt;/details&gt;`).
+  ///
+  /// The reasoning/tool-call/code-interpreter collapsible renderer only
+  /// recognizes PLAIN `<details>` tags. A message whose already-rendered
+  /// `<details>` block was HTML-escaped a second time before display (e.g. an
+  /// assistant turn re-wrapped as escaped text on reload) would otherwise show
+  /// the raw `&lt;details ...&gt;` markup instead of a collapsed thinking
+  /// section. This unescapes ONLY the semantic-details tag scaffolding
+  /// (`&lt;details ...&gt;`, `&lt;summary&gt;…&lt;/summary&gt;`,
+  /// `&lt;/details&gt;`) so the block parser can collapse it again; body text
+  /// (which may legitimately contain escaped entities) is left untouched.
+  static String repairEscapedSemanticDetails(String input) {
+    // Fast path: nothing to repair unless an escaped semantic-details opener is
+    // present. Requires the `type="reasoning|tool_calls|code_interpreter|
+    // openai_builtin_tool"` attribute so ordinary escaped `&lt;details&gt;`
+    // text (no semantic type) is never touched.
+    final openerPattern = RegExp(
+      r'&lt;details\b(?=[^&]*?\btype=(?:"|&quot;)(?:reasoning|tool_calls|code_interpreter|openai_builtin_tool)(?:"|&quot;))',
+      caseSensitive: false,
+    );
+    if (!openerPattern.hasMatch(input)) {
+      return input;
+    }
+
+    // Unescape ONLY the details tag scaffolding — the `<details ...>` opener,
+    // the `<summary>…</summary>` line, and the `</details>` closer — so the
+    // block parser can collapse the section again. Body text between the tags
+    // is deliberately left as-is: it may carry legitimately-escaped entities
+    // (including double-escaped `&amp;gt;` blockquote markers) that the details
+    // renderer unescapes itself at parse time. Peeling one layer here on the
+    // scaffolding is enough to re-enter the plain-`<details>` parse path.
+    return input
+        // Opener: `&lt;details ...&gt;` -> `<details ...>` (attrs may use
+        // `&quot;`; convert those quotes too so the type/duration parse works).
+        .replaceAllMapped(
+          RegExp(
+            r'&lt;details\b(?=[^&]*?\btype=(?:"|&quot;)(?:reasoning|tool_calls|code_interpreter|openai_builtin_tool)(?:"|&quot;))([\s\S]*?)&gt;',
+            caseSensitive: false,
+          ),
+          (m) => '<details${m.group(1)!.replaceAll('&quot;', '"')}>',
+        )
+        // Summary line: `&lt;summary&gt;…&lt;/summary&gt;`.
+        .replaceAllMapped(
+          RegExp(
+            r'&lt;summary&gt;([\s\S]*?)&lt;/summary&gt;',
+            caseSensitive: false,
+          ),
+          (m) => '<summary>${m.group(1)}</summary>',
+        )
+        // Closer.
+        .replaceAll('&lt;/details&gt;', '</details>');
+  }
+
   /// Removes Markdown link reference definitions while keeping other content.
   ///
   /// This is a cheaper targeted transform than [normalize] for callers that

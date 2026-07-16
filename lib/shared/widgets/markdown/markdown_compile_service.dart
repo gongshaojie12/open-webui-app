@@ -47,7 +47,14 @@ final markdownCompileServiceProvider = Provider<MarkdownCompileService>((ref) {
 });
 
 String prepareMarkdownContent(String content, {required bool streaming}) {
-  final normalized = ConduitMarkdownPreprocessor.normalize(content);
+  // Repair semantic <details> blocks whose tags were HTML-escaped before
+  // display (e.g. a reloaded assistant turn re-wrapped as escaped text), so the
+  // reasoning/tool-call collapsible parser can collapse them instead of showing
+  // raw `&lt;details ...&gt;` markup.
+  final repaired = ConduitMarkdownPreprocessor.repairEscapedSemanticDetails(
+    content,
+  );
+  final normalized = ConduitMarkdownPreprocessor.normalize(repaired);
   final prepared = streaming
       ? stripTrailingIncompleteToolCallDetails(normalized)
       : normalized;
