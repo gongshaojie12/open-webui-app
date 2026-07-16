@@ -94,6 +94,13 @@ class _ChatsDrawerState extends ConsumerState<ChatsDrawer>
       try {
         await ref.read(foldersProvider.future);
       } catch (_) {}
+
+      // Reconcile active-chat spinners against the authoritative server state so
+      // a stranded "generating" indicator (from a socket chat:active{true} whose
+      // paired {false} never arrived) is cleared on manual pull-to-refresh.
+      try {
+        await ref.read(activeChatsSyncProvider.notifier).reconcileNow();
+      } catch (_) {}
     } catch (_) {}
   }
 

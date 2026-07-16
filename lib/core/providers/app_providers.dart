@@ -4327,6 +4327,20 @@ class ActiveChatsSync extends _$ActiveChatsSync {
       );
     }
   }
+
+  /// Manual pull-to-refresh reconciliation: re-derive [activeChatIdsProvider]
+  /// from the authoritative `checkActiveChats` endpoint (same source as the
+  /// cold-open/reconnect refresh) so a stranded "generating" spinner — left by
+  /// a `chat:active{true}` socket event whose paired `{false}` never arrived in
+  /// this deployment — is cleared on the next user refresh. Safe: `setAll`
+  /// overwrites with server-authoritative state; genuinely-active chats stay lit.
+  Future<void> reconcileNow() async {
+    final convos = ref.read(conversationsProvider).asData?.value;
+    if (convos == null || convos.isEmpty) {
+      return;
+    }
+    await _refresh(convos.map((c) => c.id).toList());
+  }
 }
 
 /// Resolves socket transport availability from backend configuration.
