@@ -3141,23 +3141,12 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
   /// Mirrors Open WebUI MessageInput.svelte:1797 + permission gate.
   String? _modelValvesFunctionId() {
     final model = ref.read(selectedModelProvider);
-    if (model == null) return null;
-    final hasUserValves = model.metadata?['has_user_valves'] == true;
-    if (!hasUserValves) return null;
-
-    // Permission gate (admin bypass, chat.valves default true).
-    final user = ref.read(currentUserProvider).value;
-    if (user?.role != 'admin') {
-      final perms = ref.read(userPermissionsProvider).value;
-      final chat = perms?['chat'];
-      final allowed = chat is Map ? (chat['valves'] ?? true) : true;
-      if (allowed != true) return null;
-    }
-
-    // Web uses selectedModelIds[0].split('.')[0].
-    final id = model.id;
-    if (id.isEmpty) return null;
-    return id.split('.').first;
+    return resolveModelValvesFunctionId(
+      modelId: model?.id,
+      hasUserValves: model?.metadata?['has_user_valves'] == true,
+      userRole: ref.read(currentUserProvider).value?.role,
+      permissions: ref.read(userPermissionsProvider).value,
+    );
   }
 
   Widget _buildPillButton({
@@ -3722,4 +3711,22 @@ class _ContextSuggestionPlaceholder extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Pure decision for the model-valves composer button. Returns the function id
+/// to edit, or null when the button must be hidden. Exposed for testing.
+String? resolveModelValvesFunctionId({
+  required String? modelId,
+  required bool hasUserValves,
+  required String? userRole,
+  required Map<String, dynamic>? permissions,
+}) {
+  if (modelId == null || modelId.isEmpty) return null;
+  if (!hasUserValves) return null;
+  if (userRole != 'admin') {
+    final chat = permissions?['chat'];
+    final allowed = chat is Map ? (chat['valves'] ?? true) : true;
+    if (allowed != true) return null;
+  }
+  return modelId.split('.').first;
 }
