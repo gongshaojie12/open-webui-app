@@ -2359,7 +2359,6 @@
   "workspaceToolValvesLoadFailed": "Couldn't load valves.",
   "modelValvesTitle": "配置项",
   "modelValvesTooltip": "配置项",
-  "modelValvesEmpty": "没有配置项",
   "modelValvesSaved": "配置项已更新",
   "modelValvesSaveFailed": "配置项更新失败。",
   "modelValvesLoadFailed": "配置项加载失败。",

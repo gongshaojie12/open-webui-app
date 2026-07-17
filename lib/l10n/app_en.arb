@@ -4326,8 +4326,6 @@
   "@modelValvesTitle": {"description":"Title of the model (function) valves sheet in chat."},
   "modelValvesTooltip": "Valves",
   "@modelValvesTooltip": {"description":"Tooltip/label for the chat composer valves button."},
-  "modelValvesEmpty": "No valves",
-  "@modelValvesEmpty": {"description":"Empty state when the model defines no user valves."},
   "modelValvesSaved": "Valves updated",
   "@modelValvesSaved": {"description":"Confirmation that model valves were saved."},
   "modelValvesSaveFailed": "Couldn't update valves.",
