@@ -1332,6 +1332,72 @@ idx=-1  raw="&lt;details&gt;\n&lt;summary&gt;思考用时 (24s)&lt;/summary&gt;\
 
 ---
 
+## 27. App 聊天输入框补齐「模型级配置项（Valves）」入口
+
+### 背景（现象）
+
+带 `UserValves` 的 Function/Pipe 模型（如「众小智-AI生图」，暴露 Enable Google
+Search / 图片比例 / 分辨率三项），**网页端**聊天输入框底部会显示一个旋钮按钮，点开是
+「配置项」弹窗（docs/18.png、docs/18-1.png);而 **App** 输入框没有这个入口
+（docs/18.jpg），用户无法在对话里调这些参数。
+
+### 根因（非缺陷，是功能未移植）
+
+对照上游 `MessageInput.svelte:1797`，网页端按钮显示条件为
+`selectedModelIds.length === 1 && $models.find(...)?.has_user_valves`，点击打开
+function 的 user valves（`/api/v1/functions/id/{id}/valves/user` 及 `.../spec`）。
+App 侧盘点:
+
+- 数据层已解析 `has_user_valves`（`model.dart`)；
+- API 层已有 `getUserFunctionValves` / `updateUserFunctionValves`，**缺** user valves
+  的 **spec** 接口；
+- valves 表单组件 `WorkspaceValveForm` 已存在，但**仅用于工作区工具编辑器**，聊天输入框
+  **没有**模型级入口按钮。
+
+即:数据/API/表单三层都在,唯独缺「聊天里针对当前模型弹出 valves」的入口与弹窗。
+
+### 实现（纯增量，不改现有 API/按钮/普通模型流程）
+
+| 文件 | 改动 |
+|------|------|
+| `lib/core/services/api_service.dart` | 新增 `getUserFunctionValvesSpec`（`GET /api/v1/functions/id/{id}/valves/user/spec`），镜像 `getUserToolValvesSpec` |
+| `lib/l10n/app_en.arb` / `app_zh.arb` | 新增 `modelValves*` 文案键（标题「配置项」等,中英） |
+| `lib/features/chat/widgets/model_valves_sheet.dart` | 新建 `ModelValvesSheet`:仅编辑 user valves + 手动「保存」,复用 `WorkspaceValveForm` 及 array 逗号串↔列表转换;直接经 `apiServiceProvider` 调 API |
+| `lib/features/chat/widgets/modern_chat_input.dart` | 底部工具行(quickPills)新增条件按钮;抽出可测纯函数 `resolveModelValvesFunctionId`;`_buildPillButton` 加可选 `Key?` 参数 |
+| `test/features/chat/model_valves_visibility_test.dart` | 显示条件 6 例单测 |
+
+### 显示条件（完全仿 Web）
+
+```
+选中恰好 1 个模型
+&& model.metadata['has_user_valves'] == true
+&& (user.role == 'admin' || (permissions['chat']?['valves'] ?? true))
+```
+
+不满足则完全不渲染——普通模型输入框零变化。
+
+### 为什么安全
+
+- 纯加法:新增 1 个 API 方法、1 个弹窗文件、1 个条件按钮;不改现有 API/按钮逻辑。
+- `apiServiceProvider` 实为 `Provider<ApiService?>`(可空),弹窗内加了 null 守卫
+  （仿 `conversation_context_menu.dart`),错误走既有 load-error/save-snackbar 路径。
+- `flutter analyze`(改动 3 文件)No issues found;显示条件 6 例单测全过。
+- 已知与本次无关的既有失败测试(基线 644eef08 即失败):
+  `reviewer_mode_service_test.dart`、`chat_voice_mode_controller_test.dart`。
+
+### ⚠️ 升级注意
+
+- 生成的 `app_localizations*.dart` 在本仓库被 gitignore,只提交 arb 源文件;合并/构建前需
+  跑 `flutter gen-l10n`。
+- `flutter test` 若报 flutter_tester WebSocket 错,需清代理:
+  `NO_PROXY=127.0.0.1,localhost` 且清空 `HTTP(S)_PROXY`。
+- 合并后 grep 确认定制仍在:
+  - `grep -n "getUserFunctionValvesSpec" lib/core/services/api_service.dart`
+  - `grep -n "resolveModelValvesFunctionId" lib/features/chat/widgets/modern_chat_input.dart`
+- 真机回归:选中带 valves 的模型→按钮出现→改值保存→重开值已持久化;切普通模型→按钮消失。
+
+---
+
 ## 21. 升级操作检查清单
 
 从上游合并新版本后，按以下清单逐项检查：
