@@ -50,6 +50,7 @@ import '../../../core/utils/prompt_variable_parser.dart';
 import '../../prompts/widgets/prompt_variable_dialog.dart';
 import '../../auth/providers/unified_auth_providers.dart';
 import 'chat_input_intents.dart';
+import 'model_valves_sheet.dart';
 import 'expanded_text_editor.dart';
 import 'composer_overflow_items.dart';
 import 'composer_overflow_menu.dart';
@@ -2211,6 +2212,31 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
       }
     }
 
+    if (!isHermesComposer) {
+      final valvesFunctionId = _modelValvesFunctionId();
+      if (valvesFunctionId != null) {
+        final l10n = AppLocalizations.of(context)!;
+        final IconData icon = Platform.isIOS
+            ? CupertinoIcons.slider_horizontal_3
+            : Icons.tune;
+        quickPills.add(
+          _buildPillButton(
+            key: const ValueKey('model-valves-pill'),
+            icon: icon,
+            label: l10n.modelValvesTooltip,
+            isActive: false,
+            dense: true,
+            onTap: widget.enabled && !_isRecording
+                ? () => ModelValvesSheet.show(
+                      context,
+                      functionId: valvesFunctionId,
+                    )
+                : null,
+          ),
+        );
+      }
+    }
+
     final bool showCompactComposer = quickPills.isEmpty;
     final bool showCreateDraftNoteAction =
         !showCompactComposer &&
@@ -3109,7 +3135,33 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     );
   }
 
+  /// Returns the function id whose user-valves should be editable from the
+  /// composer, or null when the model-valves button must not show.
+  ///
+  /// Mirrors Open WebUI MessageInput.svelte:1797 + permission gate.
+  String? _modelValvesFunctionId() {
+    final model = ref.read(selectedModelProvider);
+    if (model == null) return null;
+    final hasUserValves = model.metadata?['has_user_valves'] == true;
+    if (!hasUserValves) return null;
+
+    // Permission gate (admin bypass, chat.valves default true).
+    final user = ref.read(currentUserProvider).value;
+    if (user?.role != 'admin') {
+      final perms = ref.read(userPermissionsProvider).value;
+      final chat = perms?['chat'];
+      final allowed = chat is Map ? (chat['valves'] ?? true) : true;
+      if (allowed != true) return null;
+    }
+
+    // Web uses selectedModelIds[0].split('.')[0].
+    final id = model.id;
+    if (id.isEmpty) return null;
+    return id.split('.').first;
+  }
+
   Widget _buildPillButton({
+    Key? key,
     required IconData icon,
     required String label,
     required bool isActive,
@@ -3135,6 +3187,7 @@ class _ModernChatInputState extends ConsumerState<ModernChatInput>
     final Color iconColor = isActive ? theme.buttonPrimary : textColor;
 
     return Semantics(
+      key: key,
       button: true,
       enabled: enabled,
       child: GestureDetector(
