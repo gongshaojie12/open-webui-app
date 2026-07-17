@@ -54,6 +54,34 @@ void main() {
     expect(details.attributes['duration'], '20');
   });
 
+  test('bare escaped <details> from image-gen pipe (no type) collapses', () {
+    // Byte-shape from docs/5.jpg debug box: BARE escaped <details> (no type
+    // attribute), Chinese summary, blockquote body, then image.
+    const escaped =
+        '&lt;details&gt;\n'
+        '&lt;summary&gt;思考用时 (24s)&lt;/summary&gt;\n'
+        '\n'
+        '&gt; **Generating Adorable Canine**\n'
+        '&gt; \n'
+        "&gt; I'm focusing on creating a very cute puppy.\n"
+        '&lt;/details&gt;\n'
+        '\n'
+        '![Generated Image](https://example.com/img.png)';
+
+    final repaired = ConduitMarkdownPreprocessor.repairEscapedSemanticDetails(
+      escaped,
+    );
+    print('BARE REPAIRED>>>\n$repaired\n<<<');
+    expect(hasDetails(compileWithRepair(escaped)), isTrue,
+        reason: 'bare escaped image-gen details must collapse after repair');
+
+    final details = _findDetails(compileWithRepair(escaped))!;
+    // No type attribute on the bare block.
+    expect(details.attributes['type'], isNull);
+    // The image after the block must still be present as a separate node.
+    expect(escaped.contains('![Generated Image]'), isTrue);
+  });
+
   test('double-escaped body (&amp;gt;) still collapses', () {
     const escaped =
         '&lt;details type=&quot;reasoning&quot; done=&quot;true&quot; duration=&quot;20&quot;&gt;\n'

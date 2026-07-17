@@ -1,0 +1,47 @@
+ ▐▛███▜▌   Claude Code v2.1.202
+▝▜█████▛▘  Opus 4.8 · Google Vertex AI
+  ▘▘ ▝▝    D:\APP\open-webui-app
+
+
+> claude history只能看100个，能在看多一点吗                                     
+
+● claude-code-guide(Claude Code history limit)
+  ⎿  Done (4 tool uses · 61.3k tokens · 35s)
+  (ctrl+o to expand)
+
+● claude history 的 100 条限制,分两种情况说:
+
+  结论:100 条限制无法通过配置改大
+
+  Ctrl+R 反向搜索历史只加载最近 100 条去重后的提示词,这个数字是硬编码的,settings
+  .json、环境变量、命令行参数都改不了。
+
+  但可以绕过——直接读原始历史文件
+
+  你的历史其实全都存着,没被删,只是搜索界面只显示 100 条。你可以直接读文件:
+
+  # 找到历史文件
+  find ~/.claude -name "*history*" -type f
+
+  # 直接查看(通常在这里)
+  cat ~/.claude/history.jsonl
+
+  配合 grep / jq 搜索全部历史,就没有 100 条的限制了。比如:
+
+  grep "关键词" ~/.claude/history.jsonl
+
+  更好的做法
+
+  - /export:在会话里运行 /export 文件名.txt,导出完整对话,无条数限制。
+  - /resume 或 claude --resume:这是会话历史(不是命令历史),不受 100
+  条限制,能看到所有过往会话。
+  - 保留更久:在 ~/.claude/settings.json 里加 "cleanupPeriodDays": 60(默认 30
+  天),防止旧会话被清理。
+
+  ---
+  简单说:界面里搜索只能看 100 条改不了,但原始记录都在 
+  ~/.claude/history.jsonl,直接 cat / grep 那个文件就能看全部。
+
+  需要我帮你直接把历史文件读出来、或者按关键词筛选吗?
+
+✻ Brewed for 1m 41s

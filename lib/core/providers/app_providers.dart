@@ -147,7 +147,14 @@ class AppLocale extends _$AppLocale {
       final parsed = _parseLocaleCode(code);
       if (parsed != null) return parsed;
     }
-    return null; // system default
+    // dev-0.0.1 定制：首次启动（用户未在 App 里选过语言）默认简体中文，避免中文
+    // 用户一进来界面是英文/系统语言、还要手动切一遍。
+    //
+    // 注意：OpenWebUI 网页版的界面语言存在浏览器 localStorage、不存服务器
+    // （见 open-webui i18n LanguageDetector: lookupLocalStorage='locale'），
+    // 所以 App 无法从服务器同步网页设的语言——本地默认是唯一可靠做法。用户仍可
+    // 在「外观 → 应用语言」改成其它语言或“跟随系统”（选择会持久化、优先于此默认）。
+    return const Locale('zh');
   }
 
   Future<void> setLocale(Locale? locale) async {
