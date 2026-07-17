@@ -5687,6 +5687,20 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
+  Future<WorkspaceValveSpec?> getUserFunctionValvesSpec(
+    String functionId,
+  ) async {
+    _traceApi('Fetching user function valves spec: $functionId');
+    final response = await _dio.get(
+      '/api/v1/functions/id/$functionId/valves/user/spec',
+    );
+    return response.data is Map
+        ? WorkspaceValveSpec.fromJson(
+            Map<String, dynamic>.from(response.data as Map),
+          )
+        : null;
+  }
+
   Future<Map<String, dynamic>> updateUserFunctionValves(
     String functionId,
     Map<String, dynamic> valves,
