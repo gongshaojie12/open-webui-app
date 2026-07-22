@@ -30,10 +30,11 @@ class WidgetActions {
 }
 
 /// App group identifier for iOS widget data sharing.
-const String _releaseAppGroupId = 'group.app.cogwheel.conduit';
-const String _debugAppGroupId = 'group.app.cogwheel.conduit.x2662v5dt2.debug';
-
-String get _appGroupId => kReleaseMode ? _releaseAppGroupId : _debugAppGroupId;
+///
+/// Must match the App Group in the iOS entitlements and the `APP_GROUP_ID`
+/// build setting for every target (Runner / ShareExtension / ConduitWidget).
+/// Debug and Release share the same group, so no build-mode split here.
+const String _appGroupId = 'group.5WZTMAG4GS.zhongxiaozhi';
 
 /// Android widget provider class name.
 const String _qualifiedAndroidWidgetName =
